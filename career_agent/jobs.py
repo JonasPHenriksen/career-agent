@@ -298,14 +298,17 @@ def _utc_midnight() -> str:
     return local_midnight.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
-def create_application(job_id: int, auto: bool = False, instructions: str | None = None) -> int:
+def create_application(job_id: int, auto: bool = False, instructions: str | None = None, draft: bool = True) -> int:
+    """Create the application; with draft=False nobody writes it yet (e.g. you'll write it in Claude.ai)."""
     existing = db.q1("SELECT id FROM applications WHERE job_id = ?", (job_id,))
     if existing:
         return existing["id"]
-    app_id = db.insert("applications", {"job_id": job_id, "status": "drafting", "auto_drafted": 1 if auto else 0,
-                                        "instructions": instructions, "created_at": db.now(), "updated_at": db.now()})
+    app_id = db.insert("applications", {"job_id": job_id, "status": "drafting" if draft else "draft",
+                                        "auto_drafted": 1 if auto else 0, "instructions": instructions,
+                                        "created_at": db.now(), "updated_at": db.now()})
     db.ex("UPDATE jobs SET status = 'shortlisted' WHERE id = ? AND status IN ('new', 'filtered')", (job_id,))
-    tasks.enqueue("draft_application", {"application_id": app_id}, ref=f"app:{app_id}")
+    if draft:
+        tasks.enqueue("draft_application", {"application_id": app_id}, ref=f"app:{app_id}")
     return app_id
 
 

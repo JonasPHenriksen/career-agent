@@ -121,6 +121,21 @@ Tips:
   locally; only the letter-writing context goes to Claude. The fact check runs on the Writing model by
   default (Settings → Search & fact check), since it's your safety net.
 
+## Using Claude without an API key (Free or Pro plan)
+
+No per-call costs: the app prepares everything and you paste it into your normal Claude.ai chat.
+
+1. On a job, click **Write with Claude.ai** (or open an application's **Claude.ai** tab).
+2. Click **Copy prompt**, open Claude.ai, paste it into a new chat and send. The prompt holds your career
+   facts, style guide, best past letters, the job ad, and the rules for honesty, gaps and dates.
+3. Click the copy button under Claude's reply, paste the whole answer into the app, and click **Use this answer**.
+
+The letter and CV become the new draft (the previous one stays under Versions), and the fact check and voice
+check run locally as usual. The Free plan gives you Claude's Sonnet; with Pro you can choose Opus for the best
+letters. Usage is limited per 5 hours and per week on both, which is plenty for a few applications a day. What
+goes into the chat: your career facts, style guide, example letters and the ad. ID and bank numbers are removed,
+and your contact details are never included (they're added to the PDFs locally).
+
 ## Using Claude (cloud, best quality)
 
 1. Create an API key at <https://console.anthropic.com> → API keys (it's separate from a Claude.ai

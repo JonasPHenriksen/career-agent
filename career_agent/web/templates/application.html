@@ -34,8 +34,50 @@
   {% endfor %}
 </nav>
 
-{% if not a.letter and a.status == 'drafting' %}
-  <p class="empty">Your application is being written. Facts come only from your career database; the voice comes from your own past applications.</p>
+{% if not a.letter and a.status == 'drafting' and tab != 'claude' %}
+  <p class="empty">Your application is being written. Facts come only from your career database; the voice comes from your own past applications. Want it written in Claude.ai instead? <a href="?tab=claude">Use the Claude.ai tab</a>.</p>
+{% elif not a.letter and tab == 'letter' %}
+<section class="card" style="max-width:46rem">
+  <h2>No draft yet</h2>
+  <p class="text-2">Write it with Claude.ai (free or Pro, no API key), or let the local model write it in the background.</p>
+  <div class="row"><a class="btn primary" href="?tab=claude">Write with Claude.ai</a>
+    <form method="post" action="/applications/{{ a.id }}/redraft" class="inline"><button class="btn" data-busy="Starting…">Local model</button></form></div>
+</section>
+{% elif tab == 'claude' %}
+<div class="split">
+  <section class="card">
+    <h2>1. Copy the prompt into Claude.ai</h2>
+    <p class="text-2">One message with everything Claude needs: your career facts, style guide and best past letters, the job ad, and the rules for honesty, gaps and dates. About {{ '{:,}'.format(prompt_words) }} words{{ '; ID and bank numbers are removed' if prompt }}.</p>
+    <textarea id="claude-prompt" hidden>{{ prompt }}</textarea>
+    <div class="row"><button type="button" class="btn primary" data-copy="#claude-prompt">Copy prompt</button>
+      <a class="btn" href="https://claude.ai/new" target="_blank" rel="noopener noreferrer">Open Claude.ai ↗</a></div>
+    <p class="small text-2" style="margin-top:.5rem">In a new chat, paste (⌘V) and send. It answers with the letter and the CV in one go.</p>
+    <h2 style="margin-top:1.2rem">2. Paste Claude's whole answer here</h2>
+    <form method="post" action="/applications/{{ a.id }}/manual-import">
+      <textarea name="text" rows="12" placeholder="Click the copy button under Claude's reply and paste it here. It starts with ===SUBJECT===." required></textarea>
+      <div class="row" style="margin-top:.5rem"><button class="btn primary" data-busy="Importing…">Use this answer</button></div>
+    </form>
+  </section>
+  <div class="stack">
+    <section class="card">
+      <h2>What happens next</h2>
+      <ul class="bul small">
+        <li>The letter and CV replace the current draft; the old one is kept under <a href="?tab=history">Versions</a>.</li>
+        <li>The fact check and voice check run here, on your Mac.</li>
+        <li>Edit and export as usual from the Letter, CV and Send tabs.</li>
+      </ul>
+    </section>
+    <section class="card">
+      <h2>Tips</h2>
+      <ul class="bul small">
+        <li>Free plan: Claude's Sonnet. Pro: pick Opus in the model menu for the best letters.</li>
+        <li>If Claude stops halfway, type “continue” and paste both parts.</li>
+        <li>Want changes? Ask Claude in the same chat, then paste the new full answer.</li>
+        <li>Instructions for this application, like “mention I can start in March”, go in the job's notes before you copy.</li>
+      </ul>
+    </section>
+  </div>
+</div>
 {% elif tab == 'letter' %}
 <div class="split">
   <section class="card">
