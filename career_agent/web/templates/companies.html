@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Companies{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>Companies</h1><p class="sub">You're evaluating them too. How fast they answer, whether they give real feedback, whether they ghost, and whether they keep re-posting the same job.</p></div>
+</header>
+
+<nav class="tabs">
+  <a href="/companies?show=history" class="{{ 'active' if show == 'history' }}">With history</a>
+  <a href="/companies?show=all" class="{{ 'active' if show == 'all' }}">All companies<span class="count">{{ total }}</span></a>
+</nav>
+
+<section class="card">
+  {% if rows %}
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr>
+      <th>Company</th><th>Grade</th><th class="num">Applied</th><th class="num">Answered</th><th class="num">Median reply</th>
+      <th class="num">Ghosted</th><th class="num">Real feedback</th><th class="num">Interviews</th><th class="num">Re-posts</th><th>Your rating</th>
+    </tr></thead>
+    <tbody>
+      {% for c in rows %}{% set m = c.m %}
+      <tr>
+        <td><a href="/companies/{{ c.id }}"><strong>{{ c.name }}</strong></a>{% if c.blocked %} <span class="pill bad">blocked</span>{% endif %}<div class="small muted">{{ m.jobs_seen }} job{{ 's' if m.jobs_seen != 1 }} seen</div></td>
+        <td>{% if m.score is not none %}<span class="grade grade-{{ m.grade }}" title="{{ m.reasons|join(' · ') }}">{{ m.grade }}</span> <span class="small muted">{{ m.score }}</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+        <td class="num">{{ m.applications }}</td>
+        <td class="num">{% if m.response_rate is not none %}{{ (m.response_rate * 100)|round|int }}%{% else %}–{% endif %}</td>
+        <td class="num">{{ '%g d'|format(m.median_days) if m.median_days is not none else '–' }}</td>
+        <td class="num">{{ m.ghosted or '–' }}</td>
+        <td class="num">{{ m.feedback or '–' }}</td>
+        <td class="num">{{ m.interviews or '–' }}</td>
+        <td class="num">{{ m.reposts or '–' }}</td>
+        <td>{{ ('★' * c.user_rating) if c.user_rating else '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty">No company history yet. Once you send applications and log the replies (or the silence), each employer gets a grade here.</p>
+  {% endif %}
+</section>
+<p class="legend-note">Grades: A-B treat candidates well, C is mixed, D-F rarely answer or give no feedback. Applications younger than 14 days don't count against anyone.</p>
+{% endblock %}

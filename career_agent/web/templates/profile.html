@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}Profile{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>Profile</h1><p class="sub">Who you are, what you've done, and how you write. Everything stays on this Mac.</p></div>
+</header>
+
+{% if busy %}{% include "partials/profile_progress.html" %}{% endif %}
+
+<nav class="tabs">
+  {% for key, label in [('about','About you'),('documents','Documents'),('facts','Career database'),('style','Writing style')] %}
+  <a href="/profile?tab={{ key }}" class="{{ 'active' if tab == key }}">{{ label }}{% if key == 'documents' %}<span class="count">{{ docs|length }}</span>{% elif key == 'facts' %}<span class="count">{{ grouped|map(attribute=2)|map('length')|sum }}</span>{% endif %}</a>
+  {% endfor %}
+</nav>
+
+{% if tab == 'about' %}
+<form method="post" action="/profile/about" class="stack">
+  <section class="card">
+    <h2>Contact details <span class="hint">· printed on your letters and CVs; never sent to the AI</span></h2>
+    <div class="fields-3">
+      <div class="field"><label for="name">Full name</label><input id="name" name="name" type="text" value="{{ p.name }}" autocomplete="name"></div>
+      <div class="field"><label for="email">Email <span class="hint">(several: comma-separated)</span></label><input id="email" name="email" type="text" value="{{ p.email }}" autocomplete="email"></div>
+      <div class="field"><label for="phone">Phone</label><input id="phone" name="phone" type="text" value="{{ p.phone }}" autocomplete="tel"></div>
+      <div class="field"><label for="city">City</label><input id="city" name="city" type="text" value="{{ p.city }}"></div>
+      <div class="field"><label for="linkedin">LinkedIn</label><input id="linkedin" name="linkedin" type="text" value="{{ p.linkedin }}"></div>
+      <div class="field"><label for="website">Website</label><input id="website" name="website" type="text" value="{{ p.website }}"></div>
+    </div>
+  </section>
+  <section class="card">
+    <h2>What you're looking for <span class="hint">· used to rank jobs and screen out bad fits</span></h2>
+    <div class="fields-2">
+      <div class="field"><label for="headline">Your professional headline</label><input id="headline" name="headline" type="text" value="{{ p.headline }}" placeholder="e.g. Product owner with 8 years in fintech"></div>
+      <div class="field"><label for="target_roles">Target roles</label><input id="target_roles" name="target_roles" type="text" value="{{ p.target_roles }}" placeholder="e.g. Product owner, Project manager, Head of digital"></div>
+      <div class="field"><label for="target_industries">Industries you prefer</label><input id="target_industries" name="target_industries" type="text" value="{{ p.target_industries }}"></div>
+      <div class="field"><label for="locations">Where you'll work</label><input id="locations" name="locations" type="text" value="{{ p.locations }}" placeholder="e.g. Greater Copenhagen, max 45 min commute"></div>
+      <div class="field"><label for="min_salary">Salary expectation</label><input id="min_salary" name="min_salary" type="text" value="{{ p.min_salary }}"></div>
+      <div class="field"><label for="availability">Availability / notice period</label><input id="availability" name="availability" type="text" value="{{ p.availability }}"></div>
+    </div>
+    <div class="field"><label>Work modes</label>
+      <div class="row">{% for m, l in [('onsite','On-site'),('hybrid','Hybrid'),('remote','Remote')] %}<label class="check"><input type="checkbox" name="mode_{{ m }}" value="1" {{ 'checked' if m in (p.work_modes or []) }}> <span>{{ l }}</span></label>{% endfor %}</div></div>
+    <div class="field"><label for="deal_breakers">Deal-breakers</label><textarea id="deal_breakers" name="deal_breakers" rows="2" placeholder="e.g. No night shifts. Nothing in gambling or tobacco. Not below senior level.">{{ p.deal_breakers }}</textarea></div>
+  </section>
+  <section class="card">
+    <h2>Guidance for your applications</h2>
+    <div class="fields-2">
+      <div class="field"><label for="always_mention">Always mention (when relevant)</label><textarea id="always_mention" name="always_mention" rows="3" placeholder="e.g. Danish and English fluent; driving licence">{{ p.always_mention }}</textarea></div>
+      <div class="field"><label for="never_mention">Never mention</label><textarea id="never_mention" name="never_mention" rows="3" placeholder="e.g. my sick leave in 2021; my age">{{ p.never_mention }}</textarea></div>
+    </div>
+    <div class="field"><label for="about">In your own words <span class="hint">· what drives you, what you want next</span></label><textarea id="about" name="about" rows="4">{{ p.about }}</textarea></div>
+  </section>
+  <div class="row end"><button class="btn primary">Save</button></div>
+</form>
+
+{% elif tab == 'documents' %}
+<div class="grid-2" style="margin-bottom:1rem">
+  <section class="card">
+    <h2>Upload files</h2>
+    <form method="post" action="/documents/upload" enctype="multipart/form-data">
+      <div class="dropzone">
+        <div><strong>Drop files here</strong> or choose them</div>
+        <div class="small muted">PDF, Word, Pages (export first), RTF, text, HTML, .eml</div>
+        <input type="file" name="files" multiple accept=".pdf,.docx,.doc,.odt,.rtf,.txt,.md,.html,.htm,.eml,.pages,.webarchive" aria-label="Choose files">
+      </div>
+    </form>
+  </section>
+  <section class="card">
+    <h2>Import a whole folder</h2>
+    <form method="post" action="/documents/import">
+      <div class="field"><label for="path">Folder or file on this Mac</label>
+        <input id="path" name="path" type="text" placeholder="~/Documents/Job applications" required></div>
+      <p class="small text-2">Reads everything inside, including sub-folders. Apple Mail mailboxes (<code>.mbox</code>, via Mailbox → Export Mailbox) work too: only emails <em>you</em> sent are used, to learn how you write.</p>
+      <button class="btn primary" data-busy="Importing…">Import</button>
+    </form>
+  </section>
+</div>
+
+<section class="card" id="watch" style="margin-bottom:1rem">
+  <div class="card-head"><h2>Keep in sync</h2>
+    {% if search %}<span class="small muted">Search: {% if search.available %}{{ search.embedded }}/{{ search.passages }} passages indexed by meaning{% else %}keywords only (<a href="/settings#search">add {{ search.model }}</a>){% endif %} · <a href="/search">Search your documents</a></span>{% endif %}</div>
+  <p class="small text-2">Watched folders are checked every 30 minutes. New files are read, changed files replace their old version (facts you've marked ✓ are kept), and deleted files stay in your database.</p>
+  {% if folders %}
+  <ul class="list" style="margin-bottom:.8rem">
+    {% for w in folders %}
+    <li>
+      <div class="grow">
+        <span class="title">{{ 'Nextcloud: ' if w.kind == 'webdav' }}{{ w.path }}{% if not w.enabled %} <span class="pill">paused</span>{% endif %}</span>
+        <span class="meta">{% if w.last_scan_at %}checked {{ w.last_scan_at|ago }} · {{ w.last_status or '' }}{% else %}not checked yet{% endif %}</span>
+        {% if w.last_error %}<div class="small" style="color:var(--bad)">{{ w.last_error }}</div>{% endif %}
+      </div>
+      <form method="post" action="/watch/{{ w.id }}/scan" class="inline"><button class="btn small">Check now</button></form>
+      <form method="post" action="/watch/{{ w.id }}/toggle" class="inline"><button class="btn small ghost">{{ 'Resume' if not w.enabled else 'Pause' }}</button></form>
+      <form method="post" action="/watch/{{ w.id }}/delete" class="inline" data-confirm="Stop watching this folder? Imported documents are kept."><button class="btn small ghost danger">Remove</button></form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <div class="grid-2">
+    <form method="post" action="/watch/add">
+      <label for="wpath">Watch a folder on this Mac</label>
+      <input id="wpath" name="path" type="text" list="nc-folders" placeholder="{{ nextcloud[0] ~ '/Jobs' if nextcloud else '~/Nextcloud/Jobs' }}" required>
+      <datalist id="nc-folders">{% for n in nextcloud %}<option value="{{ n }}">{% endfor %}</datalist>
+      <p class="small text-2" style="margin:.4rem 0">{% if nextcloud %}Found your Nextcloud folder: <code>{{ nextcloud|join(', ') }}</code>. Pick the subfolders with your career documents rather than everything.{% else %}With the Nextcloud desktop app, files sync to a folder like <code>~/Nextcloud</code>. Watch the subfolders with your career documents.{% endif %}</p>
+      <button class="btn primary" data-busy="Adding…">Watch folder</button>
+    </form>
+    <details>
+      <summary>No desktop app? Connect Nextcloud directly</summary>
+      <form method="post" action="/watch/add-nextcloud">
+        <div class="field"><label for="ncurl">Folder address <span class="hint">· open the folder in Nextcloud in your browser and copy the address</span></label><input id="ncurl" name="url" type="url" placeholder="https://cloud.example.com/apps/files/?dir=/Jobs" required></div>
+        <div class="fields-2">
+          <div class="field"><label for="ncuser">Username</label><input id="ncuser" name="username" type="text" autocomplete="off" required></div>
+          <div class="field"><label for="ncpass">App password <span class="hint">· Nextcloud → Settings → Security</span></label><input id="ncpass" name="password" type="password" autocomplete="off" required></div>
+        </div>
+        <p class="small text-2">The app password is stored in your macOS Keychain. Files are copied into this app's data folder and read from there.</p>
+        <button class="btn" data-busy="Connecting…">Connect</button>
+      </form>
+    </details>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Your documents</h2>
+    {% if docs|selectattr('status', 'in', ['new','error'])|list %}<form method="post" action="/documents/analyze-pending" class="inline"><button class="btn small">Analyse unread documents</button></form>{% endif %}</div>
+  {% if docs %}
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>Document</th><th>Type</th><th>Date</th><th class="num">Facts</th><th>Outcome <span class="hint">(applications)</span></th><th>Status</th></tr></thead>
+    <tbody>
+      {% for d in docs %}
+      <tr>
+        <td><a href="/documents/{{ d.id }}"><strong>{{ d.title or d.filename }}</strong></a><div class="small muted">{{ d.filename }} · {{ d.word_count }} words{% if d.language %} · {{ d.language }}{% endif %}{% if not d.authored %} · not written by you{% endif %}</div></td>
+        <td>{{ kind_labels.get(d.kind, d.kind) }}</td>
+        <td class="small">{{ d.doc_date or '' }}</td>
+        <td class="num">{{ d.n_facts }}</td>
+        <td>{% if d.kind == 'application' %}
+          <form method="post" action="/documents/{{ d.id }}"><select name="outcome" data-autosubmit aria-label="Outcome">{% for k, l in outcomes %}<option value="{{ k }}" {{ 'selected' if d.outcome == k }}>{{ l }}</option>{% endfor %}</select></form>
+          {% endif %}</td>
+        <td>{% if d.status == 'analyzed' %}<span class="pill good">read</span>{% elif d.status == 'error' %}<span class="pill bad" title="{{ d.error }}">error</span>{% elif d.status == 'analyzing' %}<span class="pill accent">reading…</span>{% else %}<span class="pill">queued</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="legend-note">Mark how past applications went: the ones that got interviews are used as the main examples of your voice.</p>
+  {% else %}
+  <p class="empty">No documents yet. The more you give it (CVs, applications you've written, reference letters, project reports, emails), the better it knows what you've done and how you write.</p>
+  {% endif %}
+</section>
+
+{% elif tab == 'facts' %}
+<div class="split">
+  <div class="stack">
+    {% for cat, label, items in grouped %}{% if items %}
+    <section class="card" id="cat-{{ cat }}">
+      <div class="card-head"><h2>{{ label }} <span class="muted small">{{ items|length }}</span></h2></div>
+      {% if cat == 'skill' %}
+      <div class="skills-cloud">{% for f in items %}<a id="fact-{{ f.id }}" class="pill {{ 'good' if f.verified }}{{ ' ' if f.hidden }}" style="{{ 'opacity:.45' if f.hidden }}" href="#edit-{{ f.id }}" title="{{ f.detail or '' }}" data-toggle="#edit-{{ f.id }}">{{ f.title }}</a>{% endfor %}</div>
+      {% for f in items %}<form id="edit-{{ f.id }}" hidden method="post" action="/facts/{{ f.id }}" class="card flat" style="margin-top:.6rem">
+        <div class="fields-2"><div class="field"><label>Skill</label><input type="text" name="title" value="{{ f.title }}"></div><div class="field"><label>Where you used it</label><input type="text" name="detail" value="{{ f.detail or '' }}"></div></div>
+        <div class="row"><button class="btn small primary">Save</button>
+          <button class="btn small" formaction="/facts/{{ f.id }}/toggle/hidden">{{ 'Show' if f.hidden else 'Hide' }}</button>
+          <button class="btn small ghost danger" formaction="/facts/{{ f.id }}/delete">Delete</button></div></form>{% endfor %}
+      {% else %}
+      {% for f in items %}
+      <div class="fact {{ 'hidden-fact' if f.hidden }}" id="fact-{{ f.id }}">
+        <div class="ft">{{ f.title }}{% if f.verified %} <span class="verified-mark" title="Checked by you">✓</span>{% endif %}{% if f.hidden %} <span class="pill">hidden</span>{% endif %}</div>
+        <div class="fm">{{ f.organization or '' }}{% if f.start_date or f.end_date %} · {{ f.start_date or '?' }} – {{ f.end_date or '' }}{% endif %}{% if f.location %} · {{ f.location }}{% endif %} · <span class="muted">#{{ f.id }}</span></div>
+        {% if f.detail %}<div class="fd">{{ f.detail }}</div>{% endif %}
+        {% if f.evidence %}<div class="fe">“{{ f.evidence }}”{% if f.document_id %} <a href="/documents/{{ f.document_id }}">source</a>{% endif %}</div>{% endif %}
+        <div class="acts">
+          {% if not f.verified %}<form method="post" action="/facts/{{ f.id }}/toggle/verified" class="inline"><button class="btn small" title="Mark as correct">✓ Correct</button></form>{% endif %}
+          <button type="button" class="btn small ghost" data-toggle="#edit-{{ f.id }}">Edit</button>
+          <form method="post" action="/facts/{{ f.id }}/toggle/hidden" class="inline"><button class="btn small ghost" title="Hidden facts are never used">{{ 'Show' if f.hidden else 'Hide' }}</button></form>
+          <form method="post" action="/facts/{{ f.id }}/delete" class="inline" data-confirm="Delete this fact?"><button class="btn small ghost danger">Delete</button></form>
+        </div>
+        <form id="edit-{{ f.id }}" hidden method="post" action="/facts/{{ f.id }}" class="card flat" style="margin-top:.5rem">
+          <div class="field"><label>Title</label><input type="text" name="title" value="{{ f.title }}"></div>
+          <div class="fields-3">
+            <div class="field"><label>Organisation</label><input type="text" name="organization" value="{{ f.organization or '' }}"></div>
+            <div class="field"><label>From</label><input type="text" name="start_date" value="{{ f.start_date or '' }}" placeholder="YYYY-MM"></div>
+            <div class="field"><label>To</label><input type="text" name="end_date" value="{{ f.end_date or '' }}" placeholder="YYYY-MM or present"></div>
+          </div>
+          <div class="field"><label>Details</label><textarea name="detail" rows="3">{{ f.detail or '' }}</textarea></div>
+          <div class="field"><label>Category</label><select name="category">{% for c, l in categories %}<option value="{{ c }}" {{ 'selected' if c == f.category }}>{{ l }}</option>{% endfor %}</select></div>
+          <button class="btn small primary">Save</button>
+        </form>
+      </div>
+      {% endfor %}
+      {% endif %}
+    </section>
+    {% endif %}{% else %}{% endfor %}
+    {% if not grouped|map(attribute=2)|map('length')|sum %}<section class="card"><p class="empty">Your career database is empty. <a href="/profile?tab=documents">Import documents</a> and it fills itself. You can also add facts by hand.</p></section>{% endif %}
+  </div>
+  <div class="stack">
+    <section class="card">
+      <h2>How this works</h2>
+      <p class="small text-2">Every fact comes from your own documents, with a quote as evidence. Applications may only use these facts, so check them: mark correct ones with ✓, fix mistakes, and hide anything you don't want used.</p>
+      <form method="post" action="/facts/tidy"><button class="btn small" data-busy="Starting…">Merge duplicates</button></form>
+    </section>
+    <section class="card">
+      <h2>Add a fact</h2>
+      <form method="post" action="/facts/add">
+        <div class="field"><label for="fcat">Type</label><select id="fcat" name="category">{% for c, l in categories %}<option value="{{ c }}">{{ l }}</option>{% endfor %}</select></div>
+        <div class="field"><label for="ftitle">Title</label><input id="ftitle" type="text" name="title" placeholder="e.g. Reduced support tickets by 30%" required></div>
+        <div class="field"><label for="forg">Organisation</label><input id="forg" type="text" name="organization"></div>
+        <div class="fields-2"><div class="field"><label for="fs">From</label><input id="fs" type="text" name="start_date" placeholder="YYYY-MM"></div><div class="field"><label for="fe">To</label><input id="fe" type="text" name="end_date"></div></div>
+        <div class="field"><label for="fd">Details</label><textarea id="fd" name="detail" rows="3"></textarea></div>
+        <button class="btn primary">Add</button>
+      </form>
+    </section>
+  </div>
+</div>
+
+{% elif tab == 'style' %}
+<div class="split">
+  <section class="card">
+    <div class="card-head"><h2>Your writing style guide</h2>
+      <form method="post" action="/style/rebuild" class="inline" {% if style_locked %}data-confirm="Rebuild from your documents? Your manual edits will be replaced."{% endif %}><button class="btn small" data-busy="Starting…">Rebuild from my documents</button></form></div>
+    {% if style_error and not busy %}<div class="flash err">{{ style_error.error }}</div>{% endif %}
+    <form method="post" action="/style">
+      <textarea name="guide" class="editor" placeholder="Built automatically once you've imported some applications or other texts you wrote yourself.">{{ style_guide or '' }}</textarea>
+      <div class="row" style="margin-top:.6rem"><button class="btn primary">Save edits</button>{% if style_locked %}<span class="small muted">Edited by you: kept when new documents arrive.</span>{% endif %}</div>
+    </form>
+  </section>
+  <div class="stack">
+    <section class="card">
+      <h2>Your numbers</h2>
+      {% set b = baseline.get('all') %}
+      {% if b %}
+      <table class="metric-table">
+        <thead><tr><th>Measure</th>{% for lang in baseline.keys() if lang != 'all' %}<th class="num">{{ lang }}</th>{% endfor %}</tr></thead>
+        <tbody>
+          <tr><td>Texts measured</td>{% for lang, s in baseline.items() if lang != 'all' %}<td class="num">{{ s.samples }}</td>{% endfor %}</tr>
+          {% for key, label, kind, tol in metrics %}<tr><td>{{ label }}</td>{% for lang, s in baseline.items() if lang != 'all' %}<td class="num">{{ s.get(key, '–') }}</td>{% endfor %}</tr>{% endfor %}
+        </tbody>
+      </table>
+      <p class="legend-note">Every draft is compared against these, and stock phrases you never use get flagged.</p>
+      {% else %}<p class="text-2 small">Measured from your own applications once they're imported.</p>{% endif %}
+    </section>
+    <section class="card">
+      <h2>Examples it imitates</h2>
+      {% if exemplars %}
+      <ul class="list">{% for e in exemplars %}<li><div class="grow"><a class="title" href="/documents/{{ e.id }}">{{ e.title }}</a><span class="meta">{{ e.language or '?' }} · {{ outcome_labels.get(e.outcome or 'unknown') }}</span></div></li>{% endfor %}</ul>
+      <p class="legend-note">Your applications that got interviews or offers are used first, in the job ad's language.</p>
+      {% else %}<p class="small text-2">None yet. Import past applications you wrote.</p>{% endif %}
+    </section>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

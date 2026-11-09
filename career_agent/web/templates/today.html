@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% from "_macros.html" import score, deadline %}
+{% block title %}Today{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>{% if name %}Hi {{ name.split()[0] }}{% else %}Welcome{% endif %}</h1>
+    <p class="sub">What needs you today. Everything else runs in the background.</p>
+  </div>
+  <form class="quick-add" method="post" action="/jobs/add">
+    <input name="url" type="url" placeholder="Paste a job link…" aria-label="Job link" required>
+    <button class="btn primary" data-busy="Adding…">Add job</button>
+  </form>
+</header>
+
+{% if show_steps %}
+<section class="card" style="margin-bottom:1rem">
+  <div class="card-head"><h2>Get set up</h2><span class="muted small">{{ steps|selectattr('done')|list|length }} of {{ steps|length }} done</span></div>
+  <ol class="steps">
+    {% for s in steps %}
+    <li class="{{ 'done' if s.done }}"><a href="{{ s.href }}"><span class="check">{% if s.done %}✓{% else %}{{ loop.index }}{% endif %}</span><span><strong>{{ s.title }}</strong><small>{{ s.text }}</small></span></a></li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+
+<div class="tiles">
+  {% for label, n in counts.items() %}<a class="tile" href="/tracker"><div class="n">{{ n }}</div><div class="l">{{ label }}</div></a>{% endfor %}
+</div>
+
+{% if errors %}
+<section class="card warn" style="margin-bottom:1rem">
+  <h2>Some background work failed</h2>
+  <ul class="list">
+    {% for t in errors %}
+    <li><div class="grow"><span class="title">{{ task_labels.get(t.kind, t.kind) }}</span><span class="meta">{{ t.error }}</span></div>
+      <form method="post" action="/tasks/{{ t.id }}/retry" class="inline"><button class="btn small">Retry</button></form></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<div class="grid-2">
+  <section class="card">
+    <div class="card-head"><h2>Waiting for your review</h2><a class="small" href="/tracker">All applications</a></div>
+    {% if drafts %}
+    <ul class="list">
+      {% for a in drafts %}
+      {% set c = a.claims_d.get('counts', {}) %}
+      <li>
+        <div class="grow">
+          <a class="title" href="/applications/{{ a.id }}">{{ a.job_title or 'Untitled job' }}</a>
+          <span class="meta">{{ a.company_name or '' }}{% if a.deadline %} · {{ deadline(a.deadline) }}{% endif %}</span>
+          <div class="row small" style="margin-top:.2rem">
+            {% if a.status == 'drafting' %}<span class="pill st-drafting">Writing…</span>
+            {% elif a.status == 'ready' %}<span class="pill st-ready">Ready to send</span>
+            {% else %}<span class="pill st-draft">Draft</span>{% endif %}
+            {% if c.get('unsupported') %}<span class="pill bad">{{ c.unsupported }} unsupported claim{{ 's' if c.unsupported > 1 }}</span>
+            {% elif c.get('partly') %}<span class="pill warn">{{ c.partly }} to double-check</span>
+            {% elif a.claims_d %}<span class="pill good">Facts check out</span>{% endif %}
+            {% if a.voice_d.get('score') is not none %}<span class="pill">Voice {{ a.voice_d.score }}</span>{% endif %}
+          </div>
+        </div>
+        {{ score(a.fit_score) }}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="empty">Nothing to review. New drafts appear here when a strong match is found, or when you press “Write application” on a job.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>Best new matches</h2><a class="small" href="/jobs">All jobs</a></div>
+    {% if matches %}
+    <ul class="list">
+      {% for j in matches %}
+      <li>
+        {{ score(j.fit_score) }}
+        <div class="grow"><a class="title" href="/jobs/{{ j.id }}">{{ j.title }}</a><span class="meta">{{ j.company_name or '' }}{% if j.location %} · {{ j.location }}{% endif %}{% if j.deadline %} · {{ deadline(j.deadline) }}{% endif %}</span></div>
+        <form method="post" action="/jobs/{{ j.id }}/write" class="inline"><button class="btn small" data-busy="Starting…">Write</button></form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="empty">No unanswered matches right now. <a href="/settings#sources">Add a job feed</a> to have new jobs found and scored automatically.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Deadlines in the next 7 days</h2>
+    {% if deadlines %}
+    <ul class="list">
+      {% for d in deadlines %}
+      <li><div class="grow"><a class="title" href="{{ '/applications/%d'|format(d.app_id) if d.app_id else '/jobs/%d'|format(d.job_id) }}">{{ d.title }}</a><span class="meta">{{ d.company_name or '' }} · {{ deadline(d.deadline) }}{% if d.app_status %} · {{ 'draft ready' if d.app_status in ('draft','ready') else 'writing' }}{% else %} · not started{% endif %}</span></div>{{ score(d.fit_score) }}</li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="empty">No deadlines coming up.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Follow-ups due</h2>
+    {% if followups %}
+    <ul class="list">
+      {% for a in followups %}
+      <li><div class="grow"><a class="title" href="/applications/{{ a.id }}?tab=timeline">{{ a.job_title }}</a><span class="meta">{{ a.company_name or '' }} · sent {{ a.applied_at|ago }}, no answer yet</span></div>
+        <form method="post" action="/applications/{{ a.id }}/followup" class="inline"><button class="btn small" data-busy="Writing…">Draft follow-up</button></form></li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="empty">No one to chase yet. After {{ followup_days }} days without an answer, applications show up here.</p>{% endif %}
+  </section>
+
+  {% if interviews %}
+  <section class="card">
+    <h2>Interviews &amp; offers</h2>
+    <ul class="list">
+      {% for a in interviews %}
+      <li><div class="grow"><a class="title" href="/applications/{{ a.id }}?tab=interview">{{ a.job_title }}</a><span class="meta">{{ a.company_name or '' }} · {{ 'Offer!' if a.status == 'offer' else 'Interviewing' }}</span></div>
+        <a class="btn small" href="/applications/{{ a.id }}?tab=interview">Prep</a></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% from "_macros.html" import score, grade, deadline, progress %}
+{% block title %}{{ job.title or 'Job' }}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/jobs">Jobs</a>{% if source %} · found by {{ source.name }}{% endif %} · added {{ job.created_at|ago }}</div>
+<header class="page-head">
+  <div style="min-width:0">
+    <h1>{{ job.title or 'Reading the ad…' }}</h1>
+    <p class="sub">
+      {% if job.company_id %}<a href="/companies/{{ job.company_id }}">{{ job.company_name }}</a> {{ grade(badge) }}{% elif job.company_name %}{{ job.company_name }}{% endif %}
+      {% if job.location %} · {{ job.location }}{% endif %}{% if job.work_mode and job.work_mode != 'unknown' %} · {{ job.work_mode }}{% endif %}
+      {% if job.deadline %} · {{ deadline(job.deadline) }}{% elif job.d.get('deadline_note') %} · deadline: {{ job.d.deadline_note }}{% endif %}
+    </p>
+  </div>
+  <div class="row">
+    {% if app %}
+      <a class="btn primary" href="/applications/{{ app.id }}">Open application</a>
+    {% elif job.parse_status == 'parsed' %}
+      <form method="post" action="/jobs/{{ job.id }}/write" class="inline"><button class="btn primary" data-busy="Starting…">Write application</button></form>
+    {% endif %}
+    {% if job.url %}<a class="btn" href="{{ job.url }}" target="_blank" rel="noopener noreferrer">Open ad ↗</a>{% endif %}
+    {% if job.status != 'shortlisted' %}<form method="post" action="/jobs/{{ job.id }}/status" class="inline"><input type="hidden" name="status" value="shortlisted"><button class="btn">☆ Shortlist</button></form>{% endif %}
+    {% if job.status != 'dismissed' %}<form method="post" action="/jobs/{{ job.id }}/status" class="inline"><input type="hidden" name="status" value="dismissed"><button class="btn ghost">Not for me</button></form>
+    {% else %}<form method="post" action="/jobs/{{ job.id }}/status" class="inline"><input type="hidden" name="status" value="new"><button class="btn ghost">Restore</button></form>{% endif %}
+  </div>
+</header>
+
+{% if busy %}{{ progress(busy, task_labels, '/jobs/%d/progress'|format(job.id)) }}{% endif %}
+
+{% if job.parse_status == 'error' or (error and not busy) %}
+<section class="card danger" style="margin-bottom:1rem">
+  <h2>I couldn't finish reading this job</h2>
+  <p>{{ job.parse_error or error.error }}</p>
+  <form method="post" action="/jobs/{{ job.id }}/text">
+    <label for="adtext">Paste the ad text and I'll work from that:</label>
+    <textarea id="adtext" name="text" rows="8" placeholder="Copy the whole ad from your browser and paste it here"></textarea>
+    <div class="row" style="margin-top:.6rem"><button class="btn primary" data-busy="Reading…">Use this text</button>
+      {% if job.url %}<span class="muted small">or</span>{% endif %}</div>
+  </form>
+  {% if job.url %}<form method="post" action="/jobs/{{ job.id }}/reparse" style="margin-top:.5rem"><button class="btn small">Try the link again</button></form>{% endif %}
+</section>
+{% endif %}
+
+{% if job.status == 'filtered' %}
+<section class="card warn" style="margin-bottom:1rem">
+  <p style="margin:0">Quick screening filtered this job out, so it wasn't analysed. {% if job.notes %}<span class="text-2">{{ job.notes }}</span>{% endif %}</p>
+  <form method="post" action="/jobs/{{ job.id }}/reparse" style="margin-top:.6rem"><button class="btn small" data-busy="Starting…">Analyse it anyway</button></form>
+</section>
+{% endif %}
+
+{% if expired and not app %}<div class="flash err">The deadline for this job has passed.</div>{% endif %}
+
+<div class="split">
+  <div class="stack">
+    {% if job.f %}
+    <section class="card">
+      <div class="fit-head">
+        {{ score(job.fit_score, True) }}
+        <div>
+          <h2 style="margin:0">{{ {'strong':'Strong fit','good':'Good fit','stretch':'A stretch','poor':'Poor fit'}.get(job.f.verdict, 'Fit') }}</h2>
+          <div class="text-2">{{ job.f.summary }}</div>
+        </div>
+      </div>
+      {% if job.f.get('angle') %}<p><strong>Your best angle:</strong> {{ job.f.angle }}</p>{% endif %}
+      {% if job.f.get('dealbreakers') %}
+      <div class="card danger flat" style="margin-bottom:.8rem"><strong>Conflicts with your preferences</strong><ul class="bul">{% for d in job.f.dealbreakers %}<li>{{ d }}</li>{% endfor %}</ul></div>
+      {% endif %}
+      {% if job.f.get('matched') %}
+      <h3>Where you match</h3>
+      <ul class="fit-list matched">
+        {% for m in job.f.matched %}
+        <li><div class="req">{{ m.requirement }}</div><div class="ev">{{ m.evidence }}{% for fid in m.fact_ids %}{% set fct = facts.get(fid) %}<a class="fact-ref" href="/profile?tab=facts#fact-{{ fid }}" title="{{ fct.title if fct else 'fact' }}{{ ' — ' ~ fct.organization if fct and fct.organization }}">#{{ fid }}</a>{% endfor %}</div></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if job.f.get('gaps') %}
+      <h3 style="margin-top:1rem">Gaps</h3>
+      <ul class="fit-list gaps">
+        {% for g in job.f.gaps %}
+        <li class="{{ g.severity }}"><div class="req">{{ g.requirement }} <span class="pill {{ 'bad' if g.severity == 'major' else 'warn' }}">{{ g.severity }}</span></div>{% if g.how_to_address %}<div class="ev">{{ g.how_to_address }}</div>{% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if job.f.get('questions') %}
+      <h3 style="margin-top:1rem">Worth asking them</h3>
+      <ul class="bul">{% for qq in job.f.questions %}<li>{{ qq }}</li>{% endfor %}</ul>
+      {% endif %}
+      <form method="post" action="/jobs/{{ job.id }}/rescore" class="row end"><span class="muted small">Scored {{ job.scored_at|ago }}</span><button class="btn small ghost" data-busy="Scoring…">Score again</button></form>
+    </section>
+    {% elif job.parse_status == 'parsed' and not busy %}
+    <section class="card">
+      <h2>Not scored yet</h2>
+      <p class="text-2">Scoring compares the ad with your career database. Import your documents first if you haven't.</p>
+      <form method="post" action="/jobs/{{ job.id }}/rescore"><button class="btn" data-busy="Scoring…">Score fit now</button></form>
+    </section>
+    {% endif %}
+
+    {% if job.parse_status == 'parsed' %}
+    <section class="card">
+      <h2>The ad</h2>
+      {% if job.summary %}<p>{{ job.summary }}</p>{% endif %}
+      {% if job.d.get('responsibilities') %}<h3>Responsibilities</h3><ul class="bul">{% for x in job.d.responsibilities %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+      {% if job.d.get('requirements') %}<h3>Must-haves</h3><ul class="bul">{% for x in job.d.requirements %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+      {% if job.d.get('nice_to_have') %}<h3>Nice to have</h3><ul class="bul">{% for x in job.d.nice_to_have %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+      {% if job.d.get('benefits') %}<h3>They offer</h3><ul class="bul">{% for x in job.d.benefits %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+      {% if job.d.get('red_flags') %}<div class="card warn flat"><strong>Watch out</strong><ul class="bul">{% for x in job.d.red_flags %}<li>{{ x }}</li>{% endfor %}</ul></div>{% endif %}
+      {% if job.description %}<details style="margin-top:.8rem"><summary>Full ad text</summary><div class="adtext">{{ job.description }}</div></details>{% endif %}
+    </section>
+    {% endif %}
+  </div>
+
+  <div class="stack">
+    <section class="card">
+      <h2>Details</h2>
+      <dl class="kv">
+        {% for label, value in [('Employment', job.employment_type), ('Level', job.seniority if job.seniority != 'unknown' else ''), ('Language', job.language), ('Salary', job.salary), ('Posted', job.posted_at|nice_date), ('Deadline', job.deadline|nice_date or job.d.get('deadline_note')), ('Contact', job.contact_name), ('Email', job.contact_email), ('Phone', job.contact_phone), ('How to apply', {'portal':'Online form','email':'By email'}.get(job.apply_method, ''))] %}
+        {% if value %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endif %}
+        {% endfor %}
+      </dl>
+      {% if job.apply_url %}<p style="margin:.8rem 0 0"><a href="{{ job.apply_url }}" target="_blank" rel="noopener noreferrer">Application page ↗</a></p>{% endif %}
+    </section>
+
+    {% if job.company_id %}
+    <section class="card">
+      <div class="card-head"><h2>{{ job.company_name }}</h2>{{ grade(badge) }}</div>
+      {% if badge %}<ul class="bul small">{% for r in badge.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
+      {% else %}<p class="small text-2">No history with this employer yet. Once you apply, I track how fast they answer, whether they give real feedback, and whether they ghost.</p>{% endif %}
+      {% if job.reposted %}<p class="small"><span class="pill warn">re-posted</span> This company posted the same job more than 3 weeks ago.</p>{% endif %}
+      {% if company and company.notes %}<div class="quote">{{ company.notes }}</div>{% endif %}
+      <a class="small" href="/companies/{{ job.company_id }}">Company page →</a>
+    </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Your notes</h2>
+      <form method="post" action="/jobs/{{ job.id }}/notes">
+        <textarea name="notes" rows="4" placeholder="Anything I should know when writing, e.g. 'I spoke to Mette at their stand at the career fair'.">{{ job.notes or '' }}</textarea>
+        <div class="row end" style="margin-top:.5rem"><button class="btn small">Save notes</button></div>
+      </form>
+    </section>
+
+    <div class="row end">
+      {% if job.parse_status == 'parsed' %}<form method="post" action="/jobs/{{ job.id }}/reparse" class="inline"><button class="btn small ghost">Read the ad again</button></form>{% endif %}
+      <form method="post" action="/jobs/{{ job.id }}/delete" data-confirm="Delete this job{{ ' and its application' if app }}?" class="inline"><button class="btn small ghost danger">Delete job</button></form>
+    </div>
+  </div>
+</div>
+{% endblock %}

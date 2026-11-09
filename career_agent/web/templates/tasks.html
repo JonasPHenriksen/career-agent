@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Background tasks{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>Background tasks</h1><p class="sub">Everything the agent does on its own: reading, scoring, writing, checking sources.</p></div>
+  <form method="post" action="/tasks/clear"><button class="btn small">Clear finished</button></form>
+</header>
+<section class="card">
+  {% if rows %}
+  <div class="table-wrap">
+  <table class="data">
+    <thead><tr><th>Task</th><th>About</th><th>Status</th><th>Started</th><th>Took</th><th></th></tr></thead>
+    <tbody>
+      {% for t in rows %}
+      <tr>
+        <td>{{ labels.get(t.kind, t.kind) }}</td>
+        <td class="small">{% if t.ref %}{% set kind, _, rid = t.ref.partition(':') %}{% if kind == 'job' %}<a href="/jobs/{{ rid }}">job {{ rid }}</a>{% elif kind == 'app' %}<a href="/applications/{{ rid }}">application {{ rid }}</a>{% elif kind == 'doc' %}<a href="/documents/{{ rid }}">document {{ rid }}</a>{% elif kind == 'source' %}<a href="/settings#sources">source {{ rid }}</a>{% else %}{{ t.ref }}{% endif %}{% endif %}</td>
+        <td>{% if t.status == 'done' %}<span class="pill good">done</span>{% elif t.status == 'error' %}<span class="pill bad">failed</span><div class="small text-2" style="max-width:32rem">{{ t.error }}</div>{% elif t.status == 'running' %}<span class="pill accent">running</span>{% else %}<span class="pill">{{ t.status }}</span>{% endif %}</td>
+        <td class="small">{{ (t.started_at or t.created_at)|local_dt }}</td>
+        <td class="small">{{ t.started_at|duration(t.finished_at) }}</td>
+        <td>{% if t.status in ('error', 'cancelled') %}<form method="post" action="/tasks/{{ t.id }}/retry" class="inline"><button class="btn small">Retry</button></form>{% elif t.status == 'queued' %}<form method="post" action="/tasks/{{ t.id }}/cancel" class="inline"><button class="btn small ghost">Cancel</button></form>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No tasks yet.</p>{% endif %}
+</section>
+{% endblock %}

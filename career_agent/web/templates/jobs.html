@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% from "_macros.html" import score, grade, deadline %}
+{% block title %}Jobs{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Jobs</h1>
+    <p class="sub">Every job is read, scored against your real experience, and ranked. Strong matches get drafted automatically.</p>
+  </div>
+</header>
+
+<section class="card" style="margin-bottom:1rem">
+  <form method="post" action="/jobs/add">
+    <div class="row">
+      <input name="url" type="url" placeholder="https://… link to a job ad" aria-label="Job link" style="flex:1;min-width:240px">
+      <button class="btn primary" data-busy="Adding…">Add job</button>
+    </div>
+    <details style="margin-top:.6rem">
+      <summary>The site blocks robots, or the ad isn't online? Paste the ad text instead</summary>
+      <textarea name="text" placeholder="Paste the full job ad here…" rows="8"></textarea>
+      <p class="hint" style="margin-top:.4rem">Keep the link above too if you have it, so I can open it for you later.</p>
+    </details>
+  </form>
+  {% if sources %}
+  <p class="small muted" style="margin:.8rem 0 0">Watching {{ sources|length }} source{{ 's' if sources|length != 1 }}:
+    {% for s in sources %}<a href="/settings#sources">{{ s.name }}</a>{% if s.last_run_at %} ({{ s.last_run_at|ago }}){% endif %}{{ ', ' if not loop.last }}{% endfor %}.</p>
+  {% else %}
+  <p class="small muted" style="margin:.8rem 0 0">Tip: <a href="/settings#sources">add a job-search feed</a> (e.g. a Jobindex search) and new jobs arrive here by themselves.</p>
+  {% endif %}
+</section>
+
+{% if busy %}{% include "partials/jobs_progress.html" %}{% endif %}
+
+<nav class="tabs" aria-label="Job lists">
+  {% for key, label in [('inbox','Inbox'),('shortlisted','Shortlisted'),('applying','Applying'),('filtered','Filtered out'),('dismissed','Dismissed'),('all','All')] %}
+  <a href="/jobs?view={{ key }}&sort={{ sort }}" class="{{ 'active' if view == key }}">{{ label }}<span class="count">{{ counts.get(key) or 0 }}</span></a>
+  {% endfor %}
+</nav>
+
+<form class="row" method="get" action="/jobs" style="margin-bottom:.8rem">
+  <input type="hidden" name="view" value="{{ view }}">
+  <input type="search" name="q" value="{{ q }}" placeholder="Search title, company, place" style="max-width:280px">
+  <label class="sr-only" for="sort">Sort</label>
+  <select id="sort" name="sort" data-autosubmit style="width:auto">
+    <option value="score" {{ 'selected' if sort == 'score' }}>Best fit first</option>
+    <option value="newest" {{ 'selected' if sort == 'newest' }}>Newest first</option>
+    <option value="deadline" {{ 'selected' if sort == 'deadline' }}>Deadline first</option>
+  </select>
+  <button class="btn" data-no-busy="1">Search</button>
+</form>
+
+<section class="card">
+  {% if rows %}
+  {% for j in rows %}
+  <div class="jobrow">
+    {{ score(j.fit_score) }}
+    <div style="min-width:0">
+      <a class="t" href="/jobs/{{ j.id }}">{{ j.title or j.url or 'Untitled' }}</a>
+      <div class="m">
+        {% if j.company_name %}<span class="key">{{ j.company_name }} {{ grade(j.badge) }}</span>{% endif %}
+        {% if j.location %}<span>{{ j.location }}</span>{% endif %}
+        {% if j.work_mode and j.work_mode != 'unknown' %}<span>{{ j.work_mode }}</span>{% endif %}
+        {% if j.deadline %}{{ deadline(j.deadline) }}{% endif %}
+        {% if j.parse_status in ('pending', 'parsing') %}<span class="pill accent">reading…</span>{% elif j.parse_status == 'error' %}<span class="pill bad" title="{{ j.parse_error }}">couldn't read</span>{% elif j.parse_status == 'parsed' and j.fit_score is none %}<span class="pill">not scored</span>{% endif %}
+        {% if j.reposted %}<span class="pill warn" title="This company posted the same job before">re-posted</span>{% endif %}
+        {% if j.app_id %}<a class="pill st-{{ j.app_status }}" href="/applications/{{ j.app_id }}">application: {{ j.app_status }}</a>{% endif %}
+      </div>
+      {% if j.f.get('summary') %}<div class="why">{{ j.f.summary }}</div>{% elif j.status == 'filtered' and j.notes %}<div class="why">{{ j.notes }}</div>{% endif %}
+    </div>
+    <div class="acts">
+      {% if not j.app_id and j.parse_status == 'parsed' %}
+      <form method="post" action="/jobs/{{ j.id }}/write" class="inline"><button class="btn small" data-busy="Starting…">Write</button></form>
+      {% endif %}
+      {% if j.status != 'shortlisted' %}
+      <form method="post" action="/jobs/{{ j.id }}/status" class="inline"><input type="hidden" name="status" value="shortlisted"><button class="btn small ghost" title="Shortlist">☆</button></form>
+      {% endif %}
+      {% if j.status != 'dismissed' %}
+      <form method="post" action="/jobs/{{ j.id }}/status" class="inline"><input type="hidden" name="status" value="dismissed"><button class="btn small ghost" title="Not for me">✕</button></form>
+      {% else %}
+      <form method="post" action="/jobs/{{ j.id }}/status" class="inline"><input type="hidden" name="status" value="new"><button class="btn small ghost" title="Restore">↺</button></form>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <p class="empty">{% if view == 'inbox' %}Your inbox is empty. Paste a job link above, or <a href="/settings#sources">watch a job search</a> to have jobs arrive automatically.{% else %}Nothing here.{% endif %}</p>
+  {% endif %}
+</section>
+{% endblock %}

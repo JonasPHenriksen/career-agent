@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "_macros.html" import progress %}
+{% block title %}{{ d.title or d.filename }}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/profile?tab=documents">Documents</a></div>
+<header class="page-head">
+  <div><h1>{{ d.title or d.filename }}</h1><p class="sub">{{ d.filename }} · {{ d.word_count }} words · imported {{ d.created_at|local_date }}{% if d.source_path %} · from <code>{{ d.source_path }}</code>{% endif %}</p></div>
+  <div class="row">
+    <form method="post" action="/documents/{{ d.id }}/reanalyze" class="inline"><button class="btn" data-busy="Starting…">Analyse again</button></form>
+  </div>
+</header>
+{% if busy %}{{ progress(busy, {'analyze_document': 'Reading document'}, '/profile/progress') }}{% endif %}
+{% if d.status == 'error' %}<div class="flash err">{{ d.error }}</div>{% endif %}
+
+<div class="split">
+  <div class="stack">
+    {% if d.summary %}<section class="card"><p style="margin:0">{{ d.summary }}</p></section>{% endif %}
+    <section class="card">
+      <h2>Facts from this document <span class="muted small">{{ facts|length }}</span></h2>
+      {% if facts %}
+      <ul class="list">{% for f in facts %}<li><div class="grow"><a class="title" href="/profile?tab=facts#fact-{{ f.id }}">{{ f.title }}</a><span class="meta">{{ category_labels.get(f.category, f.category) }}{% if f.organization %} · {{ f.organization }}{% endif %}{% if f.verified %} · ✓ checked{% endif %}{% if f.hidden %} · hidden{% endif %}</span></div></li>{% endfor %}</ul>
+      {% else %}<p class="empty">No facts taken from this document{{ ' yet' if d.status != 'analyzed' }}.</p>{% endif %}
+    </section>
+    <section class="card">
+      <h2>Text</h2>
+      <div class="adtext">{{ d.text }}</div>
+    </section>
+  </div>
+  <div class="stack">
+    <section class="card">
+      <h2>About this document</h2>
+      <form method="post" action="/documents/{{ d.id }}">
+        <input type="hidden" name="flags" value="1">
+        <div class="field"><label for="title">Title</label><input id="title" name="title" type="text" value="{{ d.title or '' }}"></div>
+        <div class="field"><label for="kind">Type</label><select id="kind" name="kind">{% for k, l in kinds %}<option value="{{ k }}" {{ 'selected' if d.kind == k }}>{{ l }}</option>{% endfor %}</select></div>
+        <div class="fields-2">
+          <div class="field"><label for="language">Language</label><input id="language" name="language" type="text" value="{{ d.language or '' }}" placeholder="da, en…"></div>
+          <div class="field"><label for="doc_date">Date</label><input id="doc_date" name="doc_date" type="text" value="{{ d.doc_date or '' }}" placeholder="YYYY-MM-DD"></div>
+        </div>
+        {% if d.kind == 'application' %}
+        <div class="field"><label for="tc">Applied to</label><input id="tc" name="target_company" type="text" value="{{ d.target_company or '' }}"></div>
+        <div class="field"><label for="tr">Role</label><input id="tr" name="target_role" type="text" value="{{ d.target_role or '' }}"></div>
+        <div class="field"><label for="outcome">How it went</label><select id="outcome" name="outcome">{% for k, l in outcomes %}<option value="{{ k }}" {{ 'selected' if d.outcome == k }}>{{ l }}</option>{% endfor %}</select></div>
+        {% endif %}
+        <label class="check"><input type="checkbox" name="authored" value="1" {{ 'checked' if d.authored }}> <span>I wrote this text myself</span></label>
+        <label class="check"><input type="checkbox" name="use_for_style" value="1" {{ 'checked' if d.use_for_style }}> <span>Use it to learn my writing style</span></label>
+        <div class="row end" style="margin-top:.6rem"><button class="btn primary">Save</button></div>
+      </form>
+    </section>
+    <section class="card">
+      <h2>Delete</h2>
+      <form method="post" action="/documents/{{ d.id }}/delete" data-confirm="Delete this document?">
+        <label class="check"><input type="checkbox" name="with_facts" value="1"> <span>Also delete the facts taken from it (facts you've checked are kept)</span></label>
+        <button class="btn small danger" style="margin-top:.5rem">Delete document</button>
+      </form>
+    </section>
+  </div>
+</div>
+{% endblock %}

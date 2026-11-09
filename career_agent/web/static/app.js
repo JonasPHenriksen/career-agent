@@ -1,0 +1,129 @@
+// Career Agent: small progressive enhancements. Everything works without JS except live progress.
+(function () {
+  "use strict";
+
+  // Poll a URL and swap the element; reload the page when the server says the work is done.
+  function poll(el) {
+    const url = el.dataset.poll;
+    const every = Number(el.dataset.interval || 3000);
+    const reloadOnDone = el.dataset.reload !== "false";
+    const tick = async () => {
+      if (!document.body.contains(el)) return;
+      try {
+        const r = await fetch(url, { headers: { "X-Poll": "1" }, cache: "no-store" });
+        if (r.headers.get("X-Done") === "1") {
+          if (reloadOnDone) { location.reload(); } else { el.innerHTML = ""; }
+          return;
+        }
+        const html = (await r.text()).trim();
+        const box = document.createElement("div");
+        box.innerHTML = html;
+        const fresh = box.firstElementChild;
+        if (fresh && el.parentNode) {
+          el.replaceWith(fresh);
+          if (fresh.dataset.poll) poll(fresh);
+          return;
+        }
+      } catch (e) { /* offline or restarting: try again */ }
+      setTimeout(tick, every);
+    };
+    setTimeout(tick, el.dataset.eager ? 50 : every);
+  }
+
+  function init(root) {
+    root.querySelectorAll("[data-poll]").forEach(poll);
+
+    // Copy buttons: <button data-copy="#selector">
+    root.querySelectorAll("[data-copy]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const src = document.querySelector(btn.dataset.copy);
+        if (!src) return;
+        const text = "value" in src && src.value !== undefined ? src.value : src.innerText;
+        try {
+          await navigator.clipboard.writeText(text);
+          const old = btn.textContent;
+          btn.textContent = "Copied ✓";
+          setTimeout(() => (btn.textContent = old), 1600);
+        } catch (e) { alert("Couldn't copy. Select the text and press ⌘C."); }
+      });
+    });
+
+    // Instruction chips: <button data-fill="#textarea" data-text="…">
+    root.querySelectorAll("[data-fill]").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const t = document.querySelector(chip.dataset.fill);
+        if (!t) return;
+        t.value = t.value ? t.value.replace(/\s*$/, "") + "\n" + chip.dataset.text : chip.dataset.text;
+        t.focus();
+      });
+    });
+
+    // Confirm before destructive submits: <form data-confirm="…">
+    root.querySelectorAll("form[data-confirm]").forEach((f) => {
+      f.addEventListener("submit", (e) => { if (!confirm(f.dataset.confirm)) e.preventDefault(); });
+    });
+
+    // Submit selects on change: <select data-autosubmit>
+    root.querySelectorAll("select[data-autosubmit], input[data-autosubmit]").forEach((s) => {
+      s.addEventListener("change", () => s.form && s.form.requestSubmit());
+    });
+
+    // Prevent double submits and show that something is happening.
+    root.querySelectorAll("form").forEach((f) => {
+      f.addEventListener("submit", (e) => {
+        if (e.defaultPrevented) return;
+        const b = e.submitter || f.querySelector("button[type=submit], button:not([type])");
+        if (b && !b.dataset.noBusy) {
+          setTimeout(() => { b.classList.add("busy"); b.disabled = true; if (b.dataset.busy) b.textContent = b.dataset.busy; }, 0);
+        }
+      });
+    });
+
+    // Warn about unsaved edits in editors.
+    root.querySelectorAll("textarea.editor").forEach((t) => {
+      const initial = t.value;
+      const form = t.form;
+      let submitting = false;
+      if (form) form.addEventListener("submit", () => { submitting = true; });
+      window.addEventListener("beforeunload", (e) => {
+        if (!submitting && t.value !== initial) { e.preventDefault(); e.returnValue = ""; }
+      });
+    });
+
+    // Drag & drop upload zone.
+    root.querySelectorAll(".dropzone").forEach((zone) => {
+      const input = zone.querySelector("input[type=file]");
+      ["dragenter", "dragover"].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.add("over"); }));
+      ["dragleave", "drop"].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.remove("over"); }));
+      zone.addEventListener("drop", (e) => {
+        if (!input || !e.dataTransfer.files.length) return;
+        input.files = e.dataTransfer.files;
+        input.form.requestSubmit();
+      });
+      if (input) input.addEventListener("change", () => input.files.length && input.form.requestSubmit());
+    });
+
+    // Show/hide inline edit forms: <button data-toggle="#id">
+    root.querySelectorAll("[data-toggle]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const t = document.querySelector(b.dataset.toggle);
+        if (t) t.hidden = !t.hidden;
+      });
+    });
+
+    // Model picker: show the custom model field when an OpenAI-compatible server is chosen.
+    root.querySelectorAll("select[data-model-picker]").forEach((s) => {
+      const custom = document.querySelector(s.dataset.modelPicker);
+      const effort = document.querySelector(s.dataset.effort);
+      const sync = () => {
+        const provider = s.value.split("|")[0];
+        if (custom) custom.hidden = provider !== "openai";
+        if (effort) effort.hidden = provider !== "anthropic";
+      };
+      s.addEventListener("change", sync);
+      sync();
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", () => init(document));
+})();

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "_macros.html" import score, status, deadline %}
+{% block title %}Applications{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>Applications</h1><p class="sub">Everything you've written and sent, and how each employer is responding.</p></div>
+</header>
+
+{% if followups %}
+<section class="card warn" style="margin-bottom:1rem">
+  <strong>{{ followups|length }} application{{ 's' if followups|length > 1 }} without an answer for a while:</strong>
+  {% for a in followups %}<a href="/applications/{{ a.id }}?tab=timeline">{{ a.job_title }} ({{ a.company_name }})</a>{{ ', ' if not loop.last }}{% endfor %}.
+</section>
+{% endif %}
+
+<div class="board">
+  {% for label, items in columns %}
+  <section class="col">
+    <h2>{{ label }} <span>{{ items|length }}</span></h2>
+    {% for a in items %}
+    <a class="bcard" href="/applications/{{ a.id }}{{ '?tab=timeline' if a.applied_at else '' }}">
+      <div class="t">{{ a.job_title or 'Untitled' }}</div>
+      <div class="c">{{ a.company_name or '' }}</div>
+      <div class="m">
+        {{ status(a.status, status_labels) }}
+        <span>{% if a.applied_at %}{{ a.applied_at|days_since }}d ago{% elif a.deadline %}{{ deadline(a.deadline) }}{% endif %}</span>
+      </div>
+    </a>
+    {% else %}<p class="small muted">Empty</p>{% endfor %}
+  </section>
+  {% endfor %}
+</div>
+{% endblock %}

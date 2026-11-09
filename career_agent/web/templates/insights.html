@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Insights{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>Insights</h1><p class="sub">What's working, where employers drop the ball, and which skills keep coming up.</p></div>
+</header>
+
+<div class="tiles">
+  <div class="tile"><div class="n">{{ r.sent }}</div><div class="l">applications sent</div></div>
+  <div class="tile"><div class="n">{{ '%d%%'|format(r.response_rate) if r.response_rate is not none else '–' }}</div><div class="l">got an answer</div></div>
+  <div class="tile"><div class="n">{{ '%g'|format(r.median_wait) if r.median_wait is not none else '–' }}</div><div class="l">median days to answer</div></div>
+  <div class="tile"><div class="n">{{ '%d%%'|format(r.ghost_rate) if r.ghost_rate is not none else '–' }}</div><div class="l">never answered</div></div>
+  <div class="tile"><div class="n">{{ '%d%%'|format(r.feedback_rate) if r.feedback_rate is not none else '–' }}</div><div class="l">of rejections had real feedback</div></div>
+</div>
+
+<div class="grid-2">
+  <section class="card">
+    <h2>Your pipeline</h2>
+    {% set top = funnel[0].n or 1 %}
+    <div class="bars" role="list">
+      {% for s in funnel %}
+      <div class="bar-row" role="listitem" title="{{ s.label }}: {{ s.n }}">
+        <span class="lbl">{{ s.label }}</span>
+        <span class="track"><span class="fill" style="display:block;width:{{ (100 * s.n / top) if top else 0 }}%"></span></span>
+        <span class="val">{{ s.n }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Answer rate by fit score</h2>
+    {% if r.by_band %}
+    <div class="bars" role="list">
+      {% for b in r.by_band %}
+      <div class="bar-row" role="listitem" title="{{ b.label }}: {{ b.replies }} of {{ b.sent }} answered, {{ b.interviews }} interviews">
+        <span class="lbl">{{ b.label }}</span>
+        <span class="track"><span class="fill" style="display:block;width:{{ b.rate or 0 }}%"></span></span>
+        <span class="val">{{ '%d%%'|format(b.rate) if b.rate is not none else '–' }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    <table class="metric-table" style="margin-top:.8rem">
+      <thead><tr><th>Fit</th><th class="num">Sent</th><th class="num">Answered</th><th class="num">Interviews</th></tr></thead>
+      <tbody>{% for b in r.by_band %}<tr><td>{{ b.label }}</td><td class="num">{{ b.sent }}</td><td class="num">{{ b.replies }}</td><td class="num">{{ b.interviews }}</td></tr>{% endfor %}</tbody>
+    </table>
+    <p class="legend-note">Counts applications sent at least 14 days ago or already answered.</p>
+    {% else %}<p class="empty">Shows up once you've sent a few applications.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Skills employers ask for</h2>
+    {% if skills %}
+    {% set maxn = skills[0].jobs or 1 %}
+    <div class="bars" role="list">
+      {% for s in skills %}
+      <div class="bar-row" role="listitem" title="{{ s.skill }}: in {{ s.jobs }} ads · {{ 'in your profile' if s.covered else 'not in your profile' }}">
+        <span class="lbl">{{ s.skill }}</span>
+        <span class="track"><span class="fill" style="display:block;width:{{ 100 * s.jobs / maxn }}%"></span></span>
+        <span class="val">{{ s.jobs }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% set missing = skills|rejectattr('covered')|map(attribute='skill')|list %}
+    {% if missing %}<p class="small" style="margin-top:.8rem"><strong>Not in your career database:</strong> {{ missing|join(', ') }}. If you have them, add them under Profile; if not, they're worth learning.</p>{% endif %}
+    {% else %}<p class="empty">Appears once jobs have been read.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Employers</h2>
+    {% if ranks.best %}
+    <h3>Treat candidates best</h3>
+    <ul class="list">{% for c in ranks.best %}<li><span class="grade grade-{{ c.m.grade }}">{{ c.m.grade }}</span><div class="grow"><a class="title" href="/companies/{{ c.id }}">{{ c.name }}</a><span class="meta">{{ c.m.reasons|join(' · ') }}</span></div></li>{% endfor %}</ul>
+    {% if ranks.worst %}<h3 style="margin-top:1rem">Treat candidates worst</h3>
+    <ul class="list">{% for c in ranks.worst %}<li><span class="grade grade-{{ c.m.grade }}">{{ c.m.grade }}</span><div class="grow"><a class="title" href="/companies/{{ c.id }}">{{ c.name }}</a><span class="meta">{{ c.m.reasons|join(' · ') }}</span></div></li>{% endfor %}</ul>{% endif %}
+    {% else %}<p class="empty">Grades appear when employers have had 14 days to answer.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>AI usage, last {{ spend.days }} days</h2>
+    {% if spend.rows %}
+    <table class="metric-table">
+      <thead><tr><th>Model</th><th class="num">Calls</th><th class="num">Tokens in / out</th><th class="num">Est. cost</th></tr></thead>
+      <tbody>{% for s in spend.rows %}<tr><td>{{ s.model }} <span class="muted small">{{ 'on this Mac' if s.provider == 'ollama' else s.provider }}</span></td><td class="num">{{ s.calls }}</td><td class="num">{{ '{:,}'.format(s.inp or 0) }} / {{ '{:,}'.format(s.outp or 0) }}</td><td class="num">{{ '$%.2f'|format(s.cost or 0) if s.provider != 'ollama' else 'free' }}</td></tr>{% endfor %}</tbody>
+    </table>
+    <p class="legend-note">Estimated from published prices. Local models cost nothing but electricity.</p>
+    {% else %}<p class="empty">No AI calls yet.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% endblock %} · {{ app_name }}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232355c4'/><path d='M9 17l5 5 9-12' stroke='white' stroke-width='3.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="/"><span class="brand-mark">✓</span>{{ app_name }}</a>
+    <nav class="nav" aria-label="Main">
+      {% for href, label in nav %}<a href="{{ href }}" class="{{ 'active' if active == href }}">{{ label }}</a>{% endfor %}
+    </nav>
+    <div class="sidebar-foot">
+      <div data-poll="/tasks/indicator" data-interval="4000" data-reload="false" data-eager="1"><span class="muted">…</span></div>
+    </div>
+  </aside>
+  <main class="main">
+    {% if msg %}<div class="flash ok" role="status">{{ msg }}</div>{% endif %}
+    {% if err %}<div class="flash err" role="alert">{{ err }}</div>{% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

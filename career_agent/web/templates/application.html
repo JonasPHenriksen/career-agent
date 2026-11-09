@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+{% from "_macros.html" import score, grade, deadline, progress, status %}
+{% block title %}{{ a.job_title or 'Application' }}{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/tracker">Applications</a> · <a href="/jobs/{{ a.job_id }}">job details</a>{% if a.auto_drafted %} · drafted automatically{% endif %}</div>
+<header class="page-head">
+  <div style="min-width:0">
+    <h1>{{ a.job_title or 'Application' }}</h1>
+    <p class="sub">{% if a.company_id %}<a href="/companies/{{ a.company_id }}">{{ a.company_name }}</a> {{ grade(badge) }}{% else %}{{ a.company_name or '' }}{% endif %}
+      {% if a.deadline %} · {{ deadline(a.deadline) }}{% endif %}{% if a.applied_at %} · sent {{ a.applied_at|local_date }}{% endif %}</p>
+  </div>
+  <div class="row">
+    {{ score(a.fit_score) }}
+    <form method="post" action="/applications/{{ a.id }}/status" class="row">
+      <label class="sr-only" for="st">Status</label>
+      <select id="st" name="status" data-autosubmit style="width:auto">
+        {% for key, label in statuses %}{% if key != 'drafting' or a.status == 'drafting' %}<option value="{{ key }}" {{ 'selected' if a.status == key }}>{{ label }}</option>{% endif %}{% endfor %}
+      </select>
+    </form>
+  </div>
+</header>
+
+{% if busy %}{{ progress(busy, task_labels, '/applications/%d/progress'|format(a.id)) }}{% endif %}
+{% if error and not busy %}
+<div class="card danger" style="margin-bottom:1rem">
+  <strong>{{ task_labels.get(error.kind, error.kind) }} failed:</strong> {{ error.error }}
+  <form method="post" action="/tasks/{{ error.id }}/retry" class="inline" style="margin-left:.5rem"><button class="btn small">Try again</button></form>
+</div>
+{% endif %}
+
+<nav class="tabs" aria-label="Application sections">
+  {% for key, label in tabs %}
+  <a href="?tab={{ key }}" class="{{ 'active' if tab == key }}">{{ label }}{% if key == 'check' and claims.get('counts') %}{% set u = claims.counts.get('unsupported', 0) + claims.counts.get('partly', 0) %}{% if u %}<span class="count">· {{ u }}</span>{% endif %}{% endif %}{% if key == 'voice' and v.get('score') is not none %}<span class="count">· {{ v.score }}</span>{% endif %}</a>
+  {% endfor %}
+</nav>
+
+{% if not a.letter and a.status == 'drafting' %}
+  <p class="empty">Your application is being written. Facts come only from your career database; the voice comes from your own past applications.</p>
+{% elif tab == 'letter' %}
+<div class="split">
+  <section class="card">
+    <form method="post" action="/applications/{{ a.id }}/save">
+      <div class="field"><label for="subject">Subject</label><input id="subject" name="subject" type="text" value="{{ a.subject or '' }}"></div>
+      <div class="field"><label for="letter">Letter <span class="hint">· {{ (a.letter or '').split()|length }} words</span></label>
+        <textarea id="letter" name="letter" class="editor">{{ a.letter or '' }}</textarea></div>
+      <div class="row"><button class="btn primary">Save edits</button><button type="button" class="btn" data-copy="#letter">Copy text</button><span class="spacer"></span>
+        <a class="btn ghost" href="/applications/{{ a.id }}/export/letter.pdf?view=1" target="_blank">Preview PDF</a></div>
+    </form>
+  </section>
+  <div class="stack">
+    <section class="card">
+      <h2>Ask for changes</h2>
+      <form method="post" action="/applications/{{ a.id }}/revise">
+        <input type="hidden" name="part" value="letter">
+        <div class="chips">
+          {% for c in ['Make it shorter', 'More concrete results', 'More personal, less formal', 'More formal', 'Stronger opening', 'Explain why this company'] %}
+          <button type="button" class="chip" data-fill="#instr" data-text="{{ c }}.">{{ c }}</button>
+          {% endfor %}
+        </div>
+        <textarea id="instr" name="instructions" rows="4" placeholder="e.g. Mention my project at Novo instead of the bank one, and say I can start 1 March."></textarea>
+        <div class="row end" style="margin-top:.5rem"><button class="btn" data-busy="Revising…">Revise letter</button></div>
+      </form>
+    </section>
+    {% if notes %}
+    <section class="card"><h2>Notes from the writer</h2><ul class="notes">{% for n in notes %}<li>{{ n }}</li>{% endfor %}</ul></section>
+    {% endif %}
+    <section class="card">
+      <h2>Check</h2>
+      {% set cnt = claims.get('counts', {}) %}
+      {% if claims %}
+        <p class="small">{% if cnt.get('unsupported') %}<span class="pill bad">{{ cnt.unsupported }} unsupported</span> {% endif %}{% if cnt.get('partly') %}<span class="pill warn">{{ cnt.partly }} stretched</span> {% endif %}<span class="pill good">{{ cnt.get('supported', 0) }} backed by facts</span></p>
+        <a class="small" href="?tab=check">See the fact check →</a>
+      {% else %}<p class="small text-2">No fact check yet.</p>{% endif %}
+      {% if v %}<p class="small" style="margin-top:.6rem">Voice match <strong>{{ v.score }}</strong>/100 · <a href="?tab=voice">details</a></p>{% endif %}
+      <form method="post" action="/applications/{{ a.id }}/check"><button class="btn small" data-busy="Checking…">Run fact check again</button></form>
+    </section>
+    <section class="card">
+      <h2>Start over</h2>
+      <form method="post" action="/applications/{{ a.id }}/redraft" data-confirm="Write a completely new draft? The current one is kept under Versions.">
+        <textarea name="instructions" rows="3" placeholder="Instructions for the new draft (optional)">{{ a.instructions or '' }}</textarea>
+        <div class="row end" style="margin-top:.5rem"><button class="btn small">New draft</button></div>
+      </form>
+    </section>
+  </div>
+</div>
+
+{% elif tab == 'cv' %}
+<div class="grid-2">
+  <section class="card">
+    <form method="post" action="/applications/{{ a.id }}/save">
+      <div class="field"><label for="cv">Tailored CV <span class="hint">· Markdown: # headline, ## section, ### Role — Employer, - bullet</span></label>
+        <textarea id="cv" name="cv" class="editor code">{{ a.cv or '' }}</textarea></div>
+      <div class="row"><button class="btn primary">Save edits</button><span class="spacer"></span><a class="btn ghost" href="/applications/{{ a.id }}/export/cv.pdf?view=1" target="_blank">Preview PDF</a></div>
+    </form>
+    <form method="post" action="/applications/{{ a.id }}/revise" style="margin-top:1rem">
+      <input type="hidden" name="part" value="cv">
+      <label for="cvinstr">Ask for changes</label>
+      <div class="chips">{% for c in ['Fit it on one page', 'Lead with the most relevant role', 'Shorter bullets', 'Emphasise leadership'] %}<button type="button" class="chip" data-fill="#cvinstr" data-text="{{ c }}.">{{ c }}</button>{% endfor %}</div>
+      <textarea id="cvinstr" name="instructions" rows="3"></textarea>
+      <div class="row end" style="margin-top:.5rem"><button class="btn" data-busy="Revising…">Revise CV</button></div>
+    </form>
+  </section>
+  <section class="cv-preview prose" aria-label="CV preview">{{ a.cv|md }}</section>
+</div>
+
+{% elif tab == 'check' %}
+<div class="split">
+  <section class="card">
+    <div class="card-head"><h2>Your letter, fact-checked</h2>
+      <span class="small"><span class="key"><mark class="claim claim-supported">backed</mark></span> · <span class="key"><mark class="claim claim-partly">stretched</mark></span> · <span class="key"><mark class="claim claim-unsupported">unsupported</mark></span></span></div>
+    <div class="letter-view">{{ highlight_claims(a.letter, claims.get('claims'), 'letter') }}</div>
+  </section>
+  <div class="stack">
+    <section class="card">
+      <h2>Verdict</h2>
+      {% if claims %}
+        <p>{{ claims.summary }}</p>
+        <p class="small muted">Checked {{ claims.checked_at|ago }}. Edited since? Run it again.</p>
+      {% else %}<p class="text-2">Not checked yet.</p>{% endif %}
+      <form method="post" action="/applications/{{ a.id }}/check"><button class="btn small" data-busy="Checking…">Run fact check</button></form>
+    </section>
+    {% set problems = (claims.get('claims') or [])|rejectattr('status', 'equalto', 'supported')|list %}
+    <section class="card">
+      <h2>{{ 'Fix these before sending' if problems else 'Claims' }}</h2>
+      <ul class="claims">
+        {% for c in problems + ((claims.get('claims') or [])|selectattr('status', 'equalto', 'supported')|list) %}
+        <li class="{{ c.status }}"><span class="ic" aria-label="{{ c.status }}">{{ {'supported':'✓','partly':'!','unsupported':'✕'}.get(c.status, '?') }}</span>
+          <div><q>{{ c.text }}</q> <span class="muted small">({{ c.where }})</span>
+            {% if c.note %}<div class="small text-2">{{ c.note }}</div>{% endif %}
+            {% if c.source %}
+            <div class="small" style="margin-top:.25rem">Found in <a href="/documents/{{ c.source.document_id }}">{{ c.source.title }}</a>: <q>{{ c.source.quote }}</q></div>
+            <form method="post" action="/facts/add" class="row" style="margin-top:.3rem">
+              <input type="hidden" name="title" value="{{ c.text }}"><input type="hidden" name="evidence" value="{{ c.source.quote }}">
+              <input type="hidden" name="document_id" value="{{ c.source.document_id }}"><input type="hidden" name="next" value="/applications/{{ a.id }}?tab=check">
+              <select name="category" aria-label="Type of fact" style="width:auto">{% for key, label in [('achievement','Achievement'),('experience','Experience'),('skill','Skill'),('project','Project'),('education','Education'),('certification','Certification'),('value','Motivation & values')] %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+              <button class="btn small">Add to career database</button>
+            </form>
+            {% endif %}
+            {% if c.fact_ids %}<div class="small">{% for fid in c.fact_ids %}{% set fct = facts.get(fid) %}<a class="fact-ref" href="/profile?tab=facts#fact-{{ fid }}" title="{{ fct.title if fct }}{{ ' — “' ~ fct.evidence ~ '”' if fct and fct.evidence }}">#{{ fid }}</a> {% endfor %}</div>{% endif %}
+          </div></li>
+        {% else %}<li class="empty">No claims listed.</li>{% endfor %}
+      </ul>
+    </section>
+  </div>
+</div>
+
+{% elif tab == 'voice' %}
+<div class="split">
+  <section class="card">
+    <div class="fit-head">{{ score(v.get('score'), True) }}<div><h2 style="margin:0">Voice match</h2><div class="text-2">How this letter compares with {{ v.get('baseline_samples') or 'none' }} of your own applications.</div></div></div>
+    {% if v.get('metrics') %}
+    <table class="metric-table">
+      <thead><tr><th>Measure</th><th class="num">This letter</th><th class="num">You usually</th><th></th></tr></thead>
+      <tbody>{% for m in v.metrics %}<tr><td>{{ m.label }}</td><td class="num">{{ m.draft }}</td><td class="num">{{ m.yours if m.yours is not none else '–' }}</td><td class="{{ 'flagged' if m.flag }}">{{ m.flag }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+    {% for n in v.get('notes', []) %}<p class="small text-2" style="margin-top:.8rem">{{ n }}</p>{% endfor %}
+  </section>
+  <section class="card">
+    <h2>Phrases that don't sound like you</h2>
+    {% if v.get('phrases') %}
+    <p class="small text-2">Stock phrases found in the letter that never appear in your own writing:</p>
+    <ul class="bul">{% for p in v.phrases %}<li>“{{ p.phrase }}”{% if p.count > 1 %} ×{{ p.count }}{% endif %}</li>{% endfor %}</ul>
+    <form method="post" action="/applications/{{ a.id }}/revise">
+      <input type="hidden" name="part" value="letter">
+      <input type="hidden" name="instructions" value="Rewrite the sentences containing these phrases in my own words: {{ v.phrases|map(attribute='phrase')|join(', ') }}.">
+      <button class="btn small" data-busy="Revising…">Rewrite those in my words</button>
+    </form>
+    {% else %}<p class="text-2">None found.</p>{% endif %}
+    <p class="small muted" style="margin-top:1rem">Add your own pet-hate phrases under Settings → Writing.</p>
+  </section>
+</div>
+
+{% elif tab == 'send' %}
+<section class="card" style="max-width:52rem">
+  <ol class="send-steps">
+    <li><strong>Read it once more.</strong>
+      {% set cnt = claims.get('counts', {}) %}
+      {% if cnt.get('unsupported') or cnt.get('partly') %}<div class="small" style="margin-top:.3rem"><span class="pill warn">{{ cnt.get('unsupported', 0) + cnt.get('partly', 0) }} claim(s) to check</span> <a href="?tab=check">Open the fact check</a></div>
+      {% elif claims %}<div class="small text-2">The fact check found nothing unsupported.</div>{% endif %}
+      {% if a.status in ('draft', 'drafting') %}<form method="post" action="/applications/{{ a.id }}/status" style="margin-top:.5rem"><input type="hidden" name="status" value="ready"><button class="btn small">Mark as ready to send</button></form>{% endif %}
+    </li>
+    <li><strong>Download the documents</strong>
+      <div class="row" style="margin-top:.4rem">
+        <a class="btn" href="/applications/{{ a.id }}/export/letter.pdf">Letter PDF</a>
+        <a class="btn" href="/applications/{{ a.id }}/export/cv.pdf">CV PDF</a>
+        <a class="btn ghost" href="/applications/{{ a.id }}/export/letter.docx">Letter .docx</a>
+        <a class="btn ghost" href="/applications/{{ a.id }}/export/cv.docx">CV .docx</a>
+      </div>
+      <p class="small muted" style="margin:.4rem 0 0">Your name and contact details come from Profile → About you. Style and accent colour: Settings → Writing.</p>
+    </li>
+    <li><strong>Send it</strong> <span class="text-2">(you press the final button: nothing is sent without you)</span>
+      <div class="row" style="margin-top:.4rem">
+        {% if a.apply_url or a.job_url %}<a class="btn primary" href="{{ a.apply_url or a.job_url }}" target="_blank" rel="noopener noreferrer">Open the application page ↗</a>{% endif %}
+        <form method="post" action="/applications/{{ a.id }}/mail" class="inline"><button class="btn" data-busy="Opening Mail…">Create email in Mail{% if a.contact_email %} to {{ a.contact_email }}{% endif %}</button></form>
+        <button type="button" class="btn ghost" data-copy="#lettertext">Copy letter text</button>
+      </div>
+      <textarea id="lettertext" hidden>{{ a.letter or '' }}</textarea>
+      {% if a.apply_method == 'email' and a.contact_email %}<p class="small text-2" style="margin:.4rem 0 0">The ad asks for applications by email.</p>{% endif %}
+    </li>
+    <li><strong>Mark it as sent</strong> so I can track their response and remind you to follow up.
+      {% if a.applied_at %}<p class="small" style="margin:.4rem 0 0"><span class="pill good">Sent {{ a.applied_at|local_date }}</span></p>
+      {% else %}
+      <form method="post" action="/applications/{{ a.id }}/applied" class="row" style="margin-top:.4rem">
+        <input type="date" name="date" value="{{ today }}" style="width:auto" aria-label="Date sent"><button class="btn primary">I've sent it</button>
+      </form>{% endif %}
+    </li>
+  </ol>
+</section>
+
+{% elif tab == 'timeline' %}
+<div class="split">
+  <section class="card">
+    <h2>Timeline</h2>
+    {% if timeline %}
+    <ul class="timeline">
+      {% for e in timeline %}
+      <li class="{{ 'response' if e.type in ('info_request','interview_invite','interview_done') else 'good' if e.type in ('offer','accepted') else 'bad' if e.type in ('rejected_generic','rejected_feedback','ghosted') }}">
+        <div class="row"><strong>{{ event_labels.get(e.type, e.type) }}</strong><span class="when">{{ e.occurred_at|local_date }}</span>
+          <form method="post" action="/applications/{{ a.id }}/event/{{ e.id }}/delete" class="inline" data-confirm="Remove this event?"><button class="btn small ghost" title="Remove">✕</button></form></div>
+        {% if e.summary %}<div class="text-2">{{ e.summary }}</div>{% endif %}
+        {% if e.feedback %}<div class="quote"><strong>Feedback:</strong> {{ e.feedback }}</div>{% endif %}
+        {% if e.content %}<details><summary class="small">Original message</summary><div class="quote">{{ e.content }}</div></details>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="empty">Nothing yet. Mark the application as sent from the Send tab.</p>{% endif %}
+  </section>
+  <div class="stack">
+    <section class="card">
+      <h2>Got a reply?</h2>
+      <form method="post" action="/applications/{{ a.id }}/reply">
+        <textarea name="text" rows="6" placeholder="Paste their email or message. I'll work out what it is (rejection, interview…), pull out any real feedback, and update the status and the company's record."></textarea>
+        <div class="row end" style="margin-top:.5rem"><button class="btn primary" data-busy="Reading…">Read reply</button></div>
+      </form>
+    </section>
+    <section class="card">
+      <h2>Add an event yourself</h2>
+      <form method="post" action="/applications/{{ a.id }}/event">
+        <div class="fields-2">
+          <div class="field"><label for="etype">What happened</label><select id="etype" name="type">{% for k, l in event_types %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></div>
+          <div class="field"><label for="edate">When</label><input id="edate" type="date" name="date" value="{{ today }}"></div>
+        </div>
+        <div class="field"><label for="esum">Note</label><input id="esum" type="text" name="summary"></div>
+        <div class="field"><label for="efb">Feedback they gave (if any)</label><input id="efb" type="text" name="feedback"></div>
+        <div class="row end"><button class="btn">Add</button></div>
+      </form>
+    </section>
+    {% if a.applied_at %}
+    <section class="card">
+      <h2>Follow-up</h2>
+      {% if a.followup_draft %}
+        <div class="quote" id="fu">{{ a.followup_draft }}</div>
+        <div class="row"><button type="button" class="btn small" data-copy="#fu">Copy</button>
+          <form method="post" action="/applications/{{ a.id }}/followup-sent" class="inline"><button class="btn small">I sent it</button></form>
+          <form method="post" action="/applications/{{ a.id }}/followup" class="inline"><button class="btn small ghost" data-busy="Writing…">Rewrite</button></form></div>
+      {% else %}
+        <p class="small text-2">No answer after a while? A short, polite nudge in your own voice.</p>
+        <form method="post" action="/applications/{{ a.id }}/followup"><button class="btn small" data-busy="Writing…">Draft a follow-up email</button></form>
+      {% endif %}
+    </section>
+    {% endif %}
+  </div>
+</div>
+
+{% elif tab == 'interview' %}
+<section class="card">
+  <div class="card-head"><h2>Interview preparation</h2>
+    <form method="post" action="/applications/{{ a.id }}/prep" class="inline"><button class="btn {{ '' if a.interview_prep else 'primary' }}" data-busy="Preparing…">{{ 'Prepare again' if a.interview_prep else 'Prepare me' }}</button></form></div>
+  {% if a.interview_prep %}<div class="prose">{{ a.interview_prep|md }}</div>
+  {% else %}<p class="text-2">Likely questions with answers built from your real experience, the gaps they may probe, every claim you made in the application, and good questions to ask them.</p>{% endif %}
+</section>
+
+{% elif tab == 'history' %}
+<section class="card">
+  <h2>Versions</h2>
+  {% if versions %}
+  <ul class="list">
+    {% for ver in versions %}
+    <li><div class="grow"><span class="title">{{ ver.label }}</span><span class="meta">{{ ver.created_at|local_dt }} · {{ (ver.letter or '').split()|length }} words</span>
+      <details><summary class="small">Show letter</summary><div class="letter-view">{{ ver.letter|paras }}</div></details></div>
+      <form method="post" action="/applications/{{ a.id }}/restore/{{ ver.id }}" data-confirm="Restore this version? The current text is saved as a version first."><button class="btn small">Restore</button></form></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty">No earlier versions.</p>{% endif %}
+  <hr>
+  <form method="post" action="/applications/{{ a.id }}/delete" data-confirm="Delete this application and its history? The job stays."><button class="btn small ghost danger">Delete application</button></form>
+</section>
+{% endif %}
+{% endblock %}

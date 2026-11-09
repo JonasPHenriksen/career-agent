@@ -1,0 +1,1 @@
+<div data-poll="/tasks/indicator" data-interval="4000" data-reload="false" class="indicator">{% if n %}<span class="spinner" aria-hidden="true"></span><a href="/tasks">{% if running %}{{ labels.get(running[0].kind, running[0].kind) }}{% else %}Queued{% endif %}{% if n > 1 %} · {{ n }} tasks{% endif %}</a>{% else %}<a href="/tasks" class="muted">All caught up</a>{% endif %}</div>

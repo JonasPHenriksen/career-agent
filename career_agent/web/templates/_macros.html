@@ -1,0 +1,26 @@
+{% macro score(s, big=False) -%}
+<span class="score {{ s|score_class }}{{ ' big' if big }}" title="Fit score (0-100)">{{ s if s is not none else '–' }}</span>
+{%- endmacro %}
+
+{% macro grade(b) -%}
+{% if b %}<span class="grade grade-{{ b.grade }}" title="How they treat candidates: {{ b.score }}/100. {{ b.reasons|join(' · ') }}">{{ b.grade }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro status(st, labels) -%}
+<span class="pill st-{{ st }}">{{ labels.get(st, st) }}</span>
+{%- endmacro %}
+
+{% macro deadline(d) -%}
+{% if d %}{% set n = d|days_until %}<span class="{{ 'deadline-past' if n is not none and n < 0 else ('deadline-soon' if n is not none and n <= 5) }}">{{ d|deadline_text }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro progress(busy, labels, url) -%}
+<div class="progress" data-poll="{{ url }}" data-interval="3000" role="status">
+  <span class="spinner" aria-hidden="true"></span>
+  <div>
+    {% set running = busy|selectattr('status', 'equalto', 'running')|list %}
+    {% if running %}<strong>{{ labels.get(running[0].kind, running[0].kind) }}…</strong>{% else %}<strong>Waiting in line…</strong>{% endif %}
+    <div class="small text-2">{% if busy|length > 1 %}{{ busy|length }} steps queued. {% endif %}This page updates by itself. You can leave it; the work continues in the background.</div>
+  </div>
+</div>
+{%- endmacro %}

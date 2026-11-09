@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% macro model_select(tier, current) %}
+<select id="{{ tier }}_model" name="{{ tier }}_model" data-model-picker="#{{ tier }}_custom_wrap" data-effort="#{{ tier }}_effort_wrap">
+  <optgroup label="Claude (cloud, best quality)">
+    {% for mid, label in anthropic_models %}<option value="anthropic|{{ mid }}" {{ 'selected' if current.provider == 'anthropic' and current.model == mid }}>{{ label }}</option>{% endfor %}
+  </optgroup>
+  <optgroup label="On this Mac (Ollama, private and free)">
+    {% for m in st.ollama_models %}<option value="ollama|{{ m }}" {{ 'selected' if current.provider == 'ollama' and current.model == m }}>{{ m }}</option>{% else %}<option disabled>No Ollama models found</option>{% endfor %}
+    {% if current.provider == 'ollama' and current.model not in st.ollama_models %}<option value="ollama|{{ current.model }}" selected>{{ current.model }} (not installed)</option>{% endif %}
+  </optgroup>
+  <optgroup label="Other server (LM Studio, MLX, llama.cpp…)">
+    <option value="openai|{{ current.model if current.provider == 'openai' else '' }}" {{ 'selected' if current.provider == 'openai' }}>OpenAI-compatible server…</option>
+  </optgroup>
+  {% if not current.provider %}<option value="" selected disabled>Choose a model</option>{% endif %}
+</select>
+<div id="{{ tier }}_custom_wrap" class="field" style="margin-top:.5rem" hidden><label for="{{ tier }}_custom">Model name on that server</label><input id="{{ tier }}_custom" type="text" name="{{ tier }}_custom" value="{{ current.model if current.provider == 'openai' else '' }}"></div>
+<div id="{{ tier }}_effort_wrap" class="field" style="margin-top:.5rem" hidden><label for="{{ tier }}_effort">Effort <span class="hint">· higher = more careful, slower, pricier</span></label>
+  <select id="{{ tier }}_effort" name="{{ tier }}_effort">{% for e in efforts %}<option value="{{ e }}" {{ 'selected' if current.effort == e }}>{{ e }}</option>{% endfor %}</select></div>
+{% endmacro %}
+{% block content %}
+<header class="page-head"><div><h1>Settings</h1></div></header>
+
+<div class="stack">
+<section class="card" id="models">
+  <h2>AI models</h2>
+  <div class="grid-3" style="margin-bottom:1rem">
+    <div class="card flat"><strong>Claude API key</strong><div class="small">{% if st.anthropic_key %}<span class="pill good">saved</span> in your {{ st.anthropic_key }}{% else %}<span class="pill">not added</span>{% endif %}</div></div>
+    <div class="card flat"><strong>Ollama on this Mac</strong><div class="small">{% if st.ollama_running %}<span class="pill good">running</span> {{ st.ollama_models|length }} model{{ 's' if st.ollama_models|length != 1 }}{% else %}<span class="pill bad">not running</span> open the Ollama app{% endif %}</div></div>
+    <div class="card flat"><strong>Privacy</strong><div class="small">{% if st.local_only %}<span class="pill good">local only</span> nothing leaves this Mac{% else %}<span class="pill">cloud allowed</span>{% endif %}</div></div>
+  </div>
+
+  <form method="post" action="/settings/models">
+    <div class="grid-2">
+      <div class="field"><label for="writing_model">Writing <span class="hint">· letters, CVs, interview prep, style guide</span></label>{{ model_select('writing', cfg.writing) }}</div>
+      <div class="field"><label for="analysis_model">Analysis <span class="hint">· reading documents and ads, scoring, fact checks</span></label>{{ model_select('analysis', cfg.analysis) }}</div>
+    </div>
+    <details>
+      <summary>Local model and privacy options</summary>
+      <div class="fields-3">
+        <div class="field"><label for="ollama_url">Ollama address</label><input id="ollama_url" type="text" name="ollama_url" value="{{ cfg.ollama_url }}"></div>
+        <div class="field"><label for="ollama_num_ctx">Context size (tokens)</label><input id="ollama_num_ctx" type="number" name="ollama_num_ctx" value="{{ cfg.ollama_num_ctx }}" step="4096"></div>
+        <div class="field"><label for="openai_base_url">OpenAI-compatible server</label><input id="openai_base_url" type="text" name="openai_base_url" value="{{ cfg.openai_base_url }}"></div>
+        <div class="field"><label for="concurrency">Parallel tasks <span class="hint">(0 = automatic)</span></label><input id="concurrency" type="number" name="concurrency" value="{{ cfg.concurrency }}" min="0" max="8"></div>
+      </div>
+      <label class="check"><input type="checkbox" name="local_only" value="1" {{ 'checked' if cfg.local_only }}> <span><strong>Local only:</strong> block all cloud models, so your documents never leave this Mac.</span></label>
+      <label class="check"><input type="checkbox" name="redact_for_cloud" value="1" {{ 'checked' if cfg.redact_for_cloud }}> <span>Remove CPR/ID numbers, bank and card numbers before anything is sent to a cloud model.</span></label>
+    </details>
+    <div class="row" style="margin-top:.8rem"><button class="btn primary">Save model settings</button>
+      <button class="btn" formaction="/settings/test/writing" data-busy="Testing…">Test writing model</button>
+      <button class="btn" formaction="/settings/test/analysis" data-busy="Testing…">Test analysis model</button></div>
+  </form>
+  <p class="small text-2" style="margin-top:.6rem">Tip: save before testing. Local models are free and private; Claude writes noticeably better letters. A common setup is Claude for writing and the local model for analysis.</p>
+
+  <hr>
+  <form method="post" action="/settings/key">
+    <input type="hidden" name="provider" value="anthropic">
+    <label for="key">Anthropic API key <span class="hint">· from console.anthropic.com → API keys. Stored in your macOS Keychain.</span></label>
+    <div class="row"><input id="key" type="password" name="key" placeholder="sk-ant-…" autocomplete="off" style="flex:1;min-width:240px">
+      <label class="check" style="margin:0"><input type="checkbox" name="use_claude" value="1"> <span>Use Claude for both tiers</span></label>
+      <button class="btn">Save key</button>
+      {% if st.anthropic_key == 'keychain' %}<button class="btn ghost danger" name="delete" value="1" formnovalidate>Remove key</button>{% endif %}</div>
+  </form>
+</section>
+
+<section class="card" id="search">
+  <h2>Search &amp; fact check</h2>
+  <div class="grid-3" style="margin-bottom:1rem">
+    <div class="card flat"><strong>Search by meaning</strong><div class="small">{% if search.available %}<span class="pill good">on</span> {{ search.model }} on this Mac{% else %}<span class="pill">off</span> keyword search only{% endif %}</div></div>
+    <div class="card flat"><strong>Indexed passages</strong><div class="small">{{ search.embedded }} of {{ search.passages }}</div></div>
+    <div class="card flat"><strong>Fact check</strong><div class="small">uses the {{ {'analysis': 'Analysis', 'writing': 'Writing'}.get(cfg.check_with, 'automatically chosen') }} model</div></div>
+  </div>
+  <p class="small text-2">Your documents are split into passages and indexed locally. That lets drafts use the facts most relevant to each job when not everything fits (mostly with local models), picks the most similar past letters as examples, and lets the fact check look through your original documents before calling a claim unsupported. Nothing leaves this Mac.</p>
+  <form method="post" action="/settings/search">
+    <div class="fields-2">
+      <div class="field"><label for="embed_model">Embedding model in Ollama <span class="hint">· multilingual, so Danish and English match</span></label><input id="embed_model" name="embed_model" type="text" value="{{ search.model }}"></div>
+      <div class="field"><label for="check_with">Fact check with</label><select id="check_with" name="check_with"><option value="auto" {{ 'selected' if cfg.check_with not in ('writing', 'analysis') }}>Automatic (Claude if it writes, otherwise the faster local model)</option><option value="writing" {{ 'selected' if cfg.check_with == 'writing' }}>Writing model</option><option value="analysis" {{ 'selected' if cfg.check_with == 'analysis' }}>Analysis model</option></select></div>
+    </div>
+    <div class="row"><button class="btn primary">Save</button>
+      {% if not search.available %}<button class="btn" formaction="/settings/pull-model" data-busy="Starting…">Download {{ search.model }} (about 1 GB)</button>{% endif %}
+      <button class="btn ghost" formaction="/settings/reindex" data-busy="Starting…">Re-index documents</button>
+      <a class="btn ghost" href="/search">Search your documents</a></div>
+  </form>
+</section>
+
+<section class="card" id="sources">
+  <h2>Job sources</h2>
+  <p class="small text-2">Watched automatically. New jobs are screened, read and scored; strong matches get a draft. For Jobindex, run a search on jobindex.dk and paste the address of the results page (it becomes an RSS feed automatically). Most job sites' search pages work, as do any RSS feeds.</p>
+  {% if sources %}
+  <div class="table-wrap">
+  <table class="data" style="margin-bottom:1rem">
+    <thead><tr><th>Source</th><th>Checked</th><th class="num">Jobs kept</th><th>Last result</th><th></th></tr></thead>
+    <tbody>
+      {% for s in sources %}
+      <tr>
+        <td><strong>{{ s.name }}</strong>{% if not s.enabled %} <span class="pill">paused</span>{% endif %}<div class="small muted" style="word-break:break-all">{{ s.kind }} · {{ s.url }}</div></td>
+        <td class="small">{{ s.last_run_at|ago or 'never' }}<div class="muted">every {{ (s.interval_minutes / 60)|round(1) }} h</div></td>
+        <td class="num">{{ s.jobs_found }}</td>
+        <td class="small">{% if s.last_error %}<span class="pill bad">error</span> {{ s.last_error }}{% else %}{{ s.last_status or '' }}{% endif %}</td>
+        <td><div class="row">
+          <form method="post" action="/sources/{{ s.id }}/run" class="inline"><button class="btn small">Check now</button></form>
+          <form method="post" action="/sources/{{ s.id }}/toggle" class="inline"><button class="btn small ghost">{{ 'Resume' if not s.enabled else 'Pause' }}</button></form>
+          <form method="post" action="/sources/{{ s.id }}/delete" class="inline" data-confirm="Stop watching this source?"><button class="btn small ghost danger">Remove</button></form>
+        </div></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+  <form method="post" action="/sources/add">
+    <div class="fields-3">
+      <div class="field"><label for="sname">Name</label><input id="sname" type="text" name="name" placeholder="Jobindex: product owner, Copenhagen"></div>
+      <div class="field" style="grid-column: span 2"><label for="surl">Search results or feed address</label><input id="surl" type="url" name="url" placeholder="https://www.jobindex.dk/jobsoegning?q=product+owner&area=storkbh" required></div>
+      <div class="field"><label for="skind">Type</label><select id="skind" name="kind"><option value="auto">Detect automatically</option>{% for k, l in source_kinds.items() %}<option value="{{ k }}">{{ l }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="sint">Check every</label><select id="sint" name="interval"><option value="120">2 hours</option><option value="360" selected>6 hours</option><option value="720">12 hours</option><option value="1440">day</option></select></div>
+    </div>
+    <button class="btn primary" data-busy="Adding…">Add source</button>
+  </form>
+</section>
+
+<section class="card" id="automation">
+  <h2>Automation</h2>
+  <form method="post" action="/settings/automation">
+    <label class="check"><input type="checkbox" name="auto_score" value="1" {{ 'checked' if auto.auto_score }}> <span>Score every new job against my profile</span></label>
+    <label class="check"><input type="checkbox" name="auto_draft" value="1" {{ 'checked' if auto.auto_draft }}> <span>Write a draft automatically for strong matches (you always review before anything is sent)</span></label>
+    <div class="fields-3" style="margin-top:.6rem">
+      <div class="field"><label for="thr">Strong match = score at least</label><input id="thr" type="number" name="auto_draft_threshold" value="{{ auto.auto_draft_threshold }}" min="0" max="100"></div>
+      <div class="field"><label for="cap">Max automatic drafts per day</label><input id="cap" type="number" name="auto_draft_daily_cap" value="{{ auto.auto_draft_daily_cap }}" min="0" max="50"></div>
+      <div class="field"><label for="fud">Suggest a follow-up after (days)</label><input id="fud" type="number" name="followup_days" value="{{ auto.followup_days }}" min="1"></div>
+      <div class="field"><label for="gd">Count as “no response” after (days)</label><input id="gd" type="number" name="ghost_days" value="{{ auto.ghost_days }}" min="7"></div>
+    </div>
+    <label class="check"><input type="checkbox" name="notifications" value="1" {{ 'checked' if auto.notifications }}> <span>Show macOS notifications (drafts ready, daily summary)</span></label>
+    <div class="row" style="margin-top:.6rem"><button class="btn primary">Save</button></div>
+  </form>
+</section>
+
+<section class="card" id="writing">
+  <h2>Writing</h2>
+  <form method="post" action="/settings/writing">
+    <div class="fields-3">
+      <div class="field"><label for="lw">Letter length (words) <span class="hint">· 0 = like your own letters{% if own_length %} (now ≈ {{ own_length }}){% endif %}</span></label><input id="lw" type="number" name="letter_words" value="{{ w.letter_words }}" min="0" max="900"></div>
+      <div class="field"><label for="lang">Language</label><select id="lang" name="language">{% for k, l in [('auto','Same as the job ad'),('da','Always Danish'),('en','Always English'),('sv','Always Swedish'),('no','Always Norwegian'),('de','Always German')] %}<option value="{{ k }}" {{ 'selected' if w.language == k }}>{{ l }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="font">PDF font</label><select id="font" name="pdf_font"><option value="sans" {{ 'selected' if w.pdf_font == 'sans' }}>Clean (Arial)</option><option value="serif" {{ 'selected' if w.pdf_font == 'serif' }}>Classic (Georgia)</option></select></div>
+      <div class="field"><label for="acc">Accent colour</label><input id="acc" type="color" name="accent_color" value="{{ w.accent_color }}" style="height:2.4rem;padding:.2rem"></div>
+    </div>
+    <div class="field"><label for="ban">Phrases you never want to see <span class="hint">· one per line; flagged in every draft</span></label><textarea id="ban" name="extra_banned_phrases" rows="4">{{ w.extra_banned_phrases }}</textarea></div>
+    <button class="btn primary">Save</button>
+  </form>
+</section>
+
+<section class="card" id="data">
+  <h2>Your data</h2>
+  <p class="small text-2">Everything is stored in <code>{{ data_dir }}</code> on this Mac: the database, your uploaded files, and exported PDFs.</p>
+  <div class="row"><a class="btn" href="/settings/backup">Download a backup (.zip)</a><a class="btn ghost" href="/tasks">Background tasks</a></div>
+</section>
+</div>
+{% endblock %}

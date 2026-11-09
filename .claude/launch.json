@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "career-agent",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "python", "-m", "career_agent", "--no-browser", "--port", "8765"],
+      "port": 8765
+    }
+  ]
+}

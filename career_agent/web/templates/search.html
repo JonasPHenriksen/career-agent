@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Search{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/profile?tab=documents">Documents</a></div>
+<header class="page-head">
+  <div><h1>Search your documents</h1>
+    <p class="sub">Finds passages by keywords and by meaning, in Danish and English. The same search feeds your drafts and the fact check.</p></div>
+</header>
+<form method="get" action="/search" class="row" style="margin-bottom:1rem">
+  <input type="search" name="q" value="{{ q }}" placeholder="e.g. stakeholder management in large projects" style="flex:1;min-width:260px" autofocus>
+  <button class="btn primary" data-no-busy="1">Search</button>
+</form>
+{% if not search.available %}<div class="flash err">Searching by keywords only. <a href="/settings#search">Turn on search by meaning</a> to also find passages that say the same thing in other words or another language.</div>{% endif %}
+{% if q %}
+<section class="card">
+  {% if hits %}
+  <ul class="list">
+    {% for h in hits %}
+    <li style="align-items:flex-start"><div class="grow">
+      <a class="title" href="/documents/{{ h.document_id }}">{{ h.title }}</a><span class="meta">{{ kind_labels.get(h.kind, h.kind) }}</span>
+      <div class="adtext" style="max-height:12rem;margin-top:.4rem">{{ h.text }}</div></div></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty">Nothing found.</p>{% endif %}
+</section>
+{% endif %}
+{% endblock %}
