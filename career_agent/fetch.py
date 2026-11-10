@@ -106,7 +106,10 @@ def compact_jobposting(jp: dict) -> dict:
     }
 
 
-_BOILERPLATE = ["script", "style", "noscript", "svg", "iframe", "form", "nav", "footer", "header", "aside", "button"]
+# Forms themselves stay: ASP.NET and some job systems wrap the whole page, ad included, in one <form>.
+# Their controls go (a <select> of 98 municipalities isn't ad text).
+_BOILERPLATE = ["script", "style", "noscript", "svg", "iframe", "nav", "footer", "header", "aside", "button",
+                "input", "select", "textarea"]
 
 
 def html_to_text(html: str) -> tuple[str, str]:

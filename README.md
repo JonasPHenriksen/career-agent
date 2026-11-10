@@ -28,6 +28,13 @@ The **Today** page walks you through setup:
    the ones that got interviews become the main examples of your voice.
 5. **Add jobs.** Paste a job link, or add a job-search feed so jobs arrive automatically.
 
+## Your to-do list
+
+The top of **Today** lists what only you can do, numbered in order ("Do this first"). Tick an item off with
+**✓ Done**, move it up or down, or add your own. An item with a date waits under **Coming up** and moves into the
+list on that day, with a macOS notification. Some items show live progress, e.g. how many facts you've ticked.
+The count next to *Today* in the menu is how many are waiting on you.
+
 ## What happens automatically
 
 ```
@@ -46,7 +53,9 @@ job sources ──► quick screening ──► read the ad ──► fit score 
 ```
 
 * **Job sources.** For Jobindex, run a search on jobindex.dk and paste the results page address in
-  Settings → Job sources (it becomes an RSS feed automatically). Any RSS/Atom feed works, and so do
+  Settings → Job sources (it becomes an RSS feed automatically). Jobindex's robots.txt doesn't allow automated
+  use of the distance and area filters, so use keyword searches: the quick screening drops jobs outside the area
+  you set under About you. Any RSS/Atom feed works, and so do
   most job sites' search pages (the agent picks out the job links). LinkedIn needs a login, so paste
   LinkedIn job links (or the ad text) by hand.
 * **Honesty guardrails.** The writer may only use facts from your career database; it never invents

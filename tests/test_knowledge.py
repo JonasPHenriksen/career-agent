@@ -276,3 +276,14 @@ def test_a_letter_does_not_overwrite_what_the_cv_says(folder):
     longer = {**role, "detail": "A letter that says a lot more about the role, in many more words than the CV does."}
     profile.save_facts(letter_id, [longer], authoritative=False)
     assert db.q1("SELECT detail FROM facts WHERE category = 'experience'")["detail"] == "Owns the payment features."
+
+
+def test_ad_text_inside_a_form_is_kept(fake):
+    from career_agent import fetch
+
+    body = "Backend-udvikler til vores platform. " * 20
+    html = (f"<html><head><title>Job</title></head><body><form action='/apply'><h1>Backend-udvikler</h1><p>{body}</p>"
+            "<select name='kommune'><option>Aabenraa</option><option>Aalborg</option></select>"
+            "<input name='q' value='search'><button>Søg</button></form></body></html>")
+    title, text = fetch.html_to_text(html)
+    assert "Backend-udvikler til vores platform." in text and "Aalborg" not in text and "Søg" not in text

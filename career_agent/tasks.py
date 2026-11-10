@@ -76,7 +76,11 @@ def _handlers() -> dict:
         return {"ok": True}
 
     def maintenance(_: dict) -> dict:
-        return tracker.maintenance()
+        from . import todos
+
+        result = tracker.maintenance()
+        result["reminders"] = todos.notify_due()  # dated to-dos whose day has come: one notification each
+        return result
 
     return {
         "analyze_document": lambda p: _after_analysis(profile.analyze_document(p["doc_id"])),

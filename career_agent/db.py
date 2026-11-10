@@ -252,6 +252,21 @@ MIGRATIONS: list[str] = [
       PRIMARY KEY (folder_id, href)
     );
     """,
+    # 2: your to-do list and reminders
+    """
+    CREATE TABLE IF NOT EXISTS todos (
+      id           INTEGER PRIMARY KEY,
+      title        TEXT NOT NULL,
+      detail       TEXT,
+      href         TEXT,
+      check_kind   TEXT,
+      show_from    TEXT,
+      position     INTEGER NOT NULL DEFAULT 0,
+      done_at      TEXT,
+      notified_at  TEXT,
+      created_at   TEXT NOT NULL
+    );
+    """,
 ]
 
 

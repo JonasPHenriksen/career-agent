@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .. import (companies, config, db, exporter, ingest, insights, jobs, keychain, knowledge, llm, mailer,
-                profile, retrieval, settings, sources, tasks, tracker, voice, watch, writer)
+                profile, retrieval, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
 HERE = Path(__file__).parent
@@ -43,6 +43,8 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
+# Changes whenever the CSS or JS changes, so browsers never keep an old copy after an update.
+STATIC_V = int(max((HERE / "static" / f).stat().st_mtime for f in ("app.css", "app.js")))
 
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]", "testserver"}
 
@@ -77,7 +79,7 @@ def render(request: Request, template: str, **ctx):
     if path.startswith("/documents"):
         active = "/profile"
     ctx.update(request=request, nav=NAV, active=active, msg=request.query_params.get("msg"),
-               err=request.query_params.get("err"), app_name=config.APP_NAME)
+               err=request.query_params.get("err"), app_name=config.APP_NAME, todo_count=todos.count_now(), static_v=STATIC_V)
     return templates.TemplateResponse(request, template, ctx)
 
 
@@ -164,7 +166,46 @@ def today(request: Request):
                   drafts=drafts, matches=matches, deadlines=tracker.deadlines_soon(7),
                   followups=tracker.followups_due(), interviews=interviews, errors=errors, counts=counts,
                   name=p.get("name"), task_labels=tasks.TASK_LABELS,
-                  followup_days=settings.get("automation").get("followup_days"))
+                  followup_days=settings.get("automation").get("followup_days"), todo=todos.lists())
+
+
+# ---------------------------------------------------------------------------------------
+# Your to-do list
+# ---------------------------------------------------------------------------------------
+
+@app.post("/todos/add")
+async def todos_add(request: Request):
+    f = await form(request)
+    try:
+        todos.add(f.get("title", ""), f.get("detail", ""), show_from=f.get("show_from") or None)
+    except ValueError as e:
+        return go("/#todo", err=str(e))
+    return go("/#todo", msg="Added to your to-do list.")
+
+
+@app.post("/todos/{todo_id}/done")
+def todos_done(request: Request, todo_id: int):
+    todos.set_done(todo_id, True)
+    return go("/#todo", msg="Done. Nice.")
+
+
+@app.post("/todos/{todo_id}/undo")
+def todos_undo(request: Request, todo_id: int):
+    todos.set_done(todo_id, False)
+    return go("/#todo")
+
+
+@app.post("/todos/{todo_id}/move")
+async def todos_move(request: Request, todo_id: int):
+    f = await form(request)
+    todos.move(todo_id, -1 if f.get("dir") == "up" else 1)
+    return go("/#todo")
+
+
+@app.post("/todos/{todo_id}/delete")
+def todos_delete(request: Request, todo_id: int):
+    todos.delete(todo_id)
+    return go("/#todo", msg="Removed from your to-do list.")
 
 
 # ---------------------------------------------------------------------------------------

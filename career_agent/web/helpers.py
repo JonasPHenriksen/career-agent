@@ -96,6 +96,13 @@ def md(text: str | None) -> Markup:
     return Markup(out)
 
 
+def md_inline(text: str | None) -> Markup:
+    """Markdown for one line (a title): `code`, **bold** and links, without a wrapping paragraph."""
+    out = str(md(text))
+    m = re.fullmatch(r"\s*<p>(.*)</p>\s*", out, re.S)
+    return Markup(m.group(1) if m else out)
+
+
 def paras(text: str | None) -> Markup:
     if not text:
         return Markup("")
@@ -141,6 +148,7 @@ def install(env) -> None:
     env.filters.update({
         "local_dt": local_dt, "local_date": local_date, "ago": ago, "nice_date": nice_date,
         "days_until": days_until, "deadline_text": deadline_text, "score_class": score_class, "md": md,
+        "md_inline": md_inline,
         "paras": paras, "days_since": days_since, "duration": duration, "jload": db.jload,
     })
     env.globals.update({"highlight_claims": highlight_claims})

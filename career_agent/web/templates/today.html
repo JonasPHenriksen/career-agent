@@ -13,6 +13,60 @@
   </form>
 </header>
 
+<section class="card todo" id="todo" style="margin-bottom:1rem">
+  <div class="card-head"><h2>{% if todo.now %}Do this first{% else %}Your to-do list{% endif %}</h2>
+    <span class="muted small">{% if todo.now %}{{ todo.now|length }} for you to do{% else %}Nothing waiting on you{% endif %}</span></div>
+  {% if todo.now %}
+  <ol class="list todo-list">
+    {% for t in todo.now %}
+    <li>
+      <div class="grow">
+        <span class="title">{% if t.href %}<a href="{{ t.href }}">{{ t.title|md_inline }}</a>{% else %}{{ t.title|md_inline }}{% endif %}</span>
+        {% if t.detail %}<div class="detail">{{ t.detail|md }}</div>{% endif %}
+        {% if t.progress %}<div class="todo-progress">{{ t.progress }}</div>{% endif %}
+        {% if t.show_from %}<div class="meta">Reminder from {{ t.show_from|nice_date }}</div>{% endif %}
+      </div>
+      <div class="todo-actions">
+        <form method="post" action="/todos/{{ t.id }}/done" class="inline"><button class="btn small primary">✓ Done</button></form>
+        {% if not loop.first %}<form method="post" action="/todos/{{ t.id }}/move" class="inline"><input type="hidden" name="dir" value="up"><button class="btn small ghost" title="Move up" aria-label="Move up">↑</button></form>{% endif %}
+        {% if not loop.last %}<form method="post" action="/todos/{{ t.id }}/move" class="inline"><input type="hidden" name="dir" value="down"><button class="btn small ghost" title="Move down" aria-label="Move down">↓</button></form>{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% endif %}
+  {% if todo.later %}
+  <h3 class="small muted" style="margin:.9rem 0 .3rem">Coming up</h3>
+  <ul class="list todo-later">
+    {% for t in todo.later %}
+    <li><div class="grow"><span class="title">{{ t.title|md_inline }}</span>
+        <span class="meta">From {{ t.show_from|nice_date }}: it moves into the list that day and you get a notification.</span>
+        {% if t.detail %}<div class="detail small">{{ t.detail|md }}</div>{% endif %}</div>
+      <form method="post" action="/todos/{{ t.id }}/delete" class="inline" data-confirm="Remove this reminder?"><button class="btn small ghost">Remove</button></form></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <details style="margin-top:.8rem">
+    <summary class="small">Add a to-do or reminder{% if todo.done %} · recently done{% endif %}</summary>
+    <form method="post" action="/todos/add" style="margin-top:.6rem">
+      <div class="grid-2">
+        <div class="field"><label for="todo-title">What to do</label><input id="todo-title" name="title" type="text" required></div>
+        <div class="field"><label for="todo-from">Remind me from <span class="hint">· optional</span></label><input id="todo-from" name="show_from" type="date"></div>
+      </div>
+      <div class="field"><label for="todo-detail">Note <span class="hint">· optional</span></label><textarea id="todo-detail" name="detail" rows="2"></textarea></div>
+      <button class="btn small">Add</button>
+    </form>
+    {% if todo.done %}
+    <ul class="list" style="margin-top:.8rem">
+      {% for t in todo.done %}
+      <li><div class="grow"><span class="title muted"><s>{{ t.title|md_inline }}</s></span><span class="meta">Done {{ t.done_at|ago }}</span></div>
+        <form method="post" action="/todos/{{ t.id }}/undo" class="inline"><button class="btn small ghost">Undo</button></form></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </details>
+</section>
+
 {% if show_steps %}
 <section class="card" style="margin-bottom:1rem">
   <div class="card-head"><h2>Get set up</h2><span class="muted small">{{ steps|selectattr('done')|list|length }} of {{ steps|length }} done</span></div>

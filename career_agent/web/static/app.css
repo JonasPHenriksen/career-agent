@@ -344,3 +344,19 @@ table.data tr:last-child td { border-bottom: 0; }
 
 .key { display: inline-flex; gap: .25rem; align-items: center; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* To-do list on Today: what you need to do yourself, in order */
+.card.todo { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.todo-list { counter-reset: todo; }
+.todo-list > li { align-items: flex-start; }
+.todo-list > li::before { counter-increment: todo; content: counter(todo); flex: none; width: 1.6rem; height: 1.6rem;
+  margin-top: .05rem; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700;
+  font-size: .85rem; display: grid; place-items: center; }
+.todo-list .detail { color: var(--text-2); font-size: .9rem; margin-top: .2rem; }
+.todo-list .detail p { margin: .15rem 0; }
+.todo-list .todo-progress { color: var(--accent); font-size: .85rem; font-weight: 600; margin-top: .25rem; }
+.todo-actions { display: flex; gap: .25rem; flex-wrap: wrap; justify-content: flex-end; }
+.todo-later > li { align-items: flex-start; }
+.nav .count { display: inline-grid; place-items: center; min-width: 1.15rem; height: 1.15rem; margin-left: .3rem;
+  padding: 0 .3rem; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: .7rem;
+  font-weight: 700; vertical-align: 1px; }
