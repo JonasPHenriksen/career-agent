@@ -58,8 +58,8 @@
     <form method="post" action="/documents/upload" enctype="multipart/form-data">
       <div class="dropzone">
         <div><strong>Drop files here</strong> or choose them</div>
-        <div class="small muted">PDF, Word, Pages (export first), RTF, text, HTML, .eml</div>
-        <input type="file" name="files" multiple accept=".pdf,.docx,.doc,.odt,.rtf,.txt,.md,.html,.htm,.eml,.pages,.webarchive" aria-label="Choose files">
+        <div class="small muted">PDF, Word, PowerPoint, Pages (export first), RTF, text, HTML, .eml</div>
+        <input type="file" name="files" multiple accept=".pdf,.docx,.doc,.odt,.rtf,.txt,.md,.html,.htm,.eml,.pages,.webarchive,.pptx" aria-label="Choose files">
       </div>
     </form>
   </section>
@@ -73,6 +73,40 @@
     </form>
   </section>
 </div>
+
+<section class="card" id="agents" style="margin-bottom:1rem">
+  <div class="card-head"><h2>Agent folder</h2>
+    {% if agent and agent.folder %}<span class="small muted">{{ 'Used when writing' if agent.use else 'Not used when writing' }}</span>{% endif %}</div>
+  {% if agent and agent.folder %}
+  <p class="small text-2">Summaries written for AI agents from your documents. The writer reads the profile, the summaries that matter most for each job and your style guide, so a local model sees the whole picture in a few pages. They're never evidence: the fact check still compares every sentence with your career database and your own documents. This folder is never imported as documents.</p>
+  <ul class="list" style="margin-bottom:.8rem">
+    <li>
+      <div class="grow">
+        <span class="title"><code>{{ agent.folder }}</code></span>
+        <span class="meta">{{ 'profile.md ✓' if agent.profile else 'no profile.md' }} · {{ agent.areas|length }} {{ 'summary' if agent.areas|length == 1 else 'summaries' }} · {% if agent.style %}style {{ 'guide' if agent.style|length == 1 else 'guides' }}: {{ agent.style|join(', ') }}{% else %}no style guide{% endif %}</span>
+        {% if agent.areas %}<div class="small text-2">{{ agent.areas|join(' · ') }}</div>{% endif %}
+      </div>
+    </li>
+  </ul>
+  {% if agent.has_facts %}
+  <form method="post" action="/knowledge/import" class="inline" data-confirm="Import the folder's facts and their source documents into your career database? Facts stay unticked until you check them, and running it again is safe.">
+    <button class="btn primary" data-busy="Importing…">Import facts from the folder</button>
+  </form>
+  <span class="small text-2">Each fact comes with the file it's from and a quote, so the local model doesn't have to read those documents again.</span>
+  {% endif %}
+  {% else %}
+  <p class="small text-2">An <code>Agents</code> folder (e.g. in your Nextcloud) can hold summaries written for AI agents: <code>Agents/Career Agent/profile.md</code>, <code>experience/*.md</code> and <code>writing-style-da.md</code> / <code>writing-style-en.md</code>. With one, a local model writes with the whole picture in view. {% if agent and agent.configured %}Nothing found at the folder set below.{% else %}None found yet.{% endif %}</p>
+  {% endif %}
+  <details style="margin-top:.6rem">
+    <summary>Folder settings</summary>
+    <form method="post" action="/knowledge/settings">
+      <div class="field"><label for="kfolder">Agent folder <span class="hint">· leave empty to use <code>Agents</code> in your Nextcloud folder</span></label>
+        <input id="kfolder" name="folder" type="text" value="{{ agent.setting if agent else '' }}" placeholder="~/Nextcloud/Agents"></div>
+      <label class="check"><input type="checkbox" name="use" value="1" {{ 'checked' if not agent or agent.use }}> <span>Use it when writing</span></label>
+      <button class="btn small">Save</button>
+    </form>
+  </details>
+</section>
 
 <section class="card" id="watch" style="margin-bottom:1rem">
   <div class="card-head"><h2>Keep in sync</h2>

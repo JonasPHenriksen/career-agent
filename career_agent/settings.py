@@ -56,6 +56,10 @@ DEFAULTS: dict[str, Any] = {
         "accent_color": "#1f4e79",
         "extra_banned_phrases": "",
     },
+    "knowledge": {
+        "folder": "",  # the agent folder, e.g. ~/Nextcloud/Agents; "" = use <Nextcloud>/Agents if it exists
+        "use": True,  # put its profile, summaries and style guides into the writing prompts
+    },
     "style_guide": "",
     "style_stats": {},
     "state": {"llm_bootstrapped": False, "last_maintenance": "", "last_digest": ""},

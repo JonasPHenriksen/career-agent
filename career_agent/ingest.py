@@ -17,7 +17,7 @@ from pathlib import Path
 from . import config, db, settings
 
 SUPPORTED = {".pdf", ".docx", ".doc", ".odt", ".rtf", ".txt", ".md", ".html", ".htm", ".eml",
-             ".mbox", ".pages", ".webarchive"}
+             ".mbox", ".pages", ".webarchive", ".pptx"}
 MAX_FILE_BYTES = 40 * 1024 * 1024
 SKIP_DIRS = {"node_modules", ".git", "__pycache__", "Library", ".Trash"}
 
@@ -78,6 +78,42 @@ def _docx_text(data: bytes) -> str:
                 if cells:
                     out.append(" | ".join(cells))
     return "\n".join(out)
+
+
+_PPTX_SLIDE = re.compile(r"ppt/slides/slide(\d+)\.xml")
+_PPTX_NOTES = re.compile(r"ppt/notesSlides/notesSlide(\d+)\.xml")
+_A_PARA = re.compile(r"<a:p\b[^>]*>.*?</a:p>", re.S)
+_A_TEXT = re.compile(r"<a:t\b[^>]*>([^<]*)</a:t>")
+
+
+def _pptx_text(data: bytes) -> str:
+    """Slide text and speaker notes, slide by slide (no extra dependency: a .pptx is zipped XML)."""
+    import html
+
+    def lines(xml: bytes) -> list[str]:
+        out = []
+        for p in _A_PARA.findall(xml.decode("utf-8", "replace")):
+            t = html.unescape("".join(_A_TEXT.findall(p))).strip()
+            if t:
+                out.append(t)
+        return out
+
+    try:
+        with zipfile.ZipFile(BytesIO(data)) as z:
+            names = z.namelist()
+            slides = sorted((int(m.group(1)), n) for n in names if (m := _PPTX_SLIDE.fullmatch(n)))
+            notes = {int(m.group(1)): n for n in names if (m := _PPTX_NOTES.fullmatch(n))}
+            out = []
+            for num, name in slides:
+                body = lines(z.read(name))
+                note = lines(z.read(notes[num])) if num in notes else []
+                note = [t for t in note if not t.isdigit()]  # notes pages repeat the slide number
+                if body or note:
+                    out.append(f"[Slide {num}]\n" + "\n".join(body)
+                               + (("\nSpeaker notes: " + " ".join(note)) if note else ""))
+    except zipfile.BadZipFile as e:
+        raise ImportErrorUser("This PowerPoint file is damaged or not really a .pptx.") from e
+    return "\n\n".join(out)
 
 
 def _textutil(path: Path) -> str:
@@ -182,6 +218,8 @@ def extract_text(path: Path, data: bytes | None = None) -> str:
             return _textutil(path)
     if ext in (".doc", ".odt", ".rtf", ".webarchive"):
         return _textutil(path)
+    if ext == ".pptx":
+        return _pptx_text(data)
     if ext in (".txt", ".md"):
         return _decode(data)
     if ext in (".html", ".htm"):
@@ -308,13 +346,26 @@ def import_folder(folder: Path, limit: int = 2000) -> dict:
     folder = folder.expanduser()
     if not folder.exists():
         raise ImportErrorUser(f"Not found: {folder}")
+    from . import knowledge
+
     result = {"imported": [], "skipped": 0, "errors": []}
+    roots = knowledge.skip_roots()
+    if knowledge.is_skipped_dir(folder if folder.is_dir() else folder.parent, roots):
+        result["errors"].append((folder.name, "That's the agent folder: it holds summaries of your documents, "
+                                              "not documents, so it isn't imported."))
+        return result
     if folder.is_file() or folder.suffix.lower() == ".mbox":
         paths = [folder]
     else:
         paths = []
+        skipped_dirs: dict[Path, bool] = {}
         for p in sorted(folder.rglob("*")):
             if any(part.startswith(".") or part in SKIP_DIRS for part in p.relative_to(folder).parts):
+                continue
+            parent = p.parent
+            if parent not in skipped_dirs:
+                skipped_dirs[parent] = knowledge.is_skipped_dir(parent, roots)
+            if skipped_dirs[parent] or (p.is_dir() and knowledge.is_skipped_dir(p, roots)):
                 continue
             if p.suffix.lower() == ".mbox" and p.is_dir():
                 paths.append(p)

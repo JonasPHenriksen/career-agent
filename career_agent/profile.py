@@ -29,6 +29,7 @@ KINDS = [
     ("report", "Report / work document"),
     ("certificate", "Certificate / diploma"),
     ("job_ad", "Job ad"),
+    ("course_material", "Course material, not about you (not used)"),
     ("other", "Other"),
     ("unknown", "Not analysed yet"),
 ]
@@ -45,12 +46,13 @@ OUTCOME_LABELS = dict(OUTCOMES)
 OUTCOME_RANK = {"offer": 0, "interview": 1, "unknown": 2, "rejected": 3, "no_response": 4}
 
 ANALYZE_SCHEMA = J.obj(
-    kind=J.s("Document type", ["cv", "application", "email", "reference", "report", "certificate", "job_ad", "other"]),
+    kind=J.s("Document type", ["cv", "application", "email", "reference", "report", "certificate", "job_ad",
+                               "course_material", "other"]),
     language=J.s("ISO 639-1 code of the document's main language, e.g. da or en"),
     title=J.s("Short descriptive title, max 8 words"),
     doc_date=J.s("When it was written or issued: YYYY-MM-DD, YYYY-MM or YYYY. Empty if unknown"),
     summary=J.s("One or two sentences about the document"),
-    written_by_candidate=J.b("True if the candidate wrote this text themself"),
+    written_by_candidate=J.b("True if the candidate wrote this text alone"),
     target_company=J.s("For applications: the company applied to. Otherwise empty"),
     target_role=J.s("For applications: the role applied for. Otherwise empty"),
     facts=J.arr(J.obj(
@@ -69,8 +71,8 @@ ANALYZE_SCHEMA = J.obj(
 ANALYZE_SYSTEM = """You extract a factual career database from documents that belong to {who}. The database is later used to write job applications, so accuracy matters more than completeness: an invented or embellished fact could cost the candidate an interview.
 
 First classify the document:
-- kind: cv | application (cover letter or job application, including unsolicited ones) | email | reference (recommendation, reference letter, review written by others) | report (any work product: report, presentation, article, thesis, case) | certificate (diploma, course certificate, transcript) | job_ad (a job advertisement) | other
-- written_by_candidate: true if the candidate wrote the text (their CV, applications, emails, reports). False for references, certificates, job ads and other people's texts.
+- kind: cv | application (cover letter or job application, including unsolicited ones) | email | reference (recommendation, reference letter, review written by others) | report (any work product: report, presentation, article, thesis, case) | certificate (diploma, course certificate, transcript) | job_ad (a job advertisement) | course_material (lecture slides, reading material, textbooks, assignment descriptions, templates, articles and other texts written by others that aren't about the candidate) | other
+- written_by_candidate: true if the candidate wrote the text alone (their CV, applications, emails, solo reports). False for group work written with others, references, certificates, job ads, course material and other people's texts.
 
 Then extract facts about the candidate, one item per fact:
 - experience: one per position. title = job title, organization = employer, plus dates and location. detail = scope and responsibilities in 1-3 sentences.
@@ -109,6 +111,7 @@ def _limits() -> dict:
         "exemplar_words": 1_500 if local("writing") and small else 4_000,
         "style_words": 4_000 if local("writing") and small else 12_000,
         "job_chars": 12_000 if (local("writing") or local("analysis")) and small else 40_000,
+        "small_writer": local("writing") and small,  # sizes the agent-folder summaries in the prompt
     }
 
 
@@ -143,7 +146,7 @@ def analyze_document(doc_id: int) -> dict:
     d["facts"] = [f for res in results for f in res["facts"]]
     kind = doc["kind"] if doc["kind"] not in ("unknown", "") else d["kind"]
     authored = 1 if d["written_by_candidate"] or kind in ("cv", "application") else 0
-    if kind in ("reference", "certificate", "job_ad"):
+    if kind in ("reference", "certificate", "job_ad", "course_material"):
         authored = 0
     db.update("documents", doc_id, {
         "kind": kind,
@@ -157,7 +160,8 @@ def analyze_document(doc_id: int) -> dict:
         "status": "analyzed",
         "analyzed_at": db.now(),
     })
-    facts = [] if kind == "job_ad" else [_clean_dates(f, doc["text"]) for f in d["facts"]]
+    # Course material says what was taught, not what the candidate did: it adds no facts.
+    facts = [] if kind in ("job_ad", "course_material") else [_clean_dates(f, doc["text"]) for f in d["facts"]]
     added, merged = save_facts(doc_id, facts, authoritative=(kind == "cv"))
     return {"kind": kind, "facts_added": added, "facts_merged": merged}
 
@@ -321,7 +325,9 @@ def save_facts(doc_id: int | None, facts: list[dict], authoritative: bool = Fals
             for key in ("title", "organization", "location", "start_date", "end_date", "evidence"):
                 if f.get(key) and (not dup.get(key) or (override and key != "evidence")):
                     patch[key] = f[key]
-            if f.get("detail") and not dup["verified"] and (override or len(f["detail"]) > len(dup.get("detail") or "")):
+            # A longer description wins, except over one from a CV: only a (newer) CV replaces that.
+            longer = len(f.get("detail") or "") > len(dup.get("detail") or "") and dup.get("doc_kind") != "cv"
+            if f.get("detail") and not dup["verified"] and (override or longer):
                 patch["detail"] = f["detail"]
             if override and doc_id:
                 patch["document_id"] = doc_id

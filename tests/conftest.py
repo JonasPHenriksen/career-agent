@@ -105,6 +105,13 @@ class FakeProvider:
 
     def answer(self, system, user, schema):
         if schema is profile.ANALYZE_SCHEMA:
+            if "Forelæsning" in user:  # lecture slides: the model classifies them as course material
+                return {"kind": "course_material", "language": "da", "title": "Forelæsning", "doc_date": "",
+                        "summary": "Lecture slides.", "written_by_candidate": False, "target_company": "",
+                        "target_role": "", "facts": [{"category": "skill", "title": "Kvantemekanik",
+                                                      "organization": "", "location": "", "start_date": "",
+                                                      "end_date": "", "detail": "Taught in the lecture.",
+                                                      "evidence": "Forelæsning", "tags": []}]}
             is_cv = "Uddannelse" in user
             return {"kind": "cv" if is_cv else "application", "language": "da",
                     "title": "CV" if is_cv else "Ansøgning til product owner", "doc_date": "2024-05",
@@ -188,6 +195,8 @@ def fake(tmp_path):
     db.init()
     settings.update("llm", {"writing": {"provider": "ollama", "model": "fake"}, "analysis": {"provider": "ollama", "model": "fake"}})
     settings.update("profile", {"name": "Sara Lund", "email": "sara@example.com", "city": "København"})
+    # Never pick up a real ~/Nextcloud/Agents folder on the machine running the tests.
+    settings.update("knowledge", {"folder": str(tmp_path / "no-agent-folder")})
     provider = FakeProvider()
     llm.set_test_provider(provider)
     yield provider

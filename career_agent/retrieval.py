@@ -302,6 +302,12 @@ def _hybrid(query: str, ids: list[int], texts: list[str], vectors: dict[int, np.
     return sorted(ids, key=lambda i: (-fused.get(i, 0.0), position[i]))
 
 
+def rank_items(kind: str, query: str, items: list[tuple[int, str]]) -> list[int]:
+    """Order (id, text) items by relevance to the query; vectors are cached under `kind`."""
+    vectors = ensure_embeddings(kind, items)
+    return _hybrid(query, [i for i, _ in items], [t for _, t in items], vectors)
+
+
 def rank_facts(query: str, facts: list[dict]) -> list[int]:
     vectors = ensure_embeddings("fact", [(f["id"], fact_text(f)) for f in facts])
     return _hybrid(query, [f["id"] for f in facts], [fact_text(f) for f in facts], vectors)

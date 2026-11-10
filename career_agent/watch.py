@@ -101,10 +101,16 @@ def due() -> list[dict]:
 # ---------------------------------------------------------------------------------------
 
 def _iter_files(root: Path):
+    from . import knowledge
+
     count = 0
+    roots = knowledge.skip_roots()
+    if knowledge.is_skipped_dir(root, roots):  # the agent folder holds summaries, not your documents
+        return
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in ingest.SKIP_DIRS
-                             and not d.lower().endswith(".mbox"))
+                             and not d.lower().endswith(".mbox")
+                             and not knowledge.is_skip_point(Path(dirpath) / d, roots))
         for name in sorted(filenames):
             if name.startswith((".", "~$")):
                 continue

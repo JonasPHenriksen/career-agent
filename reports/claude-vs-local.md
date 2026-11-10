@@ -341,3 +341,27 @@ matches her career database completely (no real gap). Scores: factual accuracy a
   field rather than a listed requirement (elections for KOMBIT) is still usually missed. When the model spots a gap
   but leaves it out of the letter, the app now shows the gap and the ready-made sentence in the writer's notes.
 * One letter per model and job per round: treat these as indications, not precise measurements.
+
+## Round 5: the agent folder (summaries for local models)
+
+Same local model (Gemma 4 31B), same career database and settings; the only difference is whether the writer also
+gets the agent folder: a one-page profile, the three experience summaries most relevant to the ad and the style
+guide written from the candidate's own letters. Two real Jobindex ads with a big honest gap each: an ERP developer
+role asking for years of NAV/Business Central, and a .NET/Azure role asking for 5 years' experience. Letters were
+judged blind (labels shuffled, reviewer not told how they were made) against the candidate's facts and style guide.
+
+| | Without the folder | With the folder |
+|---|---|---|
+| ERP role: app's fact check | 9 backed, 1 partly | 9 backed, 2 partly |
+| ERP role: blind pick | | **sent, fewer edits**: answers the ad point by point in the candidate's plain voice |
+| .NET role: app's fact check | 6 backed, 3 partly | **14 backed, 1 partly** |
+| .NET role: blind pick | central claim false ("worked intensively with exactly your stack") | **sent, fewer edits**: claims nearly all backed, rhythm closest to the candidate's (17.7 vs 27 words per sentence) |
+| Prompt size | about 35,000 characters | about 50,000 characters |
+| Time per letter | 12–14 minutes | 12–13 minutes |
+
+* Both letters without the folder opened with the graduation, as the candidate's older example letters did, and
+  left the current job out of the opening; with the folder, both opened from the current job, as the profile's
+  "Now" section says.
+* The folder didn't remove every slip: the ERP letter still used an unrelated internship as an ERP bridge and
+  rounded "at least 100 hours" up to "over 100". The fact check and the reviewer caught both.
+* Two ads, one letter each: an indication, not a measurement. The folder stays on by default for local models.

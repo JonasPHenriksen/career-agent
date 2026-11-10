@@ -30,7 +30,9 @@ CLICHES = {
 }
 
 # Relative time words go stale when old letters are reused; history openers are a typical invention.
-RISKY_TIME_WORDS = ["sidste år", "i år", "for nylig", "sidste måned", "last year", "this year", "recently", "last month"]
+RISKY_TIME_WORDS = ["sidste år", "i år", "for nylig", "sidste måned", "last year", "this year", "recently", "last month",
+                    # status that goes stale: true in one season's letters, wrong a few months later
+                    "nyuddannet", "lige blevet færdiguddannet", "just graduated", "newly graduated", "recent graduate"]
 INVENTED_HISTORY = ["har længe beundret", "har altid drømt", "har altid ønsket", "har længe fulgt", "long admired",
                     "always dreamed", "have always wanted", "have long followed"]
 
@@ -66,6 +68,12 @@ def paragraphs(text: str) -> list[str]:
     paras = [p for p in re.split(r"\n\s*\n", text) if len(WORD.findall(p)) >= 3]
     if len(paras) <= 1:
         lines = [ln for ln in text.splitlines() if ln.strip()]
+        lens = sorted(len(ln) for ln in lines)
+        if len(lines) >= 2 and lens[len(lens) // 2] > 140:
+            # Long lines are whole paragraphs (Word, plain text), not a PDF's wrapped lines.
+            found = [ln.strip() for ln in lines if len(WORD.findall(ln)) >= 3]
+            if len(found) > 1:
+                return found
         if len(lines) >= 6:
             lens = sorted(len(ln) for ln in lines)
             width = lens[int(0.9 * (len(lens) - 1))]  # a full line's width
@@ -121,11 +129,37 @@ def _avg(stats_list: list[dict]) -> dict:
     return out
 
 
+_SIGNOFF = re.compile(r"^[ \t]*(med venlig hilsen|venlig hilsen|de bedste hilsner|bedste hilsner|mvh\.?|"
+                      r"kind regards|best regards|warm regards|sincerely|yours sincerely|yours faithfully)[ \t]*,?[ \t]*$",
+                      re.I | re.M)
+
+
+def letter_part(text: str) -> str:
+    """A letter up to its sign-off and the name under it. Google Docs exports with tabs, and notes pasted under a
+    letter, put other material after it (research notes, the job ad, private notes) that isn't the letter."""
+    m = _SIGNOFF.search(text or "")
+    if not m:
+        return text
+    lines = text[m.end():].split("\n")
+    name_at = next((i for i, ln in enumerate(lines) if ln.strip()), None)
+    if name_at is None:
+        return text
+    tail = "\n".join(lines[name_at + 1:])
+    if len(WORD.findall(tail)) < 40:  # only a short P.S. or a title after the name: keep it all
+        return text
+    return (text[:m.end()] + "\n".join(lines[:name_at + 1])).rstrip()
+
+
 def style_documents(kinds: tuple[str, ...] = ("application",)) -> list[dict]:
     marks = ",".join("?" for _ in kinds)
-    return db.q(
+    rows = db.q(
         f"SELECT * FROM documents WHERE authored = 1 AND use_for_style = 1 AND status = 'analyzed' "
         f"AND kind IN ({marks}) ORDER BY COALESCE(doc_date, created_at) DESC", kinds)
+    for d in rows:  # examples, statistics and the style guide use the letter itself, nothing after it
+        if d.get("kind") == "application":
+            d["text"] = letter_part(d["text"] or "")
+            d["word_count"] = len(d["text"].split())
+    return rows
 
 
 def compute_baseline() -> dict:

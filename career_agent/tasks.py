@@ -117,6 +117,12 @@ def _pull_model(model: str) -> dict:
     return {"pulled": model}
 
 
+def after_import() -> None:
+    """Facts and documents arrived without the local model reading them (the agent folder's import):
+    run the same follow-ups as after reading documents."""
+    _after_analysis({})
+
+
 def _after_analysis(result: dict) -> dict:
     """When no more documents are waiting, refresh the writing baseline and style guide."""
     queued = db.scalar("SELECT COUNT(*) FROM tasks WHERE kind = 'analyze_document' AND status = 'queued'")

@@ -16,8 +16,8 @@ from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import (companies, config, db, exporter, ingest, insights, jobs, keychain, llm, mailer, profile,
-                retrieval, settings, sources, tasks, tracker, voice, watch, writer)
+from .. import (companies, config, db, exporter, ingest, insights, jobs, keychain, knowledge, llm, mailer,
+                profile, retrieval, settings, sources, tasks, tracker, voice, watch, writer)
 from . import helpers
 
 HERE = Path(__file__).parent
@@ -599,7 +599,8 @@ def profile_page(request: Request, tab: str = "about"):
                   style_error=tasks.last_error("style"), outcome_labels=profile.OUTCOME_LABELS,
                   folders=db.q("SELECT * FROM watched_folders ORDER BY id"),
                   nextcloud=watch.nextcloud_candidates() if tab == "documents" else [],
-                  search=retrieval.status() if tab == "documents" else None)
+                  search=retrieval.status() if tab == "documents" else None,
+                  agent=knowledge.status() if tab == "documents" else None)
 
 
 @app.get("/profile/progress")
@@ -944,6 +945,33 @@ def settings_reindex(request: Request):
 # ---------------------------------------------------------------------------------------
 # Watched folders and search
 # ---------------------------------------------------------------------------------------
+
+@app.post("/knowledge/import")
+async def knowledge_import(request: Request):
+    try:
+        r = await asyncio.to_thread(knowledge.import_facts)
+    except FileNotFoundError as e:
+        return go("/profile?tab=documents#agents", err=str(e))
+    tasks.after_import()
+    def n(count: int, word: str) -> str:
+        return f"{count} {word}{'' if count == 1 else 's'}"
+
+    msg = (f"From the agent folder: {n(r['facts_added'], 'new fact')}, {r['facts_merged']} merged with ones you had, "
+           f"{n(r['documents'], 'document')} added.")
+    if r["unreadable"]:
+        msg += f" {n(len(r['unreadable']), 'source file')} couldn't be read (scans or files inside archives)."
+    return go("/profile?tab=facts", msg=msg + " Tick the ones that are right.")
+
+
+@app.post("/knowledge/settings")
+async def knowledge_settings(request: Request):
+    f = await form(request)
+    path = (f.get("folder") or "").strip()
+    if path and not Path(path).expanduser().is_dir():
+        return go("/profile?tab=documents#agents", err=f"Folder not found: {path}")
+    settings.update("knowledge", {"folder": path, "use": bool(f.get("use"))})
+    return go("/profile?tab=documents#agents", msg="Agent folder settings saved.")
+
 
 @app.post("/watch/add")
 async def watch_add(request: Request):

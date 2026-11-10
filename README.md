@@ -20,7 +20,7 @@ The **Today** page walks you through setup:
    offline. For the best letters, add a Claude API key in Settings (see below).
 2. **About you.** Name and contact details (printed on your documents, never sent to the AI),
    target roles, locations, deal-breakers, things to always or never mention.
-3. **Import your documents.** Drop files, or import a whole folder (`~/Documents/Job applications`).
+3. **Import your documents.** Drop files (PDF, Word, PowerPoint…), or import a whole folder (`~/Documents/Job applications`).
    CVs, every application you've written, reference letters, reports, and emails you sent (Apple
    Mail → Mailbox → Export Mailbox gives an `.mbox` folder; only emails *you* wrote are used).
 4. **Check your career database.** Every fact is extracted with a quote from the source document.
@@ -89,6 +89,43 @@ Profile → Documents → **Keep in sync**:
 * **Or connect Nextcloud directly** (no desktop app): paste the folder's address from Nextcloud in your
   browser, your username and an app password (Nextcloud → Settings → Security → Devices & sessions).
   The password goes into your macOS Keychain; files are copied into the data folder and read from there.
+
+## The agent folder: summaries for local models
+
+A small local model can't read your whole career at once. An **agent folder** gives it the big picture in a
+few pages. The app looks for `Agents` in your Nextcloud folder (or set another path under Profile → Documents →
+Agent folder):
+
+```
+Agents/                       for any AI agent: about you, a map of your files, notes
+└── Career Agent/
+    ├── profile.md            one page: who you are, now and before, strengths, what you're after
+    ├── experience/*.md       one summary per education, job, internship, project, free time
+    ├── writing-style-da.md   how you write in Danish, with real sentences of yours
+    ├── writing-style-en.md
+    ├── facts.jsonl           facts with their source file and a verbatim quote (importable)
+    └── sources.jsonl         every source file: what it is, whether you wrote it alone
+```
+
+* **When writing**, the letter writer gets the profile and the summaries most relevant to the job (three with a
+  local model, six with Claude), and the folder's style guide for the letter's language instead of the app's own.
+* **They're never evidence.** The writer may only claim what your career database backs, and the fact check
+  compares every sentence with the database and your own documents, not with the summaries.
+* **Import facts from the folder** (Profile → Documents) brings in `facts.jsonl`: each fact with its quote, plus
+  its source documents, already sorted (your own texts, group work, other people's), so the local model doesn't
+  spend hours reading them again. Facts stay unticked until you check them, and importing twice is safe.
+  Past applications are stored up to the sign-off and your name: a Google Docs export with several tabs (notes,
+  the job ad, private notes) keeps only the letter. A source marked `"use_for_style": false` (e.g. old template
+  letters) still gives facts but isn't used as an example of your voice.
+* **Edit freely.** It's plain Markdown: fix anything in any editor, on any device, and the next letter uses it.
+* The folder is never imported as documents, even when you watch your whole Nextcloud: summaries of your
+  documents aren't your documents.
+
+When the app reads documents itself, it now recognises course material (lecture slides, reading material,
+assignment texts), which adds no facts, and only texts you wrote alone count as examples of your style.
+
+To write or refresh an agent folder from your own files with AI subagents, and check it before publishing, see
+[scripts/agent-folder/README.md](scripts/agent-folder/README.md).
 
 ## Running fully local (no cloud)
 
@@ -205,6 +242,7 @@ uv run python -m career_agent --port 8765 --data ./data --no-browser
 | `career_agent/profile.py` | Document analysis into facts, de-duplication, prompt digests |
 | `career_agent/retrieval.py` | Passages, local embeddings, hybrid keyword + meaning search |
 | `career_agent/watch.py` | Watched folders and Nextcloud (WebDAV) sync |
+| `career_agent/knowledge.py` | The agent folder: summaries and style guides in prompts, importing its facts |
 | `career_agent/voice.py` | Style guide, writing statistics, the voice check |
 | `career_agent/jobs.py`, `sources.py`, `fetch.py` | Adding, reading, screening and scoring jobs |
 | `career_agent/writer.py` | Letters, CVs, revisions, fact check, interview prep, follow-ups |
