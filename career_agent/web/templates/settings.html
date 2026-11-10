@@ -1,13 +1,17 @@
 {% extends "base.html" %}
+{% from "_macros.html" import model_picker %}
 {% block title %}Settings{% endblock %}
 {% macro model_select(tier, current) %}
 <select id="{{ tier }}_model" name="{{ tier }}_model" data-model-picker="#{{ tier }}_custom_wrap" data-effort="#{{ tier }}_effort_wrap">
   <optgroup label="Claude (cloud, best quality)">
     {% for mid, label in anthropic_models %}<option value="anthropic|{{ mid }}" {{ 'selected' if current.provider == 'anthropic' and current.model == mid }}>{{ label }}</option>{% endfor %}
   </optgroup>
+  <optgroup label="Claude through Claude Code (your subscription, no API key)">
+    {% for mid, label in claude_code_models %}<option value="claude_code|{{ mid }}" {{ 'selected' if current.provider == 'claude_code' and current.model == mid }}>{{ label }}{{ '' if st.claude_code else ' (Claude Code not found)' }}</option>{% endfor %}
+  </optgroup>
   <optgroup label="On this Mac (Ollama, private and free)">
-    {% for m in st.ollama_models %}<option value="ollama|{{ m }}" {{ 'selected' if current.provider == 'ollama' and current.model == m }}>{{ m }}</option>{% else %}<option disabled>No Ollama models found</option>{% endfor %}
-    {% if current.provider == 'ollama' and current.model not in st.ollama_models %}<option value="ollama|{{ current.model }}" selected>{{ current.model }} (not installed)</option>{% endif %}
+    {% for m in st.ollama_chat_models %}<option value="ollama|{{ m }}" {{ 'selected' if current.provider == 'ollama' and current.model == m }}>{{ m }}</option>{% else %}<option disabled>No Ollama models found</option>{% endfor %}
+    {% if current.provider == 'ollama' and current.model not in st.ollama_chat_models %}<option value="ollama|{{ current.model }}" selected>{{ current.model }} (not installed)</option>{% endif %}
   </optgroup>
   <optgroup label="Other server (LM Studio, MLX, llama.cpp…)">
     <option value="openai|{{ current.model if current.provider == 'openai' else '' }}" {{ 'selected' if current.provider == 'openai' }}>OpenAI-compatible server…</option>
@@ -27,6 +31,7 @@
   <div class="grid-3" style="margin-bottom:1rem">
     <div class="card flat"><strong>Claude API key</strong><div class="small">{% if st.anthropic_key %}<span class="pill good">saved</span> in your {{ st.anthropic_key }}{% else %}<span class="pill">not added</span>{% endif %}</div></div>
     <div class="card flat"><strong>Ollama on this Mac</strong><div class="small">{% if st.ollama_running %}<span class="pill good">running</span> {{ st.ollama_models|length }} model{{ 's' if st.ollama_models|length != 1 }}{% else %}<span class="pill bad">not running</span> open the Ollama app{% endif %}</div></div>
+    <div class="card flat"><strong>Claude Code</strong><div class="small">{% if st.claude_code %}<span class="pill good">found</span> uses your Claude subscription{% else %}<span class="pill">not found</span>{% endif %}</div></div>
     <div class="card flat"><strong>Privacy</strong><div class="small">{% if st.local_only %}<span class="pill good">local only</span> nothing leaves this Mac{% else %}<span class="pill">cloud allowed</span>{% endif %}</div></div>
   </div>
 
@@ -42,6 +47,7 @@
         <div class="field"><label for="ollama_num_ctx">Context size (tokens)</label><input id="ollama_num_ctx" type="number" name="ollama_num_ctx" value="{{ cfg.ollama_num_ctx }}" step="4096"></div>
         <div class="field"><label for="openai_base_url">OpenAI-compatible server</label><input id="openai_base_url" type="text" name="openai_base_url" value="{{ cfg.openai_base_url }}"></div>
         <div class="field"><label for="concurrency">Parallel tasks <span class="hint">(0 = automatic)</span></label><input id="concurrency" type="number" name="concurrency" value="{{ cfg.concurrency }}" min="0" max="8"></div>
+        <div class="field"><label for="claude_code_path">Claude Code program <span class="hint">· empty = find it automatically</span></label><input id="claude_code_path" type="text" name="claude_code_path" value="{{ cfg.claude_code_path or '' }}" placeholder="{{ st.claude_code or 'claude' }}"></div>
       </div>
       <label class="check"><input type="checkbox" name="local_only" value="1" {{ 'checked' if cfg.local_only }}> <span><strong>Local only:</strong> block all cloud models, so your documents never leave this Mac.</span></label>
       <label class="check"><input type="checkbox" name="redact_for_cloud" value="1" {{ 'checked' if cfg.redact_for_cloud }}> <span>Remove CPR/ID numbers, bank and card numbers before anything is sent to a cloud model.</span></label>
@@ -60,6 +66,32 @@
       <label class="check" style="margin:0"><input type="checkbox" name="use_claude" value="1"> <span>Use Claude for both tiers</span></label>
       <button class="btn">Save key</button>
       {% if st.anthropic_key == 'keychain' %}<button class="btn ghost danger" name="delete" value="1" formnovalidate>Remove key</button>{% endif %}</div>
+  </form>
+</section>
+
+<section class="card" id="claude-code">
+  <h2>Claude through Claude Code</h2>
+  <p class="small text-2">Uses the Claude subscription you're logged in with (Pro or Max) instead of an API key, so there's no bill per call: it counts against your plan's usage limits, and when you hit one, tasks wait and try again later. The app runs Claude Code with every tool switched off, without plugins, connectors or saved sessions, in an empty folder, so it can only answer. Like any cloud model, it's blocked by Local only, and ID and bank numbers are removed first.</p>
+  {% if st.claude_code %}
+  <p class="small"><strong>Log in once.</strong> Open Terminal, run the line below, type <code>/login</code> and sign in in the browser, then type <code>/exit</code>. After that, pick a Claude Code model under AI models and press Test.</p>
+  <pre class="code-line">"{{ st.claude_code }}"</pre>
+  {% else %}
+  <p class="small">Claude Code wasn't found on this Mac. Install it from claude.com/claude-code (or open the Claude desktop app's Code tab once), then reload this page.</p>
+  {% endif %}
+</section>
+
+<section class="card" id="redo">
+  <h2>Redo work with another model</h2>
+  <p class="small text-2">Not happy with what a model made, or got a better one? Pick the model and what to redo. Earlier drafts stay under Versions, and facts you've ticked or hidden stay. Single items have the same choice next to their buttons: a draft's <em>New draft</em> and <em>Run fact check</em>, a job's <em>Score again</em>, a document's <em>Analyse again</em>, the style guide's <em>Rebuild</em>.</p>
+  <form method="post" action="/redo">
+    <div class="grid-2">
+      <div class="field"><label>Redo</label>{{ model_picker() }}</div>
+      <div class="field"><label for="only_model">Only work made by <span class="hint">· optional</span></label>
+        <select id="only_model" name="only_model"><option value="">any model</option>{% for value, label in models_used %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></div>
+    </div>
+    {% for k, label in redo_kinds.items() %}<label class="check"><input type="checkbox" name="what_{{ k }}" value="1"> <span>{{ label }} <span class="muted">· {{ redo_counts[k] }} now</span></span></label>{% endfor %}
+    <p class="small text-2">Documents whose facts came from the agent folder aren't read again here; improve the folder and import it again instead. With a local model, each item takes from one minute (a job) to about twelve (a draft).</p>
+    <button class="btn primary" data-busy="Queuing…">Queue the redo</button>
   </form>
 </section>
 

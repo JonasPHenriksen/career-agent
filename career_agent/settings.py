@@ -28,7 +28,7 @@ DEFAULTS: dict[str, Any] = {
         "about": "",
     },
     "llm": {
-        # provider: "anthropic" | "ollama" | "openai" ; "" = not configured yet
+        # provider: "anthropic" | "ollama" | "openai" | "claude_code" ; "" = not configured yet
         "writing": {"provider": "", "model": "", "effort": "high"},
         "analysis": {"provider": "", "model": "", "effort": "medium"},
         "ollama_url": "http://localhost:11434",
@@ -39,6 +39,7 @@ DEFAULTS: dict[str, Any] = {
         "concurrency": 0,  # 0 = automatic (1 for local models, 3 for cloud)
         "embed_model": "bge-m3",  # local Ollama embedding model for semantic search
         "check_with": "auto",  # which model fact-checks drafts: "auto", "writing" or "analysis"
+        "claude_code_path": "",  # the `claude` program; "" = find it (PATH, ~/.local/bin, the Claude desktop app)
     },
     "automation": {
         "auto_score": True,

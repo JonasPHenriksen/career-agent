@@ -119,10 +119,14 @@ def limits() -> dict:
     return _limits()
 
 
-def analyze_document(doc_id: int) -> dict:
+def analyze_document(doc_id: int, replace: bool = False) -> dict:
+    """Read a document into facts. With `replace` (a redo with another model), the document's unticked facts are
+    removed first so the new reading replaces them; facts you've ticked or hidden stay."""
     doc = db.q1("SELECT * FROM documents WHERE id = ?", (doc_id,))
     if not doc:
         return {"skipped": "document deleted"}
+    if replace:
+        db.ex("DELETE FROM facts WHERE document_id = ? AND verified = 0 AND hidden = 0", (doc_id,))
     db.update("documents", doc_id, {"status": "analyzing", "error": None})
     name = settings.get("profile").get("name") or ""
     who = f"the job seeker {name}" if name else "a job seeker (the candidate)"

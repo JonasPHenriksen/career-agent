@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 import httpx2
 
 from . import jsonutil
-from .errors import LLMConfigError, LLMError, LLMRefusal
+from .errors import LLMConfigError, LLMError, LLMRefusal, LLMTransient
 
 
 @dataclass
@@ -254,3 +254,101 @@ class OpenAICompatProvider:
             truncated=choice.get("finish_reason") == "length",
             model=str(d.get("model") or self.model),
         )
+
+
+# ----------------------------------------------------------------------------------------
+# Claude through Claude Code (your Claude subscription, no API key)
+# ----------------------------------------------------------------------------------------
+
+CLAUDE_CODE_MODELS = [("sonnet", "Claude Sonnet"), ("opus", "Claude Opus"), ("haiku", "Claude Haiku")]
+
+
+def find_claude_binary(configured: str | None = None) -> str | None:
+    """The `claude` command line: the configured path, then PATH and the usual install places, then the copy
+    the Claude desktop app keeps (newest version first)."""
+    import glob
+    import os
+    import shutil
+
+    found = [configured] if configured else []
+    found += [shutil.which("claude"), os.path.expanduser("~/.local/bin/claude"),
+              os.path.expanduser("~/.claude/local/claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
+
+    def version(path: str) -> tuple:
+        part = path.split("/claude-code/", 1)[-1].split("/", 1)[0]
+        return tuple(int(n) for n in re.findall(r"\d+", part))
+
+    bundled = glob.glob(os.path.expanduser(
+        "~/Library/Application Support/Claude/claude-code/*/*/claude.app/Contents/MacOS/claude"))
+    found += sorted(bundled, key=version, reverse=True)
+    return next((p for p in found if p and os.path.isfile(p) and os.access(p, os.X_OK)), None)
+
+
+class ClaudeCodeProvider:
+    """Claude through the Claude Code command line in print mode. It uses the Claude subscription you're logged in
+    with (an API key in the environment is removed so it can't be billed per call), and runs with every tool
+    switched off, no plugins, MCP servers, settings or saved sessions, in an empty temporary folder: it can only
+    answer, never act."""
+
+    name = "claude_code"
+    is_cloud = True
+
+    def __init__(self, model: str, binary: str, token: str = "", effort: str | None = None, timeout: int = 1200):
+        self.model, self.binary, self.token, self.effort, self.timeout = model, binary, token, effort, timeout
+
+    def args(self, system_file: str, schema: dict | None) -> list[str]:
+        import json
+
+        args = [self.binary, "-p", "--output-format", "json", "--model", self.model, "--system-prompt-file", system_file,
+                "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
+                "--disable-slash-commands"]
+        if self.effort in ("low", "medium", "high", "xhigh", "max"):
+            args += ["--effort", self.effort]
+        if schema is not None:
+            args += ["--json-schema", json.dumps(schema, ensure_ascii=False)]
+        return args
+
+    def complete(self, system: str, user: str, schema: dict | None, max_tokens: int) -> ProviderReply:
+        import json
+        import os
+        import subprocess
+        import tempfile
+
+        env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+        if self.token:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = self.token
+        with tempfile.TemporaryDirectory(prefix="career-agent-claude-") as cwd:
+            system_file = os.path.join(cwd, "system.txt")
+            with open(system_file, "w", encoding="utf-8") as fh:
+                fh.write(system)
+            try:
+                proc = subprocess.run(self.args(system_file, schema), input=user, capture_output=True, text=True,
+                                      cwd=cwd, env=env, timeout=self.timeout)
+            except FileNotFoundError as e:
+                raise LLMConfigError("Claude Code wasn't found. Set its path in Settings → AI models.") from e
+            except subprocess.TimeoutExpired as e:
+                raise LLMTransient(f"Claude Code didn't answer within {self.timeout // 60} minutes.") from e
+        out = (proc.stdout or "").strip()
+        try:
+            d = json.loads(out[out.index("{"):] if "{" in out else out)
+        except ValueError:
+            detail = (proc.stderr or out or f"exit code {proc.returncode}").strip()[:300]
+            raise LLMError(f"Claude Code gave no usable answer: {detail}") from None
+        if d.get("is_error") or d.get("subtype", "success") != "success":
+            msg = str(d.get("result") or d.get("subtype") or "unknown error")
+            low = msg.lower()
+            if any(w in low for w in ("not logged in", "/login", "log in", "authenticat", "invalid api key", "oauth")):
+                raise LLMConfigError("Claude Code isn't logged in. Log in once in Terminal: Settings → AI models shows how.")
+            if any(w in low for w in ("usage limit", "rate limit", "overloaded", "limit reached", "try again", "529")):
+                raise LLMTransient(f"Claude Code: {msg[:200]}", retry_after=3600 if "usage limit" in low else None)
+            raise LLMError(f"Claude Code: {msg[:300]}")
+        text = d.get("result") or ""
+        if schema is not None and d.get("structured_output") is not None:
+            text = json.dumps(d["structured_output"], ensure_ascii=False)
+        usage = d.get("usage") or {}
+        used = next(iter(d.get("modelUsage") or {}), "") or self.model
+        tokens_in = sum(int(usage.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens",
+                                                            "cache_creation_input_tokens"))
+        # "claude-code/…" never matches a price: a subscription isn't billed per call.
+        return ProviderReply(text=text, input_tokens=tokens_in, output_tokens=int(usage.get("output_tokens") or 0),
+                             model=f"claude-code/{used}")

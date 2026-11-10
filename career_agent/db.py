@@ -267,6 +267,13 @@ MIGRATIONS: list[str] = [
       created_at   TEXT NOT NULL
     );
     """,
+    # 3: retrying passing errors, and which item each model call was for (so you can see what made what)
+    """
+    ALTER TABLE tasks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE tasks ADD COLUMN run_after TEXT;
+    ALTER TABLE llm_calls ADD COLUMN ref TEXT;
+    CREATE INDEX IF NOT EXISTS llm_calls_ref ON llm_calls(ref);
+    """,
 ]
 
 

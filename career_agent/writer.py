@@ -353,6 +353,9 @@ def draft(app_id: int) -> dict:
     if not profile.has_facts():
         raise llm.LLMError("Your career database is empty. Import your CV and past applications first (Profile).")
     language = choose_language(job)
+    rewrite = bool(app.get("letter") or app.get("cv"))
+    if rewrite:  # a fresh draft never loses the current one: it stays under Versions
+        _save_version(app_id, "Before a new draft")
     db.update("applications", app_id, {"status": "drafting", "language": language, "updated_at": db.now()})
     system = writer_system(language, job)
     letter = llm.run("writing", "write_letter", system, _letter_task(job, language, app["instructions"]),
@@ -363,7 +366,7 @@ def draft(app_id: int) -> dict:
         "subject": letter["subject"], "letter": strip_citations(letter["letter"]), "cv": strip_citations(cv["cv_markdown"]),
         "writer_notes": db.jdump(_gap_note(letter) + letter["notes"] + cv["notes"]), "status": "draft", "updated_at": db.now(),
     })
-    _save_version(app_id, "First draft")
+    _save_version(app_id, "New draft" if rewrite else "First draft")
     run_checks(app_id)
     notify.send("Draft ready to review", f"{job['title']} at {job['company_name'] or '?'}")
     return {"words": len(letter["letter"].split())}
@@ -474,7 +477,8 @@ def check_tier() -> str:
     from .llm.providers import is_local_url
 
     w = cfg.get("writing") or {}
-    cloud = w.get("provider") == "anthropic" or (w.get("provider") == "openai" and not is_local_url(cfg.get("openai_base_url") or ""))
+    cloud = w.get("provider") in ("anthropic", "claude_code") or (
+        w.get("provider") == "openai" and not is_local_url(cfg.get("openai_base_url") or ""))
     return "writing" if cloud else "analysis"
 
 

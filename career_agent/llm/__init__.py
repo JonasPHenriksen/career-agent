@@ -6,22 +6,46 @@ Two tiers, each mapped to a provider + model in Settings:
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import time
 from dataclasses import dataclass
 from typing import Any
 
 from .. import db, keychain, privacy, settings
 from . import jsonutil
-from .errors import LLMConfigError, LLMError, LLMRefusal
-from .providers import (AnthropicProvider, OllamaProvider, OpenAICompatProvider, ProviderReply,
-                        is_local_url, list_ollama_models)
+from .errors import LLMConfigError, LLMError, LLMRefusal, LLMTransient
+from .providers import (CLAUDE_CODE_MODELS, AnthropicProvider, ClaudeCodeProvider, OllamaProvider,
+                        OpenAICompatProvider, ProviderReply, find_claude_binary, is_local_url, list_ollama_models)
 
-__all__ = ["run", "LLMResponse", "LLMError", "LLMConfigError", "LLMRefusal", "jsonutil",
+__all__ = ["run", "LLMResponse", "LLMError", "LLMConfigError", "LLMRefusal", "LLMTransient", "jsonutil", "using",
+           "made_by", "model_label", "model_choices", "parse_choice", "backfill_refs", "PROVIDERS",
            "set_test_provider", "status", "detect_defaults", "bootstrap", "test_tier",
            "ANTHROPIC_KEY", "OPENAI_KEY", "ProviderReply", "list_ollama_models"]
 
 ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
 OPENAI_KEY = "OPENAI_API_KEY"
+CLAUDE_CODE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
+PROVIDERS = ("anthropic", "ollama", "openai", "claude_code")
+
+# What the current task is about ("app:12", "doc:3"…) and, for a redo, which model to use instead of Settings.
+_ctx: contextvars.ContextVar[dict] = contextvars.ContextVar("llm_context", default={})
+
+
+@contextlib.contextmanager
+def using(ref: str | None = None, model: str | None = None):
+    """Run model calls for `ref` (recorded with each call, so you can see which model made what) and, if `model`
+    is a choice like "claude_code|sonnet" or "ollama|gemma4:31b", with that model instead of the configured ones."""
+    token = _ctx.set({"ref": ref, "override": parse_choice(model)})
+    try:
+        yield
+    finally:
+        _ctx.reset(token)
+
+
+def parse_choice(value: str | None) -> dict | None:
+    provider, _, model = (value or "").strip().partition("|")
+    return {"provider": provider, "model": model} if provider in PROVIDERS and model else None
 
 # USD per million tokens: input, output, cache read, cache write (5-minute TTL). Estimates.
 PRICES = {
@@ -68,7 +92,10 @@ def _build(tier: str, effort: str | None):
     if _test_provider is not None:
         return _test_provider
     cfg = settings.get("llm")
-    t = cfg.get(tier) or {}
+    t = dict(cfg.get(tier) or {})
+    override = _ctx.get().get("override")
+    if override:  # a redo with another model: same tier, different model
+        t.update(override)
     provider, model = t.get("provider"), t.get("model")
     if not provider or not model:
         raise LLMConfigError("No AI model is set up yet. Open Settings → AI models.")
@@ -89,6 +116,14 @@ def _build(tier: str, effort: str | None):
         if cfg.get("local_only") and not is_local_url(base):
             raise LLMConfigError("Local-only mode is on, and the OpenAI-compatible server isn't on this Mac.")
         return OpenAICompatProvider(model=model, base_url=base, api_key=keychain.get(OPENAI_KEY))
+    if provider == "claude_code":
+        if cfg.get("local_only"):
+            raise LLMConfigError("Local-only mode is on, so cloud models (Claude Code too) are blocked.")
+        binary = find_claude_binary(cfg.get("claude_code_path") or None)
+        if not binary:
+            raise LLMConfigError("Claude Code wasn't found on this Mac. Install it, or set its path in Settings → AI models.")
+        return ClaudeCodeProvider(model=model, binary=binary, token=keychain.get(CLAUDE_CODE_TOKEN) or "",
+                                  effort=effort or t.get("effort"))
     raise LLMConfigError(f"Unknown AI provider '{provider}'.")
 
 
@@ -107,7 +142,7 @@ def _log(purpose: str, provider: str, model: str, r: ProviderReply | None, ms: i
             "input_tokens": r.input_tokens if r else 0, "output_tokens": r.output_tokens if r else 0,
             "cache_read_tokens": r.cache_read if r else 0, "cache_write_tokens": r.cache_write if r else 0,
             "cost_usd": cost, "duration_ms": ms, "ok": 0 if error else 1, "error": error,
-            "created_at": db.now(),
+            "ref": _ctx.get().get("ref"), "created_at": db.now(),
         })
     except Exception:  # logging must never break a task
         pass
@@ -224,10 +259,74 @@ def status() -> dict:
         "openai_key": keychain.source(OPENAI_KEY),
         "ollama_running": bool(models) or _ollama_up(cfg.get("ollama_url") or ""),
         "ollama_models": [m.get("name") for m in models],
+        "ollama_chat_models": [m.get("name") for m in _chat_models(models)],  # without embedding models
         "local_only": bool(cfg.get("local_only")),
         "writing": cfg.get("writing"),
         "analysis": cfg.get("analysis"),
+        "claude_code": find_claude_binary(cfg.get("claude_code_path") or None) or "",
+        "claude_code_token": bool(keychain.get(CLAUDE_CODE_TOKEN)),
     }
+
+
+# ---------------------------------------------------------------------------------------
+# Which model made what, and which models you can redo work with
+# ---------------------------------------------------------------------------------------
+
+def model_label(provider: str | None, model: str | None) -> str:
+    model = model or "?"
+    if provider == "claude_code":
+        return f"Claude Code ({model.removeprefix('claude-code/')})"
+    if provider == "ollama":
+        return f"{model} (local)"
+    return model
+
+
+def made_by(ref: str, purposes: tuple[str, ...] | None = None) -> dict | None:
+    """The model behind the latest successful call for `ref` (optionally for these purposes)."""
+    sql = "SELECT provider, model, created_at FROM llm_calls WHERE ref = ? AND ok = 1"
+    args: list = [ref]
+    if purposes:
+        sql += f" AND purpose IN ({','.join('?' * len(purposes))})"
+        args += list(purposes)
+    row = db.q1(sql + " ORDER BY id DESC LIMIT 1", args)
+    if not row:
+        return None
+    return {"provider": row["provider"], "model": row["model"], "at": row["created_at"],
+            "label": model_label(row["provider"], row["model"])}
+
+
+def backfill_refs() -> int:
+    """Calls logged before refs were recorded: give each the ref of the task that was running when it ended."""
+    before = db.scalar("SELECT COUNT(*) FROM llm_calls WHERE ref IS NULL") or 0
+    db.ex("UPDATE llm_calls SET ref = (SELECT t.ref FROM tasks t WHERE t.ref IS NOT NULL AND t.started_at IS NOT NULL "
+          "AND t.finished_at IS NOT NULL AND llm_calls.created_at >= t.started_at AND llm_calls.created_at <= t.finished_at "
+          "ORDER BY t.id DESC LIMIT 1) WHERE ref IS NULL")
+    return before - (db.scalar("SELECT COUNT(*) FROM llm_calls WHERE ref IS NULL") or 0)
+
+
+_choices_cache: dict = {"at": 0.0, "value": []}
+
+
+def model_choices() -> list[tuple[str, list[tuple[str, str]]]]:
+    """Models you can pick for a redo, grouped: [(group, [(value, label)])]. Cached for a minute."""
+    if time.monotonic() - _choices_cache["at"] < 60 and _choices_cache["value"]:
+        return _choices_cache["value"]
+    cfg = settings.get("llm")
+    groups = []
+    if not cfg.get("local_only") and find_claude_binary(cfg.get("claude_code_path") or None):
+        groups.append(("Claude through Claude Code (your subscription)",
+                       [(f"claude_code|{m}", f"{label}") for m, label in CLAUDE_CODE_MODELS]))
+    if not cfg.get("local_only") and keychain.get(ANTHROPIC_KEY):
+        groups.append(("Claude API (billed per call)", [(f"anthropic|{m}", label) for m, label in ANTHROPIC_MODELS]))
+    local = [m.get("name") for m in _chat_models(list_ollama_models(cfg.get("ollama_url") or "http://localhost:11434"))]
+    if local:
+        groups.append(("On this Mac (Ollama)", [(f"ollama|{m}", m) for m in local]))
+    other = [cfg.get(t) or {} for t in ("writing", "analysis")]
+    custom = sorted({o["model"] for o in other if o.get("provider") == "openai" and o.get("model")})
+    if custom:
+        groups.append(("OpenAI-compatible server", [(f"openai|{m}", m) for m in custom]))
+    _choices_cache.update(at=time.monotonic(), value=groups)
+    return groups
 
 
 def _ollama_up(url: str) -> bool:

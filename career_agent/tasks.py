@@ -8,10 +8,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from . import db, settings
 
@@ -83,7 +84,7 @@ def _handlers() -> dict:
         return result
 
     return {
-        "analyze_document": lambda p: _after_analysis(profile.analyze_document(p["doc_id"])),
+        "analyze_document": lambda p: _after_analysis(profile.analyze_document(p["doc_id"], replace=p.get("replace", False))),
         "build_style": build_style,
         "consolidate_facts": consolidate,
         "parse_job": lambda p: jobs.parse(p["job_id"], use_text=p.get("use_text", False)),
@@ -142,14 +143,33 @@ def _after_analysis(result: dict) -> dict:
     return result
 
 
+RETRY_MINUTES = (2, 10, 30)  # a passing model problem is tried again after these waits, then reported
+_TRANSIENT = re.compile(r"isn't running|disconnected|timed out|timeout|connection (refused|reset|error|aborted)|"
+                        r"temporarily|overloaded|rate.?limit|usage limit|\b(502|503|504|529)\b", re.I)
+
+
+def is_transient(e: Exception) -> bool:
+    from .llm import LLMConfigError, LLMError, LLMTransient
+
+    if isinstance(e, LLMTransient):
+        return True
+    if isinstance(e, LLMConfigError):  # "Ollama isn't running" is passing; a missing key isn't
+        return "isn't running" in str(e)
+    return isinstance(e, LLMError) and bool(_TRANSIENT.search(str(e)))
+
+
 def run_task(task: dict) -> None:
+    from . import llm
+
     handlers = _handlers()
     db.update("tasks", task["id"], {"status": "running", "started_at": db.now(), "error": None})
     try:
         fn = handlers.get(task["kind"])
         if fn is None:
             raise RuntimeError(f"Unknown task type {task['kind']}")
-        result = fn(json.loads(task["payload"] or "{}"))
+        payload = json.loads(task["payload"] or "{}")
+        with llm.using(ref=task.get("ref"), model=payload.get("model")):
+            result = fn(payload)
         db.update("tasks", task["id"], {"status": "done", "finished_at": db.now(),
                                         "progress": json.dumps(result, ensure_ascii=False)[:2000] if result else None})
     except Exception as e:  # noqa: BLE001 - every failure is recorded on the task
@@ -159,6 +179,14 @@ def run_task(task: dict) -> None:
         msg = str(e) if isinstance(e, (LLMError, FetchError)) else f"{e.__class__.__name__}: {e}"
         if not isinstance(e, (LLMError, FetchError)):
             log.error("Task %s failed:\n%s", task["id"], traceback.format_exc())
+        attempts = int(task.get("attempts") or 0)
+        if is_transient(e) and attempts < len(RETRY_MINUTES):
+            wait = getattr(e, "retry_after", None) or RETRY_MINUTES[attempts] * 60
+            when = datetime.now(timezone.utc) + timedelta(seconds=wait)
+            db.update("tasks", task["id"], {"status": "queued", "attempts": attempts + 1, "started_at": None,
+                                            "run_after": when.strftime("%Y-%m-%dT%H:%M:%S"),
+                                            "error": f"{msg[:1500]} · trying again at {when.astimezone():%H:%M}"})
+            return
         db.update("tasks", task["id"], {"status": "error", "finished_at": db.now(), "error": msg[:2000]})
         if task["kind"] == "draft_application":
             app_id = json.loads(task["payload"]).get("application_id")
@@ -186,7 +214,8 @@ async def worker_loop(stop: asyncio.Event) -> None:
         try:
             slots = concurrency() - len(running)
             if slots > 0:
-                rows = db.q("SELECT * FROM tasks WHERE status = 'queued' ORDER BY id LIMIT ?", (slots,))
+                rows = db.q("SELECT * FROM tasks WHERE status = 'queued' AND (run_after IS NULL OR run_after <= ?) "
+                            "ORDER BY id LIMIT ?", (db.now(), slots))
                 for row in rows:
                     db.update("tasks", row["id"], {"status": "running", "started_at": db.now()})
                     t = asyncio.create_task(asyncio.to_thread(run_task, row))

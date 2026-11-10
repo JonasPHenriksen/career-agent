@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline, progress %}
+{% from "_macros.html" import score, grade, deadline, progress, model_picker, made_by %}
 {% block title %}{{ job.title or 'Job' }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/jobs">Jobs</a>{% if source %} · found by {{ source.name }}{% endif %} · added {{ job.created_at|ago }}</div>
@@ -86,13 +86,13 @@
       <h3 style="margin-top:1rem">Worth asking them</h3>
       <ul class="bul">{% for qq in job.f.questions %}<li>{{ qq }}</li>{% endfor %}</ul>
       {% endif %}
-      <form method="post" action="/jobs/{{ job.id }}/rescore" class="row end"><span class="muted small">Scored {{ job.scored_at|ago }}</span><button class="btn small ghost" data-busy="Scoring…">Score again</button></form>
+      <form method="post" action="/jobs/{{ job.id }}/rescore" class="row end"><span class="muted small">Scored {{ job.scored_at|ago }}{% if made.score %} by {{ made.score.label }}{% endif %}</span>{{ model_picker() }}<button class="btn small ghost" data-busy="Scoring…">Score again</button></form>
     </section>
     {% elif job.parse_status == 'parsed' and not busy %}
     <section class="card">
       <h2>Not scored yet</h2>
       <p class="text-2">Scoring compares the ad with your career database. Import your documents first if you haven't.</p>
-      <form method="post" action="/jobs/{{ job.id }}/rescore"><button class="btn" data-busy="Scoring…">Score fit now</button></form>
+      <form method="post" action="/jobs/{{ job.id }}/rescore" class="row">{{ model_picker() }}<button class="btn" data-busy="Scoring…">Score fit now</button></form>
     </section>
     {% endif %}
 
@@ -141,7 +141,7 @@
     </section>
 
     <div class="row end">
-      {% if job.parse_status == 'parsed' %}<form method="post" action="/jobs/{{ job.id }}/reparse" class="inline"><button class="btn small ghost">Read the ad again</button></form>{% endif %}
+      {% if job.parse_status == 'parsed' %}<form method="post" action="/jobs/{{ job.id }}/reparse" class="inline row">{{ made_by(made.parse, 'Read') }}{{ model_picker() }}<button class="btn small ghost">Read the ad again</button></form>{% endif %}
       <form method="post" action="/jobs/{{ job.id }}/delete" data-confirm="Delete this job{{ ' and its application' if app }}?" class="inline"><button class="btn small ghost danger">Delete job</button></form>
     </div>
   </div>

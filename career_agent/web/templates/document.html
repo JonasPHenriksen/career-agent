@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% from "_macros.html" import progress %}
+{% from "_macros.html" import progress, model_picker, made_by %}
 {% block title %}{{ d.title or d.filename }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/profile?tab=documents">Documents</a></div>
 <header class="page-head">
   <div><h1>{{ d.title or d.filename }}</h1><p class="sub">{{ d.filename }} · {{ d.word_count }} words · imported {{ d.created_at|local_date }}{% if d.source_path %} · from <code>{{ d.source_path }}</code>{% endif %}</p></div>
   <div class="row">
-    <form method="post" action="/documents/{{ d.id }}/reanalyze" class="inline"><button class="btn" data-busy="Starting…">Analyse again</button></form>
+    <form method="post" action="/documents/{{ d.id }}/reanalyze" class="inline row">{{ made_by(made, 'Read') }}{{ model_picker() }}<button class="btn" data-busy="Starting…">Analyse again</button></form>
   </div>
 </header>
 {% if busy %}{{ progress(busy, {'analyze_document': 'Reading document'}, '/profile/progress') }}{% endif %}

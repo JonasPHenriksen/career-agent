@@ -17,12 +17,24 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .. import (companies, config, db, exporter, ingest, insights, jobs, keychain, knowledge, llm, mailer,
-                profile, retrieval, settings, sources, tasks, todos, tracker, voice, watch, writer)
+                profile, redo, retrieval, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
 helpers.install(templates.env)
+templates.env.globals["model_choices"] = llm.model_choices  # for the "with which model" picker on redo buttons
+
+
+def chosen_model(f: dict) -> dict:
+    """The model picked next to a redo button, as task payload ({} = the configured models)."""
+    m = (f.get("model") or "").strip()
+    return {"model": m} if llm.parse_choice(m) else {}
+
+
+def with_model_msg(f: dict, text: str) -> str:
+    choice = llm.parse_choice(f.get("model"))
+    return f"{text} with {llm.model_label(choice['provider'], choice['model'])}" if choice else text
 
 
 @asynccontextmanager
@@ -30,6 +42,7 @@ async def lifespan(_app: FastAPI):
     db.init()
     llm.bootstrap()
     tasks.recover()
+    llm.backfill_refs()
     retrieval.backfill_chunks()
     if retrieval.embeddings_available():
         tasks.enqueue("embed_index", {}, ref="index")
@@ -122,6 +135,8 @@ def llm_ready() -> tuple[bool, str]:
             return False, "Choose an AI model in Settings."
         if t["provider"] == "anthropic" and not keychain.get(llm.ANTHROPIC_KEY):
             return False, "Add your Anthropic API key in Settings."
+        if t["provider"] == "claude_code" and not llm.find_claude_binary(cfg.get("claude_code_path") or None):
+            return False, "Claude Code wasn't found on this Mac. See Settings → Claude through Claude Code."
     return True, ""
 
 
@@ -288,7 +303,8 @@ def job_detail(request: Request, job_id: int):
     fact_ids = {i for m in (job["f"].get("matched") or []) for i in (m.get("fact_ids") or [])}
     facts = {f["id"]: f for f in db.q(f"SELECT id, title, organization FROM facts WHERE id IN ({','.join('?' * len(fact_ids))})",
                                        list(fact_ids))} if fact_ids else {}
-    return render(request, "job.html", job=job, app=app_row, company=company, facts=facts,
+    made = {"score": llm.made_by(f"job:{job_id}", ("fit_score",)), "parse": llm.made_by(f"job:{job_id}", ("parse_job",))}
+    return render(request, "job.html", job=job, app=app_row, company=company, facts=facts, made=made,
                   badge=companies.badge(job["company_id"]), busy=tasks.active(ref=f"job:{job_id}"),
                   error=tasks.last_error(f"job:{job_id}"), expired=jobs.is_expired(job), task_labels=tasks.TASK_LABELS,
                   source=db.q1("SELECT name FROM sources WHERE id = ?", (job["source_id"],)) if job["source_id"] else None)
@@ -311,18 +327,20 @@ async def job_status(request: Request, job_id: int):
 
 
 @app.post("/jobs/{job_id}/rescore")
-def job_rescore(request: Request, job_id: int):
-    tasks.enqueue("score_job", {"job_id": job_id}, ref=f"job:{job_id}")
-    return go(f"/jobs/{job_id}", msg="Scoring again…")
+async def job_rescore(request: Request, job_id: int):
+    f = await form(request)
+    tasks.enqueue("score_job", {"job_id": job_id, **chosen_model(f)}, ref=f"job:{job_id}")
+    return go(f"/jobs/{job_id}", msg=with_model_msg(f, "Scoring again") + "…")
 
 
 @app.post("/jobs/{job_id}/reparse")
-def job_reparse(request: Request, job_id: int):
+async def job_reparse(request: Request, job_id: int):
+    f = await form(request)
     job = need(jobs.get(job_id))
     db.update("jobs", job_id, {"parse_status": "pending", "parse_error": None,
                                "status": "new" if job["status"] == "filtered" else job["status"]})
-    tasks.enqueue("parse_job", {"job_id": job_id, "use_text": not job["url"]}, ref=f"job:{job_id}")
-    return go(f"/jobs/{job_id}", msg="Reading the ad again…")
+    tasks.enqueue("parse_job", {"job_id": job_id, "use_text": not job["url"], **chosen_model(f)}, ref=f"job:{job_id}")
+    return go(f"/jobs/{job_id}", msg=with_model_msg(f, "Reading the ad again") + "…")
 
 
 @app.post("/jobs/{job_id}/text")
@@ -380,7 +398,10 @@ def application(request: Request, app_id: int, tab: str = "letter"):
     facts = {f["id"]: f for f in db.q(f"SELECT id, title, organization, evidence FROM facts WHERE id IN ({','.join('?' * len(ids))})",
                                        list(ids))} if ids else {}
     prompt = writer.manual_prompt(app_id) if tab == "claude" else ""
-    return render(request, "application.html", a=a, job=job, tab=tab, tabs=APP_TABS, claims=claims, facts=facts,
+    ref = f"app:{app_id}"
+    made = {"letter": llm.made_by(ref, ("write_letter", "revise_letter")), "cv": llm.made_by(ref, ("write_cv", "revise_cv")),
+            "check": llm.made_by(ref, ("claim_check",)), "prep": llm.made_by(ref, ("interview_prep",))}
+    return render(request, "application.html", a=a, job=job, tab=tab, tabs=APP_TABS, claims=claims, facts=facts, made=made,
                   prompt=prompt, prompt_words=len(prompt.split()),
                   v=db.jload(a["voice"], {}) or {}, notes=db.jload(a["writer_notes"], []) or [],
                   busy=tasks.active(ref=f"app:{app_id}"), error=tasks.last_error(f"app:{app_id}"),
@@ -434,8 +455,8 @@ async def application_redraft(request: Request, app_id: int):
     f = await form(request)
     if f.get("instructions") is not None:
         db.update("applications", app_id, {"instructions": f.get("instructions") or None})
-    tasks.enqueue("draft_application", {"application_id": app_id}, ref=f"app:{app_id}", dedupe=True)
-    return go(f"/applications/{app_id}", msg="Writing a fresh draft…")
+    tasks.enqueue("draft_application", {"application_id": app_id, **chosen_model(f)}, ref=f"app:{app_id}", dedupe=True)
+    return go(f"/applications/{app_id}", msg=with_model_msg(f, "Writing a fresh draft") + ". The current one stays under Versions.")
 
 
 @app.post("/applications/{app_id}/manual-import")
@@ -451,9 +472,10 @@ async def application_manual_import(request: Request, app_id: int):
 
 
 @app.post("/applications/{app_id}/check")
-def application_check(request: Request, app_id: int):
-    tasks.enqueue("check_application", {"application_id": app_id}, ref=f"app:{app_id}")
-    return go(f"/applications/{app_id}?tab=check", msg="Fact-checking…")
+async def application_check(request: Request, app_id: int):
+    f = await form(request)
+    tasks.enqueue("check_application", {"application_id": app_id, **chosen_model(f)}, ref=f"app:{app_id}")
+    return go(f"/applications/{app_id}?tab=check", msg=with_model_msg(f, "Fact-checking") + "…")
 
 
 @app.get("/applications/{app_id}/export/{name}")
@@ -537,9 +559,10 @@ def application_event_delete(request: Request, app_id: int, event_id: int):
 
 
 @app.post("/applications/{app_id}/prep")
-def application_prep(request: Request, app_id: int):
-    tasks.enqueue("interview_prep", {"application_id": app_id}, ref=f"app:{app_id}")
-    return go(f"/applications/{app_id}?tab=interview", msg="Preparing your interview notes…")
+async def application_prep(request: Request, app_id: int):
+    f = await form(request)
+    tasks.enqueue("interview_prep", {"application_id": app_id, **chosen_model(f)}, ref=f"app:{app_id}")
+    return go(f"/applications/{app_id}?tab=interview", msg=with_model_msg(f, "Preparing your interview notes") + "…")
 
 
 @app.post("/applications/{app_id}/followup")
@@ -632,6 +655,7 @@ def profile_page(request: Request, tab: str = "about"):
     style_busy = any(r["kind"] == "build_style" for r in active_rows)
     busy = len(active_rows)
     return render(request, "profile.html", tab=tab, n_docs=n_docs, style_busy=style_busy,
+                  made_style=llm.made_by("style", ("style_guide",)),
                   tidy_busy=any(r["kind"] == "consolidate_facts" for r in active_rows), p=settings.get("profile"), docs=docs, grouped=grouped,
                   kinds=profile.KINDS, kind_labels=profile.KIND_LABELS, outcomes=profile.OUTCOMES,
                   categories=profile.CATEGORIES, style_guide=settings.get("style_guide"),
@@ -732,6 +756,7 @@ def documents_analyze_pending(request: Request):
 def document_page(request: Request, doc_id: int):
     d = need(db.q1("SELECT * FROM documents WHERE id = ?", (doc_id,)))
     return render(request, "document.html", d=d, kinds=profile.KINDS, outcomes=profile.OUTCOMES,
+                  made=llm.made_by(f"doc:{doc_id}", ("analyze_document",)),
                   kind_labels=profile.KIND_LABELS, category_labels=profile.CATEGORY_LABELS,
                   facts=db.q("SELECT * FROM facts WHERE document_id = ? ORDER BY category, id", (doc_id,)),
                   busy=tasks.active(ref=f"doc:{doc_id}"), error=tasks.last_error(f"doc:{doc_id}"))
@@ -756,9 +781,28 @@ async def document_save(request: Request, doc_id: int):
 
 
 @app.post("/documents/{doc_id}/reanalyze")
-def document_reanalyze(request: Request, doc_id: int):
-    tasks.enqueue("analyze_document", {"doc_id": doc_id}, ref=f"doc:{doc_id}")
+async def document_reanalyze(request: Request, doc_id: int):
+    f = await form(request)
+    model = chosen_model(f)
+    tasks.enqueue("analyze_document", {"doc_id": doc_id, "replace": bool(model), **model}, ref=f"doc:{doc_id}")
+    if model:
+        return go(f"/documents/{doc_id}", msg=with_model_msg(f, "Reading it again") + ": its unticked facts are replaced, "
+                                                                                     "ticked and hidden ones stay.")
     return go(f"/documents/{doc_id}", msg="Analysing again. Facts already in your database are kept and merged.")
+
+
+@app.post("/redo")
+async def redo_work(request: Request):
+    f = await form(request)
+    kinds = [k for k in redo.KINDS if f.get(f"what_{k}")]
+    if not kinds:
+        return go("/settings#redo", err="Tick at least one kind of work to redo.")
+    counts = redo.enqueue(kinds, f.get("model") or None, f.get("only_model") or None)
+    total = sum(counts.values())
+    if not total:
+        return go("/settings#redo", msg="Nothing matched, so nothing was queued.")
+    parts = ", ".join(f"{n} × {k}" for k, n in counts.items() if n)
+    return go("/tasks", msg=with_model_msg(f, f"Queued {total} tasks ({parts})") + ". Earlier drafts stay under Versions.")
 
 
 @app.post("/documents/{doc_id}/delete")
@@ -831,10 +875,11 @@ async def style_save(request: Request):
 
 
 @app.post("/style/rebuild")
-def style_rebuild(request: Request):
+async def style_rebuild(request: Request):
+    f = await form(request)
     settings.update("state", {"style_locked": False})
-    tasks.enqueue("build_style", {}, ref="style")
-    return go("/profile?tab=style", msg="Studying your writing…")
+    tasks.enqueue("build_style", {**chosen_model(f)}, ref="style")
+    return go("/profile?tab=style", msg=with_model_msg(f, "Studying your writing") + "…")
 
 
 # ---------------------------------------------------------------------------------------
@@ -854,7 +899,9 @@ def settings_page(request: Request):
                   w=settings.get("writing"), anthropic_models=llm.ANTHROPIC_MODELS,
                   sources=db.q("SELECT * FROM sources ORDER BY id"), source_kinds=sources.KINDS,
                   data_dir=str(config.DATA_DIR), efforts=["low", "medium", "high", "xhigh", "max"],
-                  search=retrieval.status(), own_length=writer.letter_length("da") if not settings.get("writing").get("letter_words") else None)
+                  search=retrieval.status(), own_length=writer.letter_length("da") if not settings.get("writing").get("letter_words") else None,
+                  claude_code_models=llm.CLAUDE_CODE_MODELS, redo_kinds=redo.KINDS, redo_counts={k: len(v) for k, v in redo.candidates().items()},
+                  models_used=redo.models_used())
 
 
 def _save_models(f: dict) -> None:
@@ -864,7 +911,7 @@ def _save_models(f: dict) -> None:
         provider, _, model = choice.partition("|")
         if provider == "openai":
             model = f.get(f"{tier}_custom", "") or model
-        if provider in ("anthropic", "ollama", "openai") and model:
+        if provider in llm.PROVIDERS and model:
             patch[tier] = {"provider": provider, "model": model, "effort": f.get(f"{tier}_effort") or "medium"}
     patch["ollama_url"] = f.get("ollama_url") or "http://localhost:11434"
     patch["openai_base_url"] = f.get("openai_base_url") or "http://localhost:1234/v1"
@@ -873,6 +920,8 @@ def _save_models(f: dict) -> None:
         patch["concurrency"] = max(0, min(8, int(f.get("concurrency") or 0)))
     except ValueError:
         pass
+    if "claude_code_path" in f:
+        patch["claude_code_path"] = (f.get("claude_code_path") or "").strip()
     patch["local_only"] = bool(f.get("local_only"))
     patch["redact_for_cloud"] = bool(f.get("redact_for_cloud"))
     settings.update("llm", patch)

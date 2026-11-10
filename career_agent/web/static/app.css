@@ -360,3 +360,9 @@ table.data tr:last-child td { border-bottom: 0; }
 .nav .count { display: inline-grid; place-items: center; min-width: 1.15rem; height: 1.15rem; margin-left: .3rem;
   padding: 0 .3rem; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: .7rem;
   font-weight: 700; vertical-align: 1px; }
+
+/* Redo with another model: the picker next to redo buttons, and who made what */
+select.model-picker { width: auto; max-width: 16rem; padding: .28rem .45rem; font-size: .82rem; }
+.made-by { color: var(--muted); font-size: .8rem; }
+pre.code-line { background: var(--sunken); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: .5rem .7rem;
+  font-family: var(--mono); font-size: .8rem; white-space: pre-wrap; word-break: break-all; margin: .4rem 0 0; }

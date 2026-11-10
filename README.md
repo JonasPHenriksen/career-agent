@@ -182,6 +182,30 @@ letters. Usage is limited per 5 hours and per week on both, which is plenty for 
 goes into the chat: your career facts, style guide, example letters and the ad. ID and bank numbers are removed,
 and your contact details are never included (they're added to the PDFs locally).
 
+## Switching models, and redoing work
+
+* **Interrupted? Nothing is lost.** Tasks that were running when the app stopped go back in the queue and run
+  again on the next start, and results are only saved when a task finishes. If a model is briefly unavailable
+  (Ollama restarting or updating, a rate or usage limit), the task waits 2, 10 and 30 minutes and tries again
+  before it's reported as failed.
+* **Switch any time** in Settings → AI models: the next task uses the new model.
+* **See who made what.** Drafts, fact checks, job readings and scores, documents and the style guide say which
+  model made them ("Read by gemma4:26b-mlx (local)").
+* **Redo one thing** with the picker next to its button (New draft, Run fact check, Score again, Read the ad
+  again, Analyse again, Rebuild): any installed model or Claude, without changing your settings. Earlier drafts
+  stay under Versions. A document read again with another model replaces its unticked facts and keeps the ones
+  you've ticked or hidden.
+* **Redo in bulk:** Settings → *Redo work with another model*, e.g. everything `gemma4:26b-mlx` made, with Claude.
+
+### Claude through Claude Code (your subscription)
+
+With Claude Code installed (the Claude desktop app brings its own copy), pick *Claude through Claude Code* under
+Settings → AI models. It uses the Claude plan you're logged in with instead of an API key, so there's no bill per
+call: calls count against your plan's limits, and tasks wait and retry when you hit one. Log in once in Terminal
+(Settings shows the exact command; then type `/login`). The app runs it with every tool switched off, without
+plugins, connectors or saved sessions, in an empty folder, so it can only answer. *Local only* blocks it like any
+cloud model, and ID and bank numbers are removed first.
+
 ## Using Claude (cloud, best quality)
 
 1. Create an API key at <https://console.anthropic.com> → API keys (it's separate from a Claude.ai
@@ -246,7 +270,7 @@ uv run python -m career_agent --port 8765 --data ./data --no-browser
 
 | Path | What |
 |---|---|
-| `career_agent/llm/` | Providers (Claude, Ollama, OpenAI-compatible), JSON schemas, cost tracking |
+| `career_agent/llm/` | Providers (Claude API, Claude Code, Ollama, OpenAI-compatible), JSON schemas, cost tracking, who made what |
 | `career_agent/ingest.py` | File, folder and mailbox import; text extraction |
 | `career_agent/profile.py` | Document analysis into facts, de-duplication, prompt digests |
 | `career_agent/retrieval.py` | Passages, local embeddings, hybrid keyword + meaning search |
@@ -257,5 +281,7 @@ uv run python -m career_agent --port 8765 --data ./data --no-browser
 | `career_agent/writer.py` | Letters, CVs, revisions, fact check, interview prep, follow-ups |
 | `career_agent/exporter.py`, `mailer.py` | PDF/Word rendering, Apple Mail drafts |
 | `career_agent/tracker.py`, `companies.py`, `insights.py` | Timeline, ghosting, employer grades, stats |
-| `career_agent/tasks.py` | Background queue, worker and scheduler |
+| `career_agent/tasks.py` | Background queue, worker and scheduler, retries after passing errors |
+| `career_agent/redo.py` | Redoing work with another model, one item or in bulk |
+| `career_agent/todos.py` | Your to-do list and dated reminders |
 | `career_agent/web/` | FastAPI app, templates, CSS, a little JS |

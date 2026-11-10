@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import model_picker, made_by %}
 {% block title %}Profile{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -248,7 +249,7 @@
 <div class="split">
   <section class="card">
     <div class="card-head"><h2>Your writing style guide</h2>
-      <form method="post" action="/style/rebuild" class="inline" {% if style_locked %}data-confirm="Rebuild from your documents? Your manual edits will be replaced."{% endif %}><button class="btn small" data-busy="Starting…">Rebuild from my documents</button></form></div>
+      <form method="post" action="/style/rebuild" class="inline row" {% if style_locked %}data-confirm="Rebuild from your documents? Your manual edits will be replaced."{% endif %}>{{ made_by(made_style, 'Built') }}{{ model_picker() }}<button class="btn small" data-busy="Starting…">Rebuild from my documents</button></form></div>
     {% if style_error and not busy %}<div class="flash err">{{ style_error.error }}</div>{% endif %}
     <form method="post" action="/style">
       <textarea name="guide" class="editor" placeholder="Built automatically once you've imported some applications or other texts you wrote yourself.">{{ style_guide or '' }}</textarea>
