@@ -306,3 +306,4 @@ uv run python -m career_agent --port 8765 --data ./data --no-browser
 | `career_agent/redo.py` | Redoing work with another model, one item or in bulk |
 | `career_agent/todos.py` | Your to-do list and dated reminders |
 | `career_agent/web/` | FastAPI app, templates, CSS, a little JS |
+| `scripts/eval/letters.py` | A small benchmark: the same letters from several models, fact-checked by one checker, laid out blind for you to rank (results in `data/eval/`) |
