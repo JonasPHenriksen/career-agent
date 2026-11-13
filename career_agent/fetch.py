@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx2
@@ -18,7 +19,12 @@ HEADERS = {
 
 
 class FetchError(Exception):
-    """Fetching failed; message is for the user."""
+    """Fetching failed; message is for the user. `connection` is True when the site couldn't be reached at all
+    (no answer, no network): worth trying again later, unlike a page that's gone or blocked."""
+
+    def __init__(self, message: str, connection: bool = False):
+        super().__init__(message)
+        self.connection = connection
 
 
 def get(url: str, timeout: float = 25) -> httpx2.Response:
@@ -27,7 +33,9 @@ def get(url: str, timeout: float = 25) -> httpx2.Response:
     try:
         r = httpx2.get(url, headers=HEADERS, follow_redirects=True, timeout=timeout)
     except httpx2.TimeoutException as e:
-        raise FetchError("The site took too long to answer.") from e
+        raise FetchError("The site took too long to answer.", connection=True) from e
+    except httpx2.TransportError as e:
+        raise FetchError(f"Couldn't load the page ({e.__class__.__name__}).", connection=True) from e
     except httpx2.HTTPError as e:
         raise FetchError(f"Couldn't load the page ({e.__class__.__name__}).") from e
     if r.status_code in (401, 403, 429, 999):
@@ -38,6 +46,27 @@ def get(url: str, timeout: float = 25) -> httpx2.Response:
     if r.status_code >= 400:
         raise FetchError(f"The site answered HTTP {r.status_code}.")
     return r
+
+
+# Is this Mac online at all? Asked only after a fetch fails, to tell "the site is down" from "no internet".
+# These are the connectivity checks macOS and Android use themselves; nothing about you is sent.
+_PROBES = ("http://captive.apple.com/hotspot-detect.html", "https://www.gstatic.com/generate_204")
+_online: dict = {"at": 0.0, "ok": True}
+
+
+def online(force: bool = False) -> bool:
+    if not force and time.monotonic() - _online["at"] < 20:
+        return _online["ok"]
+    ok = False
+    for url in _PROBES:
+        try:
+            if httpx2.get(url, timeout=4, follow_redirects=False).status_code < 500:
+                ok = True
+                break
+        except httpx2.HTTPError:
+            continue
+    _online.update(at=time.monotonic(), ok=ok)
+    return ok
 
 
 _TRACKING = re.compile(r"^(utm_.*|fbclid|gclid|mc_.*|trk.*|trackingid|refid|ref_src|_hs.*|cmp|campaign)$", re.I)

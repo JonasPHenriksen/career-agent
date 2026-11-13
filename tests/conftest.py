@@ -7,6 +7,7 @@ import tempfile
 
 os.environ["CAREER_AGENT_SECRETS"] = "file"
 os.environ["CAREER_AGENT_NO_NOTIFY"] = "1"
+os.environ["CAREER_AGENT_NO_OLLAMA_START"] = "1"
 os.environ.pop("ANTHROPIC_API_KEY", None)
 
 import pytest  # noqa: E402

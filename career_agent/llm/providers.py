@@ -34,7 +34,7 @@ def is_local_url(url: str) -> bool:
 # ----------------------------------------------------------------------------------------
 
 # Models that accept server-side refusal fallbacks (`fallbacks: "default"`).
-_FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"}
+_FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-2", "claude-fable-5-1", "claude-sonnet-5-5"}
 _EFFORT_RE = re.compile(r"^claude-(opus|sonnet|haiku|fable|mythos)-(5|[6-9])|^claude-opus-4-[5-9]|^claude-sonnet-4-6")
 
 

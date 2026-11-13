@@ -9,10 +9,29 @@ You stay in charge of one thing: nothing is ever sent without you pressing Send.
 ## Start it
 
 ```bash
-./start.sh
+./agent start
 ```
 
-It opens <http://127.0.0.1:8765>. The first run installs what it needs. Stop it with Ctrl+C.
+It starts Ollama (the local models) and the app, and opens <http://127.0.0.1:8765>. The first run installs what
+it needs. When you're done:
+
+```bash
+./agent stop
+```
+
+That stops the app, unloads the models and quits Ollama, so nothing is left running. `./agent status` shows what
+is running.
+
+To let it work through everything on its own and then switch itself off:
+
+```bash
+./agent run
+```
+
+It starts everything, checks your job sources, reads and scores new jobs, writes drafts for strong matches, and
+stops everything when the queue is empty (or after 6 hours: `--max-hours 2` changes that). Review the results the
+next time you start it. Stopping in the middle of work is safe: unfinished tasks go back in the queue and run on the next start.
+While it runs, the Mac is kept from idle-sleeping so long jobs can finish (closing the lid still sleeps it).
 
 The **Today** page walks you through setup:
 
@@ -185,9 +204,13 @@ and your contact details are never included (they're added to the PDFs locally).
 ## Switching models, and redoing work
 
 * **Interrupted? Nothing is lost.** Tasks that were running when the app stopped go back in the queue and run
-  again on the next start, and results are only saved when a task finishes. If a model is briefly unavailable
-  (Ollama restarting or updating, a rate or usage limit), the task waits 2, 10 and 30 minutes and tries again
-  before it's reported as failed.
+  again on the next start, and results are only saved when a task finishes.
+* **It waits for what it needs.** If Ollama isn't running, the app starts it; if this Mac is offline, or your
+  Claude plan's usage limit is reached, the tasks that need it wait and carry on when it's back, without failing.
+  Tasks → *waiting* shows what for. A passing hiccup (a server restarting, a site not answering) is tried again
+  after 2, 10 and 30 minutes before it's reported as failed.
+* **Each start catches up.** Work an earlier session couldn't finish for one of those reasons is queued again,
+  and job sources that failed are checked right away.
 * **Switch any time** in Settings → AI models: the next task uses the new model.
 * **See who made what.** Drafts, fact checks, job readings and scores, documents and the style guide say which
   model made them ("Read by gemma4:26b-mlx (local)").
@@ -231,16 +254,14 @@ Your contact details are never sent: they're added to the PDFs locally. Requests
 server-side fallback (`fallbacks: "default"`), so if the model declines a request it is retried on a
 fallback model automatically. Since this only writes job applications, that should almost never happen.
 
-## Keep it running in the background
+## Running it only when you want it
 
-To have it check job sources and draft applications even when you haven't opened it:
+By default nothing runs on its own: `./agent start` starts everything and `./agent stop` stops everything. While
+it runs it checks job sources, drafts applications and sends macOS notifications (strong match found, draft ready,
+a daily summary). `./agent stop --keep-ollama` leaves Ollama running if you use it for other things.
 
-```bash
-scripts/install-autostart.sh
-```
-
-It then starts at login and sends macOS notifications (strong match found, draft ready, a daily summary).
-Undo with `scripts/uninstall-autostart.sh`.
+If you'd rather have it start at login and stay in the background, run `scripts/install-autostart.sh` (undo with
+`scripts/uninstall-autostart.sh`). It then uses memory and battery all the time, and Ollama has to be running too.
 
 ## Your data
 

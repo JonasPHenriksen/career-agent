@@ -20,7 +20,7 @@ from .providers import (CLAUDE_CODE_MODELS, AnthropicProvider, ClaudeCodeProvide
 
 __all__ = ["run", "LLMResponse", "LLMError", "LLMConfigError", "LLMRefusal", "LLMTransient", "jsonutil", "using",
            "made_by", "model_label", "model_choices", "parse_choice", "backfill_refs", "PROVIDERS",
-           "set_test_provider", "status", "detect_defaults", "bootstrap", "test_tier",
+           "set_test_provider", "status", "tier_provider", "ollama_running", "detect_defaults", "bootstrap", "test_tier",
            "ANTHROPIC_KEY", "OPENAI_KEY", "ProviderReply", "list_ollama_models"]
 
 ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
@@ -51,9 +51,10 @@ def parse_choice(value: str | None) -> dict | None:
 PRICES = {
     "claude-opus-5-5": (4.0, 20.0, 0.20, 5.0),
     "claude-opus-5": (5.0, 25.0, 0.50, 6.25),
-    "claude-sonnet-5-5": (2.0, 10.0, 0.20, 2.5),
+    "claude-sonnet-5-5": (2.0, 10.0, 0.10, 2.5),
     "claude-sonnet-5": (2.0, 10.0, 0.20, 2.5),
     "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125),
+    "claude-fable-5-2": (8.0, 40.0, 0.20, 10.0),
     "claude-fable-5-1": (10.0, 50.0, 0.25, 12.5),
 }
 
@@ -61,7 +62,7 @@ ANTHROPIC_MODELS = [
     ("claude-opus-5-5", "Claude Opus 5.5 (best writing, recommended)"),
     ("claude-sonnet-5-5", "Claude Sonnet 5.5 (cheaper, fast)"),
     ("claude-haiku-5-5", "Claude Haiku 5.5 (cheapest, for bulk analysis)"),
-    ("claude-fable-5-1", "Claude Fable 5.1 (most capable, most expensive)"),
+    ("claude-fable-5-2", "Claude Fable 5.2 (most capable, most expensive)"),
 ]
 
 
@@ -127,6 +128,21 @@ def _build(tier: str, effort: str | None):
     raise LLMConfigError(f"Unknown AI provider '{provider}'.")
 
 
+def tier_provider(tier: str, choice: str | None = None) -> str:
+    """Which provider a task on this tier would use ("ollama", "claude_code"…): the redo choice if there is
+    one, else Settings."""
+    if _test_provider is not None:
+        return getattr(_test_provider, "name", "")
+    override = parse_choice(choice)
+    if override:
+        return override["provider"]
+    return (settings.get("llm").get(tier) or {}).get("provider") or ""
+
+
+def ollama_running() -> bool:
+    return _ollama_up(settings.get("llm").get("ollama_url") or "http://localhost:11434")
+
+
 def _cost(model: str, r: ProviderReply) -> float:
     p = PRICES.get(model) or next((v for k, v in PRICES.items() if model.startswith(k)), None)
     if not p:
@@ -184,10 +200,13 @@ def run(tier: str, purpose: str, system: str, user: str, schema: dict | None = N
                            duration_ms=ms, cost_usd=cost)
     except LLMError as e:
         _log(purpose, prov.name, model, reply, int((time.monotonic() - t0) * 1000), 0.0, str(e))
+        e.provider = prov.name  # so the task queue knows what to wait for
         raise
     except Exception as e:
         _log(purpose, prov.name, model, reply, int((time.monotonic() - t0) * 1000), 0.0, repr(e))
-        raise LLMError(f"Unexpected error from the model provider: {e}") from e
+        err = LLMError(f"Unexpected error from the model provider: {e}")
+        err.provider = prov.name
+        raise err from e
 
 
 # ---------------------------------------------------------------------------------------

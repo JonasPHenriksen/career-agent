@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -144,18 +145,153 @@ def _after_analysis(result: dict) -> dict:
 
 
 RETRY_MINUTES = (2, 10, 30)  # a passing model problem is tried again after these waits, then reported
-_TRANSIENT = re.compile(r"isn't running|disconnected|timed out|timeout|connection (refused|reset|error|aborted)|"
-                        r"temporarily|overloaded|rate.?limit|usage limit|\b(502|503|504|529)\b", re.I)
+# Failures that pass by themselves. Also used at start to find work an earlier session couldn't finish.
+_TRANSIENT = re.compile(r"isn't running|disconnected|timed out|timeout|took too long to answer|couldn't load the page|"
+                        r"connection (refused|reset|error|aborted)|couldn't (reach|connect)|temporarily|overloaded|"
+                        r"rate.?limit|usage limit|\b(502|503|504|529)\b", re.I)
+
+
+def is_passing(message: str | None) -> bool:
+    return bool(message) and bool(_TRANSIENT.search(message))
 
 
 def is_transient(e: Exception) -> bool:
+    from .fetch import FetchError
     from .llm import LLMConfigError, LLMError, LLMTransient
 
     if isinstance(e, LLMTransient):
         return True
+    if isinstance(e, FetchError):  # the site didn't answer: worth another try; a missing or blocked page isn't
+        return bool(getattr(e, "connection", False))
     if isinstance(e, LLMConfigError):  # "Ollama isn't running" is passing; a missing key isn't
         return "isn't running" in str(e)
-    return isinstance(e, LLMError) and bool(_TRANSIENT.search(str(e)))
+    return isinstance(e, LLMError) and is_passing(str(e))
+
+
+# ---------------------------------------------------------------------------------------
+# Waiting for what a task needs: a local model that isn't running, the internet, a plan's usage limit.
+# The queue holds those tasks instead of using up their retries, and carries on when it's back.
+# ---------------------------------------------------------------------------------------
+
+WRITING_TASKS = {"draft_application", "revise_application", "interview_prep", "followup", "build_style"}
+FETCH_TASKS = {"poll_source", "parse_job"}
+NO_MODEL_TASKS = {"maintenance", "scan_folder", "embed_index"}
+NEED_LABELS = {"ollama": "Ollama (the local models)", "network": "an internet connection",
+               "claude_code": "Claude (your plan's usage limit)", "anthropic": "the Claude API",
+               "openai": "the model server"}
+
+_holds: dict[str, dict] = {}  # what's unavailable -> {"why": text, "until": epoch seconds or None}
+_holds_lock = threading.Lock()
+_ollama_tried_at = 0.0
+
+
+def hold(need: str, why: str, seconds: float | None = None) -> None:
+    """Tasks that need this wait. With `seconds` the hold ends by itself; without, when it's checked and back."""
+    with _holds_lock:
+        _holds[need] = {"why": why, "until": time.time() + seconds if seconds else None}
+
+
+def release(need: str) -> None:
+    with _holds_lock:
+        _holds.pop(need, None)
+
+
+def holds() -> dict[str, str]:
+    """What the queue is waiting for right now: {need: why}."""
+    with _holds_lock:
+        for need in [n for n, h in _holds.items() if h["until"] and h["until"] <= time.time()]:
+            del _holds[need]
+        return {n: h["why"] for n, h in _holds.items()}
+
+
+def needs(task: dict) -> set[str]:
+    """What a task can't run without: the provider behind its model tier, and the internet for fetching."""
+    from . import llm, writer
+
+    kind = task["kind"]
+    try:
+        payload = json.loads(task.get("payload") or "{}")
+    except ValueError:
+        payload = {}
+    out: set[str] = set()
+    if kind in FETCH_TASKS and not payload.get("use_text"):
+        out.add("network")
+    if kind == "pull_model":
+        return {"ollama", "network"}
+    if kind in NO_MODEL_TASKS:
+        return out
+    if kind in WRITING_TASKS:
+        tiers = {"writing"}
+        if kind in ("draft_application", "revise_application"):  # a draft is fact-checked as part of writing it
+            tiers.add(writer.check_tier())
+    elif kind == "check_application":
+        tiers = {writer.check_tier()}
+    else:
+        tiers = {"analysis"}
+    for tier in tiers:
+        provider = llm.tier_provider(tier, payload.get("model"))
+        if provider:
+            out.add(provider)
+    return out
+
+
+def start_ollama() -> bool:
+    """Open the Ollama app when a task needs it and it isn't running (at most every two minutes)."""
+    global _ollama_tried_at
+    from .llm.providers import is_local_url
+
+    if os.environ.get("CAREER_AGENT_NO_OLLAMA_START") or time.monotonic() - _ollama_tried_at < 120:
+        return False
+    if not is_local_url(settings.get("llm").get("ollama_url") or "http://localhost:11434"):
+        return False
+    _ollama_tried_at = time.monotonic()
+    import shutil
+    import subprocess
+
+    log.info("A task needs Ollama and it isn't running: starting it")
+    try:
+        if os.path.isdir("/Applications/Ollama.app"):
+            subprocess.Popen(["open", "-gj", "-a", "/Applications/Ollama.app"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        if shutil.which("ollama"):
+            subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def unavailable(needed: set[str]) -> set[str]:
+    """Which of these needs can't be met right now. Ollama is checked (and started) directly; the internet is
+    checked again once a fetch has failed; usage limits end on their own clock."""
+    from . import fetch, llm
+
+    if "ollama" in needed:
+        if llm.ollama_running():
+            release("ollama")
+        else:
+            started = start_ollama()
+            hold("ollama", "Ollama isn't running. " + ("Starting it…" if started else "Open the Ollama app."))
+    if "network" in needed and "network" in holds() and fetch.online():
+        release("network")
+    return needed & set(holds())
+
+
+def why_wait(e: Exception) -> tuple[str, int, str] | None:
+    """If a task failed because something it needs is away for a while: (need, seconds to wait, why)."""
+    from . import fetch
+    from .llm import LLMConfigError, LLMTransient
+
+    text = str(e)
+    if isinstance(e, LLMConfigError) and "Ollama isn't running" in text:
+        return "ollama", 30, "Ollama isn't running."
+    if isinstance(e, LLMTransient) and (e.retry_after or 0) >= 600:  # a usage limit, not a blip
+        return getattr(e, "provider", None) or "claude_code", int(e.retry_after), text
+    if isinstance(e, fetch.FetchError) and getattr(e, "connection", False) and not fetch.online(force=True):
+        return "network", 120, "This Mac is offline."
+    return None
 
 
 def run_task(task: dict) -> None:
@@ -180,6 +316,15 @@ def run_task(task: dict) -> None:
         if not isinstance(e, (LLMError, FetchError)):
             log.error("Task %s failed:\n%s", task["id"], traceback.format_exc())
         attempts = int(task.get("attempts") or 0)
+        waiting = why_wait(e)
+        if waiting:  # what it needs is away: wait for it without using up a retry
+            need, seconds, why = waiting
+            hold(need, why, None if need in ("ollama", "network") else seconds)
+            when = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+            db.update("tasks", task["id"], {"status": "queued", "started_at": None,
+                                            "run_after": when.strftime("%Y-%m-%dT%H:%M:%S"),
+                                            "error": f"Waiting for {NEED_LABELS.get(need, need)}: {why[:300]}"})
+            return
         if is_transient(e) and attempts < len(RETRY_MINUTES):
             wait = getattr(e, "retry_after", None) or RETRY_MINUTES[attempts] * 60
             when = datetime.now(timezone.utc) + timedelta(seconds=wait)
@@ -202,10 +347,83 @@ def concurrency() -> int:
 
 
 def recover() -> None:
-    """Tasks that were running when the app stopped go back in the queue."""
+    """Tasks that were running when the app stopped go back in the queue, and waits from the last session end:
+    a new session tries everything right away."""
     db.ex("UPDATE tasks SET status = 'queued', started_at = NULL WHERE status = 'running'")
+    db.ex("UPDATE tasks SET run_after = NULL WHERE status = 'queued'")
     db.ex("UPDATE applications SET status = 'draft' WHERE status = 'drafting' AND letter IS NOT NULL "
           "AND id NOT IN (SELECT CAST(substr(ref, 5) AS INTEGER) FROM tasks WHERE ref LIKE 'app:%' AND status = 'queued')")
+
+
+def _last_task(kind: str, ref: str) -> dict | None:
+    return db.q1("SELECT * FROM tasks WHERE kind = ? AND ref = ? ORDER BY id DESC LIMIT 1", (kind, ref))
+
+
+def _again(kind: str, payload: dict, ref: str) -> bool:
+    """Queue this work again unless it's already queued, or its last try failed for a lasting reason
+    (those stay failed until you press Retry). Old failed tries of the same work are cleared."""
+    last = _last_task(kind, ref)
+    if last and last["status"] in ("queued", "running"):
+        return False
+    if last and last["status"] in ("error", "cancelled") and not is_passing(last["error"]):
+        return False
+    db.ex("DELETE FROM tasks WHERE kind = ? AND ref = ? AND status = 'error'", (kind, ref))
+    enqueue(kind, payload, ref=ref)
+    return True
+
+
+def catch_up() -> dict:
+    """At start: pick up what an earlier session couldn't finish because the model wasn't running, the Mac was
+    offline or asleep, or a usage limit was reached. The app isn't always on, so this is how work gets done."""
+    from . import profile
+
+    found = {"jobs_to_read": 0, "jobs_to_score": 0, "documents": 0, "drafts": 0, "sources": 0}
+    # Failures that a later try of the same work made good are history, not something to look at.
+    db.ex("DELETE FROM tasks WHERE status = 'error' AND ref IS NOT NULL AND EXISTS (SELECT 1 FROM tasks t WHERE "
+          "t.kind = tasks.kind AND t.ref = tasks.ref AND t.id > tasks.id AND t.status = 'done')")
+    recent = db.days_ago(45)
+    for j in db.q("SELECT id, url, parse_status, parse_error FROM jobs WHERE status IN ('new', 'shortlisted') "
+                  "AND parse_status IN ('pending', 'parsing', 'error') AND created_at >= ?", (recent,)):
+        if j["parse_status"] == "error" and not is_passing(j["parse_error"]):
+            continue  # page gone, blocked, not a job ad: trying again won't help
+        payload = {"job_id": j["id"]} if j["url"] else {"job_id": j["id"], "use_text": True}
+        if _again("parse_job", payload, f"job:{j['id']}"):
+            db.update("jobs", j["id"], {"parse_status": "pending", "parse_error": None})
+            found["jobs_to_read"] += 1
+    if settings.get("automation").get("auto_score", True) and profile.has_facts():
+        today = datetime.now().date().isoformat()
+        for j in db.q("SELECT id FROM jobs WHERE status IN ('new', 'shortlisted') AND parse_status = 'parsed' "
+                      "AND fit_score IS NULL AND (deadline IS NULL OR deadline >= ?) AND created_at >= ?", (today, recent)):
+            found["jobs_to_score"] += _again("score_job", {"job_id": j["id"]}, f"job:{j['id']}")
+        # A job whose deadline passed while it waited isn't scored any more: its failed try is history too.
+        db.ex("DELETE FROM tasks WHERE kind = 'score_job' AND status = 'error' AND ref IN "
+              "(SELECT 'job:' || id FROM jobs WHERE fit_score IS NULL AND deadline < ?)", (today,))
+    for d in db.q("SELECT id, status, error FROM documents WHERE status IN ('new', 'analyzing', 'error')"):
+        if d["status"] == "error" and not is_passing(d["error"]):
+            continue
+        found["documents"] += _again("analyze_document", {"doc_id": d["id"]}, f"doc:{d['id']}")
+    for a in db.q("SELECT id FROM applications WHERE status = 'drafting' AND letter IS NULL AND cv IS NULL"):
+        found["drafts"] += _again("draft_application", {"application_id": a["id"]}, f"app:{a['id']}")
+    for s in db.q("SELECT id, last_error FROM sources WHERE enabled = 1 AND last_status = 'error'"):
+        if is_passing(s["last_error"]):  # checked again now, not after the usual wait
+            db.update("sources", s["id"], {"last_run_at": None, "last_status": "checking again", "last_error": None})
+            db.ex("DELETE FROM tasks WHERE kind = 'poll_source' AND ref = ? AND status = 'error'", (f"source:{s['id']}",))
+            found["sources"] += 1
+    if any(found.values()):
+        log.info("Catching up on unfinished work: %s", found)
+    return found
+
+
+def queue_state() -> dict:
+    """What the queue is doing, for the page header and `./agent run`."""
+    now = db.now()
+    running = db.scalar("SELECT COUNT(*) FROM tasks WHERE status = 'running'") or 0
+    queued = db.q("SELECT run_after FROM tasks WHERE status = 'queued'")
+    later = sorted(r["run_after"] for r in queued if r["run_after"] and r["run_after"] > now)
+    waiting_for = holds()
+    return {"running": running, "queued": len(queued) - len(later), "waiting": len(later),
+            "next_at": later[0] if later else None, "busy": running + len(queued),
+            "holds": {NEED_LABELS.get(n, n): why for n, why in waiting_for.items()}}
 
 
 async def worker_loop(stop: asyncio.Event) -> None:
@@ -213,14 +431,27 @@ async def worker_loop(stop: asyncio.Event) -> None:
     while not stop.is_set():
         try:
             slots = concurrency() - len(running)
-            if slots > 0:
-                rows = db.q("SELECT * FROM tasks WHERE status = 'queued' AND (run_after IS NULL OR run_after <= ?) "
-                            "ORDER BY id LIMIT ?", (db.now(), slots))
+            rows = db.q("SELECT * FROM tasks WHERE status = 'queued' AND (run_after IS NULL OR run_after <= ?) "
+                        "ORDER BY id LIMIT 200", (db.now(),)) if slots > 0 else []
+            if rows:
+                memo: dict[tuple, set[str]] = {}
+                need = {}
+                for row in rows:  # many tasks share a kind: work out what each kind needs once
+                    key = (row["kind"], row["payload"] if '"model"' in row["payload"] or '"use_text"' in row["payload"] else "")
+                    if key not in memo:
+                        memo[key] = needs(row)
+                    need[row["id"]] = memo[key]
+                away = await asyncio.to_thread(unavailable, set().union(*need.values()))
                 for row in rows:
+                    if slots <= 0:
+                        break
+                    if need[row["id"]] & away:
+                        continue  # stays queued until what it needs is back
                     db.update("tasks", row["id"], {"status": "running", "started_at": db.now()})
                     t = asyncio.create_task(asyncio.to_thread(run_task, row))
                     running.add(t)
                     t.add_done_callback(running.discard)
+                    slots -= 1
         except Exception:  # noqa: BLE001
             log.exception("worker loop error")
         _wake.clear()

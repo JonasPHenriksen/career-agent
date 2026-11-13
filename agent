@@ -1,0 +1,237 @@
+#!/bin/bash
+# Start or stop everything Career Agent needs, in one go: the app and Ollama (the local models).
+#
+#   ./agent start     start Ollama and the app, keep the Mac awake while it works, open the browser
+#   ./agent stop      stop the app, unload the models and quit Ollama: nothing is left running
+#   ./agent run       start everything, work until the queue is empty, then stop everything again
+#   ./agent status    what is running right now
+#   ./agent restart
+#
+# Options:  start --no-browser     don't open the browser
+#           stop  --keep-ollama    unload the models but leave Ollama running
+#           run   --max-hours N    stop after N hours even if work is left (default 6; it continues next time)
+#
+# Stopping in the middle of work is safe: unfinished tasks go back in the queue and run on the next start.
+
+set -u
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$DIR" || exit 1
+
+DATA="${CAREER_AGENT_DATA:-$DIR/data}"
+PORT="${CAREER_AGENT_PORT:-8765}"
+URL="http://127.0.0.1:$PORT"
+OLLAMA_URL="http://localhost:11434"
+OLLAMA_APP="/Applications/Ollama.app"
+PIDFILE="$DATA/career-agent.pid"
+LOG="$DATA/career-agent.log"
+LABEL="com.careeragent.app"
+
+app_pid() {
+  # The pid in the pid file if it's still our app, else any running copy.
+  local pid=""
+  [ -f "$PIDFILE" ] && pid="$(cat "$PIDFILE" 2>/dev/null)"
+  if [ -n "$pid" ] && ps -p "$pid" -o command= 2>/dev/null | grep -q "career_agent"; then
+    echo "$pid"
+    return
+  fi
+  pgrep -f "python.* -m career_agent" | head -1
+}
+
+ollama_up() { curl -s -m 2 "$OLLAMA_URL/api/version" >/dev/null 2>&1; }
+app_up() { curl -s -m 2 -o /dev/null "$URL/" 2>/dev/null; }
+autostart_loaded() { launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; }
+
+wait_for() {  # wait_for <seconds> <command...>
+  local n="$1"
+  shift
+  while [ "$n" -gt 0 ]; do
+    "$@" && return 0
+    sleep 1
+    n=$((n - 1))
+  done
+  return 1
+}
+
+start() {
+  local browser=1
+  [ "${1:-}" = "--no-browser" ] && browser=0
+
+  if autostart_loaded; then
+    echo "Autostart is installed, so the app already runs in the background on its own."
+    echo "Remove it first: scripts/uninstall-autostart.sh"
+    exit 1
+  fi
+  command -v uv >/dev/null 2>&1 || { echo "uv isn't installed. Run: brew install uv"; exit 1; }
+  mkdir -p "$DATA"
+
+  if ollama_up; then
+    echo "Ollama: already running"
+  else
+    echo "Ollama: starting…"
+    if [ -d "$OLLAMA_APP" ]; then
+      open -gj -a "$OLLAMA_APP"
+    elif command -v ollama >/dev/null 2>&1; then
+      nohup ollama serve >>"$DATA/ollama.log" 2>&1 &
+      disown
+    else
+      echo "Ollama isn't installed (https://ollama.com). The app starts anyway; local models won't work."
+    fi
+    wait_for 30 ollama_up && echo "Ollama: running" || echo "Ollama: didn't answer within 30 seconds. Check the Ollama app."
+  fi
+
+  if [ -n "$(app_pid)" ]; then
+    echo "Career Agent: already running at $URL"
+  else
+    echo "Career Agent: starting…"
+    uv sync --quiet || { echo "Couldn't install the app's packages (uv sync failed)."; exit 1; }
+    nohup "$DIR/.venv/bin/python" -m career_agent --no-browser >>"$LOG" 2>&1 &
+    echo $! >"$PIDFILE"
+    disown
+    # Keep the Mac from idle-sleeping while the app runs (ends by itself when the app stops).
+    nohup caffeinate -i -w "$(cat "$PIDFILE")" >/dev/null 2>&1 &
+    disown
+    if wait_for 30 app_up; then
+      echo "Career Agent: running at $URL"
+    else
+      echo "Career Agent: didn't come up within 30 seconds. Last lines of $LOG:"
+      tail -5 "$LOG"
+      exit 1
+    fi
+  fi
+  [ "$browser" = 1 ] && open "$URL"
+  echo "Stop everything with: ./agent stop"
+}
+
+stop() {
+  local keep_ollama=0
+  [ "${1:-}" = "--keep-ollama" ] && keep_ollama=1
+
+  if autostart_loaded; then  # otherwise launchd would start it again at once
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+    echo "Autostart was running the app; it's stopped now but still installed (it returns at login)."
+    echo "Remove it for good: scripts/uninstall-autostart.sh"
+  fi
+
+  local pid
+  pid="$(app_pid)"
+  if [ -n "$pid" ]; then
+    kill "$pid" 2>/dev/null
+    # A model call in progress can hold the app open; unfinished tasks are re-queued on the next start.
+    wait_for 10 sh -c "! kill -0 $pid 2>/dev/null" || kill -9 "$pid" 2>/dev/null
+    echo "Career Agent: stopped"
+  else
+    echo "Career Agent: wasn't running"
+  fi
+  rm -f "$PIDFILE"
+
+  if ollama_up; then
+    if command -v ollama >/dev/null 2>&1; then  # free the memory the models hold
+      ollama ps 2>/dev/null | awk 'NR > 1 {print $1}' | while read -r model; do
+        ollama stop "$model" >/dev/null 2>&1
+      done
+    fi
+    if [ "$keep_ollama" = 1 ]; then
+      echo "Ollama: models unloaded, left running"
+    else
+      pkill -f "$OLLAMA_APP/Contents/MacOS/Ollama" 2>/dev/null
+      pkill -x ollama 2>/dev/null
+      wait_for 10 sh -c "! curl -s -m 1 '$OLLAMA_URL/api/version' >/dev/null 2>&1" || pkill -9 -x ollama 2>/dev/null
+      echo "Ollama: stopped"
+    fi
+  else
+    echo "Ollama: wasn't running"
+  fi
+}
+
+status() {
+  local pid
+  pid="$(app_pid)"
+  if [ -n "$pid" ]; then
+    echo "Career Agent: running at $URL (pid $pid)"
+  else
+    echo "Career Agent: stopped"
+  fi
+  if ollama_up; then
+    local loaded=""
+    command -v ollama >/dev/null 2>&1 && loaded="$(ollama ps 2>/dev/null | awk 'NR > 1 {print $1}' | paste -sd, - | sed 's/,/, /g')"
+    echo "Ollama: running (models in memory: ${loaded:-none})"
+  else
+    echo "Ollama: stopped"
+  fi
+  if autostart_loaded || [ -f "$HOME/Library/LaunchAgents/$LABEL.plist" ]; then
+    echo "Autostart: installed (remove with scripts/uninstall-autostart.sh)"
+  else
+    echo "Autostart: off"
+  fi
+}
+
+queue_line() {  # prints "<tasks left>|<summary>", or nothing if the app doesn't answer
+  curl -s -m 5 "$URL/api/queue" | "$DIR/.venv/bin/python" -c '
+import json, sys
+from datetime import datetime, timezone
+try:
+    q = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+parts = ["%d running" % q["running"], "%d queued" % q["queued"]]
+if q["waiting"]:
+    at = datetime.fromisoformat(q["next_at"]).replace(tzinfo=timezone.utc).astimezone()
+    parts.append("%d waiting until %s" % (q["waiting"], at.strftime("%H:%M")))
+text = ", ".join(parts)
+if q["holds"]:
+    text += " · waiting for " + ", ".join(q["holds"])
+print("%d|%s" % (q["busy"], text))' 2>/dev/null
+}
+
+run() {
+  local max_hours=6
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --max-hours) max_hours="${2:-6}"; shift 2 ;;
+      *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+  done
+  local max_seconds
+  max_seconds="$(awk "BEGIN { print int($max_hours * 3600) }")"
+
+  start --no-browser
+  trap 'echo; echo "Interrupted: stopping everything."; stop; exit 130' INT TERM
+  echo "Working until the queue is empty (at most $max_hours hours). Ctrl+C stops everything."
+  local began=$SECONDS idle=0 last="" line busy
+  sleep 10  # let it queue what's due: unfinished work, job sources, watched folders
+  while :; do
+    line="$(queue_line)"
+    if [ -z "$line" ]; then
+      echo "The app stopped answering. Last lines of $LOG:"
+      tail -5 "$LOG"
+      break
+    fi
+    busy="${line%%|*}"
+    if [ "${line#*|}" != "$last" ]; then
+      last="${line#*|}"
+      echo "$(date +%H:%M)  $last"
+    fi
+    if [ "$busy" = 0 ]; then
+      idle=$((idle + 1))
+      [ "$idle" -ge 3 ] && { echo "$(date +%H:%M)  All done."; break; }
+    else
+      idle=0
+    fi
+    if [ $((SECONDS - began)) -ge "$max_seconds" ]; then
+      echo "$(date +%H:%M)  Stopping after $max_hours hours; what's left continues on the next start."
+      break
+    fi
+    sleep 20
+  done
+  trap - INT TERM
+  stop
+}
+
+case "${1:-}" in
+  start) shift; start "$@" ;;
+  run) shift; run "$@" ;;
+  stop) shift; stop "$@" ;;
+  restart) stop; start --no-browser ;;
+  status) status ;;
+  *) echo "Usage: ./agent start [--no-browser] | run [--max-hours N] | stop [--keep-ollama] | status | restart"; exit 1 ;;
+esac

@@ -42,6 +42,7 @@ async def lifespan(_app: FastAPI):
     db.init()
     llm.bootstrap()
     tasks.recover()
+    tasks.catch_up()
     llm.backfill_refs()
     retrieval.backfill_chunks()
     if retrieval.embeddings_available():
@@ -1173,7 +1174,14 @@ def tasks_indicator(request: Request):
     rows = tasks.active()
     running = [r for r in rows if r["status"] == "running"]
     return templates.TemplateResponse(request, "partials/indicator.html",
-                                      {"n": len(rows), "running": running, "labels": tasks.TASK_LABELS})
+                                      {"n": len(rows), "running": running, "labels": tasks.TASK_LABELS,
+                                       "waiting_for": ", ".join(tasks.queue_state()["holds"])})
+
+
+@app.get("/api/queue")
+def api_queue():
+    """What the background queue is doing (used by `./agent run` to know when the work is done)."""
+    return tasks.queue_state()
 
 
 @app.post("/tasks/{task_id}/retry")
