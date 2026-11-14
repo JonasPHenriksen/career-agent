@@ -88,7 +88,7 @@ def write_letter(run: str, name: str, job: dict) -> dict:
     return {"config": name, "job_id": job["id"], "language": language, "model": r.model, "effort": effort,
             "prompt_chars": len(system) + len(task), "tokens_in": r.input_tokens, "tokens_out": r.output_tokens,
             "seconds": round(r.duration_ms / 1000), "subject": d["subject"], "letter": letter,
-            "words": len(letter.split()), "main_gap": d["main_gap"], "gap_in_letter": bool(gap_note) and "doesn't mention" not in gap_note[0],
+            "words": len(letter.split()), "angle": d.get("angle", ""), "assumed": d.get("assumed", []), "main_gap": d["main_gap"], "gap_in_letter": bool(gap_note) and "doesn't mention" not in gap_note[0],
             "notes": d["notes"], "voice": voice.check(letter, language)["score"]}
 
 
@@ -134,7 +134,7 @@ def write_reports(out: Path, run: str, job_rows: list[dict], names: list[str], c
         summary += [f"## Job {job['id']}: {job['title']} ({job['company_name'] or '?'})", "",
                     "| Letter | Model | Words | Voice | Backed | Partly | Unbacked | Gap named | Tokens in / out | Seconds |",
                     "|---|---|---|---|---|---|---|---|---|---|"]
-        details = []
+        details, angles = [], []
         for name in sorted(names, key=lambda n: lab[n]):
             cell = cells.get(f"{name}|{job['id']}")
             if not cell or cell.get("error"):
@@ -153,7 +153,11 @@ def write_reports(out: Path, run: str, job_rows: list[dict], names: list[str], c
             totals[name].append(cell)
             for f in chk.get("flagged", []):
                 details.append(f"* **{lab[name]} ({name}), {f['status']}:** “{f['text']}” — {f['note']}")
-        summary += [""] + (["What the checker flagged:", ""] + details + [""] if details else [])
+            if cell.get("angle"):
+                angles.append(f"* **{lab[name]} ({name}):** {cell['angle']}"
+                              + ("".join(f"\n  * assumed: {a}" for a in cell.get("assumed") or [])))
+        summary += [""] + (["The angle each writer chose, and what it assumed about you:", ""] + angles + [""] if angles else [])
+        summary += (["What the checker flagged:", ""] + details + [""] if details else [])
     summary += ["## Per model, over all jobs", "",
                 "| Model | Letters | Avg words | Avg voice | Backed | Partly | Unbacked | Avg tokens in / out | Avg seconds |",
                 "|---|---|---|---|---|---|---|---|---|"]
@@ -180,6 +184,8 @@ def main() -> None:
     parser.add_argument("--jobs", required=True, help="Job ids from the app, e.g. 194,199,169")
     parser.add_argument("--configs", default=",".join(CONFIGS), help=f"Which of: {', '.join(CONFIGS)}")
     parser.add_argument("--run", default=date.today().isoformat(), help="Name of the run (default: today's date)")
+    parser.add_argument("--baseline", default=None, metavar="RUN:CONFIG",
+                        help="Also lay out the letters an earlier run made, e.g. 2026-11-13:sonnet-high, to compare blind")
     parser.add_argument("--data", default=None, help="Data folder (default ./data)")
     args = parser.parse_args()
 
@@ -201,6 +207,16 @@ def main() -> None:
     results_path = out / "results.json"
     cells: dict = json.loads(results_path.read_text(encoding="utf-8")) if results_path.exists() else {}
 
+    if args.baseline:  # letters from an earlier run, shown as one more anonymous entry per job
+        old_run, _, old_config = args.baseline.partition(":")
+        earlier = json.loads((config.DATA_DIR / "eval" / old_run / "results.json").read_text(encoding="utf-8"))
+        base = f"earlier-{old_run}-{old_config}"
+        for job in job_rows:
+            cell = earlier.get(f"{old_config}|{job['id']}")
+            if cell and not cell.get("error"):
+                cells[f"{base}|{job['id']}"] = {**cell, "config": base}
+        names.append(base)
+
     def save() -> None:
         results_path.write_text(json.dumps(cells, ensure_ascii=False, indent=1), encoding="utf-8")
         write_reports(out, args.run, job_rows, names, cells)
@@ -208,6 +224,8 @@ def main() -> None:
     ensure_ollama()
     stop = False
     for name in names:  # cloud models first (quick), the local model last (slow)
+        if name not in CONFIGS:
+            continue  # the baseline's letters already exist
         for job in job_rows:
             key = f"{name}|{job['id']}"
             if key in cells and not cells[key].get("error"):

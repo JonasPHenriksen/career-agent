@@ -249,20 +249,50 @@ def test_large_profile_keeps_core_facts_within_local_budget(fake):
     assert len(profile.facts_digest(10**9)) > len(digest) and "Not shown" not in profile.facts_digest(10**9)
 
 
-def test_letter_length_follows_your_own_letters(fake):
+def test_letter_brief_gives_a_goal_not_a_recipe(fake):
     from career_agent import settings
-    assert writer.letter_length("da") == 300, "no data yet: a sensible default"
-    settings.set("style_stats", {"da": {"words": 172.0}, "all": {"words": 240.0}})
-    assert writer.letter_length("da") == 180 and writer.letter_length("en") == 240
+    job = {"id": 1, "title": "Product Owner", "description": JOB_TEXT}
+    task = writer._letter_task(job, "da", None)
+    assert "150 to 300 words" in task and "No paragraph per CV section" in task and "angle" in task
+    assert "two to four specific experiences" not in writer.WRITER_SYSTEM, "the old recipe is gone"
     settings.update("writing", {"letter_words": 400})
-    assert writer.letter_length("da") == 400, "an explicit setting wins"
+    assert "about 400 words (between 320 and 460)" in writer._letter_task(job, "da", None), "an explicit setting wins"
+    notes = writer._assumed_notes({"assumed": ["You like election systems", " "]})
+    assert notes == ["Assumed about you, check it's true: You like election systems"]
+
+
+def test_old_letters_are_not_shown_next_to_a_folder_style_guide(fake, monkeypatch):
+    _import_docs()
+    profile.analyze_document(1), profile.analyze_document(2)
+    assert "<example" in writer.examples_block("da", None), "without a folder guide, own letters show the voice"
+    monkeypatch.setattr("career_agent.knowledge.style_guide", lambda language: "## How she sounds\nPlain.")
+    assert writer.examples_block("da", None) == writer.NO_EXAMPLES
+    assert "<example" not in writer.writer_system("da")
+
+
+def test_a_job_far_above_your_level_cannot_score_as_a_strong_match(fake):
+    from career_agent import settings
+    assert jobs.level_cap("senior", "junior") == 60 and jobs.level_cap("lead", "junior") == 40
+    assert jobs.level_cap("senior", "mid") is None and jobs.level_cap("junior", "senior") is None
+    assert jobs.level_cap("unknown", "junior") is None and jobs.level_cap("senior", "") is None
+    _import_docs()
+    profile.analyze_document(1)
+    job_id = jobs.add_from_text(JOB_TEXT)
+    jobs.parse(job_id, use_text=True)  # the fake reads it as a senior role and scores the fit 86
+    settings.update("automation", {"auto_draft": False})
+    assert jobs.score(job_id)["score"] == 86, "no level set: no limit"
+    settings.update("profile", {"level": "junior"})
+    assert jobs.score(job_id) == {"score": 60, "verdict": "stretch"}
+    fit = jobs.get(job_id)["f"]
+    assert fit["uncapped_score"] == 86 and fit["summary"].startswith("Limited to 60: the ad asks for senior level")
+    assert "- Level: Junior" in profile.candidate_block()
 
 
 def test_voice_check_flags_stale_dates_and_invented_history(fake):
     v = voice.check("Kære Mette\n\nJeg har længe beundret jeres arbejde. Sidste år reducerede vi henvendelserne med 30 %. "
                     "Det var et godt projekt for hele teamet, og vi lærte meget af det undervejs.", "da")
     assert any("sidste år" in n for n in v["notes"]) and any("har længe beundret" in n for n in v["notes"])
-    assert "Ground motivation" in writer.WRITER_SYSTEM and "sidste år" in writer.WRITER_SYSTEM
+    assert "Never invent history" in writer.WRITER_SYSTEM and "sidste år" in writer.WRITER_SYSTEM
 
 
 def test_fact_check_model_choice(fake):

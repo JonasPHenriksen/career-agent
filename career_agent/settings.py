@@ -16,6 +16,7 @@ DEFAULTS: dict[str, Any] = {
         "linkedin": "",
         "website": "",
         "headline": "",
+        "level": "",  # student | junior | mid | senior | lead | executive ; "" = not said
         "target_roles": "",
         "target_industries": "",
         "locations": "",

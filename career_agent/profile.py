@@ -491,10 +491,16 @@ def facts_digest(max_chars: int, with_evidence: bool = False, query: str | None 
     return text
 
 
+LEVELS = [("student", "Student"), ("junior", "Junior (up to about 2 years' experience)"), ("mid", "Mid-level"),
+          ("senior", "Senior"), ("lead", "Lead / manager"), ("executive", "Executive")]
+LEVEL_LABELS = dict(LEVELS)
+
+
 def candidate_block() -> str:
     p = settings.get("profile")
     rows = [
         ("Name", p.get("name")), ("City", p.get("city")), ("Headline", p.get("headline")),
+        ("Level", LEVEL_LABELS.get(p.get("level") or "")),
         ("Target roles", p.get("target_roles")), ("Target industries", p.get("target_industries")),
         ("Preferred locations", p.get("locations")),
         ("Work modes", ", ".join(p.get("work_modes") or [])), ("Salary expectation", p.get("min_salary")),

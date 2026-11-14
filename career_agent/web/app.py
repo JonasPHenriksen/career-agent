@@ -655,7 +655,7 @@ def profile_page(request: Request, tab: str = "about"):
     n_docs = sum(1 for r in active_rows if r["kind"] == "analyze_document")
     style_busy = any(r["kind"] == "build_style" for r in active_rows)
     busy = len(active_rows)
-    return render(request, "profile.html", tab=tab, n_docs=n_docs, style_busy=style_busy,
+    return render(request, "profile.html", tab=tab, n_docs=n_docs, style_busy=style_busy, levels=profile.LEVELS,
                   made_style=llm.made_by("style", ("style_guide",)),
                   tidy_busy=any(r["kind"] == "consolidate_facts" for r in active_rows), p=settings.get("profile"), docs=docs, grouped=grouped,
                   kinds=profile.KINDS, kind_labels=profile.KIND_LABELS, outcomes=profile.OUTCOMES,
@@ -681,7 +681,7 @@ def profile_progress(request: Request):
                                        "tidy_busy": any(r["kind"] == "consolidate_facts" for r in rows)})
 
 
-PROFILE_FIELDS = ["name", "email", "phone", "city", "linkedin", "website", "headline", "target_roles",
+PROFILE_FIELDS = ["name", "email", "phone", "city", "linkedin", "website", "headline", "level", "target_roles",
                   "target_industries", "locations", "min_salary", "availability", "deal_breakers",
                   "always_mention", "never_mention", "about"]
 
@@ -900,7 +900,7 @@ def settings_page(request: Request):
                   w=settings.get("writing"), anthropic_models=llm.ANTHROPIC_MODELS,
                   sources=db.q("SELECT * FROM sources ORDER BY id"), source_kinds=sources.KINDS,
                   data_dir=str(config.DATA_DIR), efforts=["low", "medium", "high", "xhigh", "max"],
-                  search=retrieval.status(), own_length=writer.letter_length("da") if not settings.get("writing").get("letter_words") else None,
+                  search=retrieval.status(), letter_range=writer.LETTER_RANGE,
                   claude_code_models=llm.CLAUDE_CODE_MODELS, redo_kinds=redo.KINDS, redo_counts={k: len(v) for k, v in redo.candidates().items()},
                   models_used=redo.models_used())
 

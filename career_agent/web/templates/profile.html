@@ -32,6 +32,7 @@
     <div class="fields-2">
       <div class="field"><label for="headline">Your professional headline</label><input id="headline" name="headline" type="text" value="{{ p.headline }}" placeholder="e.g. Product owner with 8 years in fintech"></div>
       <div class="field"><label for="target_roles">Target roles</label><input id="target_roles" name="target_roles" type="text" value="{{ p.target_roles }}" placeholder="e.g. Product owner, Project manager, Head of digital"></div>
+      <div class="field"><label for="level">Your level <span class="hint">· jobs asking for much more are scored lower</span></label><select id="level" name="level"><option value="">Not said</option>{% for k, l in levels %}<option value="{{ k }}" {{ 'selected' if p.level == k }}>{{ l }}</option>{% endfor %}</select></div>
       <div class="field"><label for="target_industries">Industries you prefer</label><input id="target_industries" name="target_industries" type="text" value="{{ p.target_industries }}"></div>
       <div class="field"><label for="locations">Where you'll work</label><input id="locations" name="locations" type="text" value="{{ p.locations }}" placeholder="e.g. Greater Copenhagen, max 45 min commute"></div>
       <div class="field"><label for="min_salary">Salary expectation</label><input id="min_salary" name="min_salary" type="text" value="{{ p.min_salary }}"></div>

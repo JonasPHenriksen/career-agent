@@ -306,22 +306,21 @@ def exemplars_block(language: str | None, query: str | None = None) -> str:
 # Style guide
 # ---------------------------------------------------------------------------------------
 
-STYLE_SYSTEM = """You are a writing-style analyst. You will read texts written by one person and write a style guide that lets a ghostwriter produce new job applications that read as if this person wrote them.
+STYLE_SYSTEM = """You are a writing-style analyst. You will read texts written by one person and write a style guide to their voice, so a ghostwriter can write new texts that sound like this person.
 
-Describe the person's actual habits, with short verbatim examples in the original language. Do not give generic writing advice and do not describe how they *should* write.
+Describe the person's actual habits, with short verbatim examples in the original language. Describe a voice, not a template: don't prescribe what a letter should contain, how long it is or how it is structured. That is decided for each job, and a fixed plan makes every letter the same. Don't give generic writing advice and don't describe how they *should* write.
 
-Write the guide in English, in Markdown, at most about 700 words, with these sections:
+Write the guide in English, in Markdown, at most about 600 words, with these sections:
 ## Voice in brief
-## Tone and formality
-## How their applications are built
-(openings, structure, how they connect their experience to the job, closings and sign-offs, typical length)
-## Sentences and paragraphs
+## Tone and attitude
+## Sentences and rhythm
+(sentence length and variation, how sentences and paragraphs open, typical connectors)
 ## Vocabulary and phrasing
 (words and expressions they actually use, quoted; words and constructions they avoid)
-## How they talk about achievements
-## How they express motivation
-## Do / Don't for the ghostwriter
-(concrete bullet lists)
+## Towards an employer
+(greeting, sign-off, how formal)
+## Their own sentences
+(8-12 verbatim sentences that show how they sound, with a note that these are not to be reused)
 
 If they write in several languages, note differences per language."""
 
