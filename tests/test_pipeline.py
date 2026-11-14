@@ -270,6 +270,21 @@ def test_old_letters_are_not_shown_next_to_a_folder_style_guide(fake, monkeypatc
     assert "<example" not in writer.writer_system("da")
 
 
+def test_voice_check_uses_the_style_guides_targets_when_it_has_them(fake, monkeypatch):
+    from career_agent import knowledge
+    guide = "## How she sounds\nPlain.\n\n## Targets for the voice check\n- avg_sentence: 12–20\n- i_start_pct: 0-33\n\n## Never\nEm dashes."
+    monkeypatch.setattr(knowledge, "style_guide", lambda language: guide)
+    assert knowledge.voice_targets("da") == {"avg_sentence": (12.0, 20.0), "i_start_pct": (0.0, 33.0)}
+    short = " ".join(["Jeg søger jobbet hos jer nu."] * 8)
+    v = voice.check(short, "da")
+    by_key = {m["key"]: m for m in v["metrics"]}
+    assert v["basis"] == "targets" and by_key["avg_sentence"] == {
+        "key": "avg_sentence", "label": "Average sentence length (words)", "draft": 6.0, "yours": "12–20", "flag": "below your range"}
+    assert by_key["i_start_pct"]["flag"] == "above your range" and by_key["avg_word"]["flag"] == ""
+    monkeypatch.setattr(knowledge, "style_guide", lambda language: "## How she sounds\nPlain.")
+    assert voice.check(short, "da")["basis"] == "letters"
+
+
 def test_a_job_far_above_your_level_cannot_score_as_a_strong_match(fake):
     from career_agent import settings
     assert jobs.level_cap("senior", "junior") == 60 and jobs.level_cap("lead", "junior") == 40

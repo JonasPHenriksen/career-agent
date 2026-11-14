@@ -36,7 +36,10 @@ from career_agent import config, db, jobs, llm, settings, tasks, voice, writer  
 CONFIGS = {
     "haiku-xhigh": ("claude_code", "haiku", "xhigh"),
     "sonnet-high": ("claude_code", "sonnet", "high"),
+    "opus-low": ("claude_code", "opus", "low"),
     "opus-medium": ("claude_code", "opus", "medium"),
+    "opus-high": ("claude_code", "opus", "high"),
+    "opus-xhigh": ("claude_code", "opus", "xhigh"),
     "gemma31-local": ("ollama", "gemma4:31b-mlx", "high"),
 }
 CHECKER = ("claude_code", "opus", "medium")  # one checker for every letter, so the counts are comparable
@@ -182,7 +185,7 @@ def write_reports(out: Path, run: str, job_rows: list[dict], names: list[str], c
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--jobs", required=True, help="Job ids from the app, e.g. 194,199,169")
-    parser.add_argument("--configs", default=",".join(CONFIGS), help=f"Which of: {', '.join(CONFIGS)}")
+    parser.add_argument("--configs", default="haiku-xhigh,sonnet-high,opus-medium,gemma31-local", help=f"Which of: {', '.join(CONFIGS)}")
     parser.add_argument("--run", default=date.today().isoformat(), help="Name of the run (default: today's date)")
     parser.add_argument("--baseline", default=None, metavar="RUN:CONFIG",
                         help="Also lay out the letters an earlier run made, e.g. 2026-11-13:sonnet-high, to compare blind")

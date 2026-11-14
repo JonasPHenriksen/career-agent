@@ -187,13 +187,22 @@ def check(text: str, language: str | None) -> dict:
     baseline_all = settings.get("style_stats") or {}
     base = baseline_all.get(lang) or baseline_all.get("all") or {}
     draft = text_stats(text)
+    from . import knowledge
+
+    # A style guide with targets says how you want to sound; without it, the draft is compared with your own letters.
+    targets = knowledge.voice_targets(lang)
     metrics, penalty = [], 0
     for key, label, kind, tol in METRICS:
         if key not in draft:
             continue
         yours = base.get(key)
         flag = ""
-        if yours is not None:
+        if targets:
+            lo, hi = targets.get(key, (None, None))
+            yours = f"{lo:g}–{hi:g}" if lo is not None else None
+            if lo is not None:
+                flag = "above your range" if draft[key] > hi else "below your range" if draft[key] < lo else ""
+        elif yours is not None:
             if kind == "rel" and yours > 0:
                 ratio = draft[key] / yours
                 if ratio > 1 + tol:
@@ -229,9 +238,10 @@ def check(text: str, language: str | None) -> dict:
     if invented:
         penalty += 10
         notes.append("Possibly invented history or feelings, check they're true: " + ", ".join(f"“{w}”" for w in invented) + ".")
-    if not base:
+    if not base and not targets:
         notes.append("No baseline yet: import some of your own applications so I can compare against your writing.")
     return {"score": max(0, 100 - penalty), "metrics": metrics, "phrases": phrases, "notes": notes,
+            "basis": "targets" if targets else "letters",
             "baseline_samples": base.get("samples", 0), "words": draft.get("words", 0)}
 
 

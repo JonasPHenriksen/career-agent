@@ -221,6 +221,19 @@ def style_guide(language: str | None) -> str:
     return style.get((language or "")[:2], "")
 
 
+_TARGET = re.compile(r"^\s*[-*]\s*`?([a-z_0-9]+)`?\s*:\s*([0-9.]+)\s*(?:–|-|to)\s*([0-9.]+)", re.M)
+
+
+def voice_targets(language: str | None) -> dict[str, tuple[float, float]]:
+    """Ranges for the voice check, from the style guide's "## Targets" section, e.g. "- avg_sentence: 12–20".
+    {} when the guide has none: the voice check then compares with the candidate's own applications."""
+    text = style_guide(language)
+    m = re.search(r"^##\s+Targets\b.*?$(.*?)(?=^##\s|\Z)", text, re.M | re.S | re.I)
+    if not m:
+        return {}
+    return {k: (float(lo), float(hi)) for k, lo, hi in _TARGET.findall(m.group(1)) if float(lo) <= float(hi)}
+
+
 # ---------------------------------------------------------------- importing its facts
 
 _DATE = re.compile(r"^(\d{4})(-\d{2})?(-\d{2})?$")

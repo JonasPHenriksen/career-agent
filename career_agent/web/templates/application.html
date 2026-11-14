@@ -190,7 +190,7 @@
 {% elif tab == 'voice' %}
 <div class="split">
   <section class="card">
-    <div class="fit-head">{{ score(v.get('score'), True) }}<div><h2 style="margin:0">Voice match</h2><div class="text-2">How this letter compares with {{ v.get('baseline_samples') or 'none' }} of your own applications.</div></div></div>
+    <div class="fit-head">{{ score(v.get('score'), True) }}<div><h2 style="margin:0">Voice match</h2><div class="text-2">{% if v.get('basis') == 'targets' %}How this letter measures against the targets in your style guide.{% else %}How this letter compares with {{ v.get('baseline_samples') or 'none' }} of your own applications.{% endif %}</div></div></div>
     {% if v.get('metrics') %}
     <table class="metric-table">
       <thead><tr><th>Measure</th><th class="num">This letter</th><th class="num">You usually</th><th></th></tr></thead>
