@@ -80,6 +80,29 @@
   {% endif %}
 </section>
 
+<section class="card" id="steps">
+  <h2>Model and effort for each step</h2>
+  <p class="small text-2">Every step uses the Writing or Analysis model above unless you pick another here. Effort is how carefully a model works: higher is slower and uses more of your Claude plan. It applies to Claude models; on a local model, high or above switches thinking on. To use another model once, use the picker next to any button; to redo finished work, see below.</p>
+  <form method="post" action="/settings/steps">
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Step</th><th>Model</th><th>Effort</th></tr></thead>
+      <tbody>{% for st_ in steps %}
+        <tr><td>{{ st_.label }}</td>
+          <td><select name="{{ st_.key }}_model" aria-label="Model for: {{ st_.label }}">
+            <option value="">the {{ st_.tier|capitalize }} model{% if cfg[st_.tier] and cfg[st_.tier].model %} ({{ cfg[st_.tier].model }}){% endif %}</option>
+            {% for group, items in model_groups %}<optgroup label="{{ group }}">{% for value, label in items %}<option value="{{ value }}" {{ 'selected' if st_.own.provider and value == st_.own.provider ~ '|' ~ st_.own.model }}>{{ label }}</option>{% endfor %}</optgroup>{% endfor %}
+            {% if st_.own.provider and not (st_.own.provider ~ '|' ~ st_.own.model) in model_groups|map(attribute=1)|sum(start=[])|map(attribute=0)|list %}<option value="{{ st_.own.provider }}|{{ st_.own.model }}" selected>{{ st_.own.model }} (not available now)</option>{% endif %}
+          </select></td>
+          <td><select name="{{ st_.key }}_effort" aria-label="Effort for: {{ st_.label }}">
+            <option value="">usual{% if st_.usual_effort %} ({{ st_.usual_effort }}){% elif cfg[st_.tier] and cfg[st_.tier].effort %} ({{ cfg[st_.tier].effort }}){% endif %}</option>
+            {% for e in efforts %}<option value="{{ e }}" {{ 'selected' if st_.own.effort == e }}>{{ e }}</option>{% endfor %}
+          </select></td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    <div class="row end" style="margin-top:.6rem"><button class="btn primary">Save steps</button></div>
+  </form>
+</section>
+
 <section class="card" id="redo">
   <h2>Redo work with another model</h2>
   <p class="small text-2">Not happy with what a model made, or got a better one? Pick the model and what to redo. Earlier drafts stay under Versions, and facts you've ticked or hidden stay. Single items have the same choice next to their buttons: a draft's <em>New draft</em> and <em>Run fact check</em>, a job's <em>Score again</em>, a document's <em>Analyse again</em>, the style guide's <em>Rebuild</em>.</p>
@@ -130,7 +153,7 @@
         <td class="num">{{ s.jobs_found }}</td>
         <td class="small">{% if s.last_error %}<span class="pill bad">error</span> {{ s.last_error }}{% else %}{{ s.last_status or '' }}{% endif %}</td>
         <td><div class="row">
-          <form method="post" action="/sources/{{ s.id }}/run" class="inline"><button class="btn small">Check now</button></form>
+          <form method="post" action="/sources/{{ s.id }}/run" class="inline row">{{ model_picker() }}<button class="btn small">Check now</button></form>
           <form method="post" action="/sources/{{ s.id }}/toggle" class="inline"><button class="btn small ghost">{{ 'Resume' if not s.enabled else 'Pause' }}</button></form>
           <form method="post" action="/sources/{{ s.id }}/delete" class="inline" data-confirm="Stop watching this source?"><button class="btn small ghost danger">Remove</button></form>
         </div></td>

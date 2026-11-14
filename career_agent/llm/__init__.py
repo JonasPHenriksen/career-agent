@@ -20,7 +20,7 @@ from .providers import (CLAUDE_CODE_MODELS, AnthropicProvider, ClaudeCodeProvide
 
 __all__ = ["run", "LLMResponse", "LLMError", "LLMConfigError", "LLMRefusal", "LLMTransient", "jsonutil", "using",
            "made_by", "model_label", "model_choices", "parse_choice", "backfill_refs", "PROVIDERS",
-           "set_test_provider", "status", "tier_provider", "ollama_running", "detect_defaults", "bootstrap", "test_tier",
+           "set_test_provider", "status", "tier_provider", "ollama_running", "EFFORTS", "STEPS", "STEP_OF", "step_provider", "step_settings", "detect_defaults", "bootstrap", "test_tier",
            "ANTHROPIC_KEY", "OPENAI_KEY", "ProviderReply", "list_ollama_models"]
 
 ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
@@ -43,9 +43,60 @@ def using(ref: str | None = None, model: str | None = None):
         _ctx.reset(token)
 
 
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+# What the app does, step by step: (key, label, the tier whose model it uses by default, its model calls).
+# Settings lets you pick another model and effort for any step; a redo can pick one for a single run.
+STEPS = [
+    ("screen", "Screen new job listings", "analysis", ("triage", "page_jobs")),
+    ("read_ad", "Read a job ad", "analysis", ("parse_job",)),
+    ("score", "Score how well a job fits", "analysis", ("fit_score",)),
+    ("read_document", "Read your documents into facts", "analysis", ("analyze_document", "consolidate_facts")),
+    ("reply", "Read an employer's reply", "analysis", ("classify_response",)),
+    ("letter", "Write and revise the letter", "writing", ("write_letter", "revise_letter", "followup")),
+    ("cv", "Tailor and revise the CV", "writing", ("write_cv", "revise_cv", "cv_base")),
+    ("fact_check", "Fact-check a draft", "check", ("claim_check", "verify_claims")),
+    ("style", "Write your style guide", "writing", ("style_guide",)),
+    ("prep", "Prepare you for an interview", "writing", ("interview_prep",)),
+]
+STEP_OF = {purpose: key for key, _, _, purposes in STEPS for purpose in purposes}
+STEP_TIER = {key: tier for key, _, tier, _ in STEPS}
+
+
 def parse_choice(value: str | None) -> dict | None:
-    provider, _, model = (value or "").strip().partition("|")
-    return {"provider": provider, "model": model} if provider in PROVIDERS and model else None
+    """A choice made next to a button: "provider|model", "provider|model|effort", or "||effort" for the usual
+    model at another effort. None when nothing was chosen."""
+    parts = (value or "").strip().split("|") + ["", "", ""]
+    provider, model, effort = parts[0], parts[1], parts[2]
+    out: dict = {}
+    if provider in PROVIDERS and model:
+        out.update(provider=provider, model=model)
+    if effort in EFFORTS:
+        out["effort"] = effort
+    return out or None
+
+
+def step_settings(step: str | None) -> dict:
+    """Your choice for one step under Settings ({} = use the tier's model and the usual effort)."""
+    return dict((settings.get("llm").get("steps") or {}).get(step or "") or {})
+
+
+def step_provider(step: str, choice: str | None = None) -> str:
+    """Which provider a step would use right now: a one-off choice, else the step's own model, else its tier's."""
+    if _test_provider is not None:
+        return getattr(_test_provider, "name", "")
+    override = parse_choice(choice) or {}
+    if override.get("provider"):
+        return override["provider"]
+    own = step_settings(step)
+    if own.get("provider") and own.get("model"):
+        return own["provider"]
+    tier = STEP_TIER.get(step, "analysis")
+    if tier == "check":
+        from ..writer import check_tier
+
+        tier = check_tier()
+    return (settings.get("llm").get(tier) or {}).get("provider") or ""
 
 # USD per million tokens: input, output, cache read, cache write (5-minute TTL). Estimates.
 PRICES = {
@@ -89,14 +140,19 @@ def set_test_provider(provider) -> None:
     _test_provider = provider
 
 
-def _build(tier: str, effort: str | None):
+def _build(tier: str, effort: str | None, purpose: str | None = None):
     if _test_provider is not None:
         return _test_provider
     cfg = settings.get("llm")
     t = dict(cfg.get(tier) or {})
-    override = _ctx.get().get("override")
-    if override:  # a redo with another model: same tier, different model
-        t.update(override)
+    own = step_settings(STEP_OF.get(purpose or ""))  # this step's own model and effort, if you set one
+    if own.get("provider") and own.get("model"):
+        t.update(provider=own["provider"], model=own["model"])
+    override = _ctx.get().get("override") or {}
+    if override.get("provider"):  # a redo with another model: same step, different model
+        t.update(provider=override["provider"], model=override["model"])
+    # Effort: the one picked for this run, else the step's setting, else what the step usually uses, else the tier's.
+    effort = override.get("effort") or own.get("effort") or effort
     provider, model = t.get("provider"), t.get("model")
     if not provider or not model:
         raise LLMConfigError("No AI model is set up yet. Open Settings → AI models.")
@@ -167,7 +223,7 @@ def _log(purpose: str, provider: str, model: str, r: ProviderReply | None, ms: i
 def run(tier: str, purpose: str, system: str, user: str, schema: dict | None = None,
         max_tokens: int = 8000, effort: str | None = None) -> LLMResponse:
     """Call the model configured for `tier`. With a schema, returns parsed + coerced JSON in .data."""
-    prov = _build(tier, effort)
+    prov = _build(tier, effort, purpose)
     if getattr(prov, "is_cloud", False) and settings.get("llm").get("redact_for_cloud", True):
         system, user = privacy.redact(system), privacy.redact(user)
     model = getattr(prov, "model", "")

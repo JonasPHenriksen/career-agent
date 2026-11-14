@@ -32,6 +32,10 @@
   <option value="">with your settings</option>
   {%- for group, items in groups %}<optgroup label="{{ group }}">{% for value, label in items %}<option value="{{ value }}">with {{ label }}</option>{% endfor %}</optgroup>{% endfor %}
 </select>
+<select name="effort" class="model-picker" aria-label="How much effort" title="How carefully the model works: higher is slower and uses more of your plan. Applies to Claude models; on a local model, high or above switches thinking on.">
+  <option value="">usual effort</option>
+  {%- for e in ['low', 'medium', 'high', 'xhigh', 'max'] %}<option value="{{ e }}">{{ e }} effort</option>{% endfor %}
+</select>
 {%- endif -%}
 {%- endmacro %}
 

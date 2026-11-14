@@ -99,8 +99,12 @@ def _limits() -> dict:
     """Input budgets, sized for the model behind each tier."""
     cfg = settings.get("llm")
 
+    steps = cfg.get("steps") or {}
+
     def local(tier: str) -> bool:
-        return (cfg.get(tier) or {}).get("provider") == "ollama"
+        own = steps.get("letter" if tier == "writing" else "score") or {}  # the step that reads the most
+        provider = own["provider"] if own.get("provider") and own.get("model") else (cfg.get(tier) or {}).get("provider")
+        return provider == "ollama"
 
     num_ctx = int(cfg.get("ollama_num_ctx") or 32768)
     small = num_ctx <= 32768

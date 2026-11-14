@@ -285,7 +285,7 @@
     <section class="card">
       <h2>How this works</h2>
       <p class="small text-2">Every fact comes from your own documents, with a quote as evidence. Applications may only use these facts, so check them: mark correct ones with ✓, fix mistakes, and hide anything you don't want used.</p>
-      <form method="post" action="/facts/tidy"><button class="btn small" data-busy="Starting…">Merge duplicates</button></form>
+      <form method="post" action="/facts/tidy" class="row">{{ model_picker() }}<button class="btn small" data-busy="Starting…">Merge duplicates</button></form>
     </section>
     <section class="card">
       <h2>Add a fact</h2>

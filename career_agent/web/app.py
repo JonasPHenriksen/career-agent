@@ -28,14 +28,18 @@ templates.env.globals["model_choices"] = llm.model_choices  # for the "with whic
 
 
 def chosen_model(f: dict) -> dict:
-    """The model picked next to a redo button, as task payload ({} = the configured models)."""
-    m = (f.get("model") or "").strip()
+    """The model and effort picked next to a button, as task payload ({} = your settings)."""
+    m, effort = (f.get("model") or "").strip(), (f.get("effort") or "").strip()
+    if effort in llm.EFFORTS:
+        m = "|".join((m.split("|") + ["", ""])[:2] + [effort])  # "provider|model|effort", or "||effort" alone
     return {"model": m} if llm.parse_choice(m) else {}
 
 
 def with_model_msg(f: dict, text: str) -> str:
-    choice = llm.parse_choice(f.get("model"))
-    return f"{text} with {llm.model_label(choice['provider'], choice['model'])}" if choice else text
+    choice = llm.parse_choice(chosen_model(f).get("model")) or {}
+    bits = ([llm.model_label(choice["provider"], choice["model"])] if choice.get("provider") else []) \
+        + ([f"{choice['effort']} effort"] if choice.get("effort") else [])
+    return f"{text} with {' at '.join(bits)}" if bits else text
 
 
 @asynccontextmanager
@@ -464,9 +468,9 @@ async def application_revise(request: Request, app_id: int):
     part = f.get("part", "letter")
     if not instructions:
         return go(f"/applications/{app_id}?tab={part}", err="Write what you'd like changed.")
-    tasks.enqueue("revise_application", {"application_id": app_id, "instructions": instructions, "part": part},
+    tasks.enqueue("revise_application", {"application_id": app_id, "instructions": instructions, "part": part, **chosen_model(f)},
                   ref=f"app:{app_id}")
-    return go(f"/applications/{app_id}?tab={'cv' if part == 'cv' else 'letter'}", msg="Revising…")
+    return go(f"/applications/{app_id}?tab={'cv' if part == 'cv' else 'letter'}", msg=with_model_msg(f, "Revising") + "…")
 
 
 @app.post("/applications/{app_id}/redraft")
@@ -474,8 +478,12 @@ async def application_redraft(request: Request, app_id: int):
     f = await form(request)
     if f.get("instructions") is not None:
         db.update("applications", app_id, {"instructions": f.get("instructions") or None})
-    tasks.enqueue("draft_application", {"application_id": app_id, **chosen_model(f)}, ref=f"app:{app_id}", dedupe=True)
-    return go(f"/applications/{app_id}", msg=with_model_msg(f, "Writing a fresh draft") + ". The current one stays under Versions.")
+    part = f.get("part") if f.get("part") in ("letter", "cv") else "both"
+    payload = {"application_id": app_id, **({"part": part} if part != "both" else {}), **chosen_model(f)}
+    tasks.enqueue("draft_application", payload, ref=f"app:{app_id}", dedupe=True)
+    what = {"letter": "a fresh letter", "cv": "a fresh CV"}.get(part, "a fresh draft")
+    return go(f"/applications/{app_id}?tab={'cv' if part == 'cv' else 'letter'}",
+              msg=with_model_msg(f, f"Writing {what}") + ". The current one stays under Versions.")
 
 
 @app.post("/applications/{app_id}/manual-import")
@@ -641,7 +649,7 @@ async def application_reply(request: Request, app_id: int):
     text = f.get("text", "")
     if len(text) < 15:
         return go(f"/applications/{app_id}?tab=timeline", err="Paste the message you received.")
-    tasks.enqueue("classify_response", {"application_id": app_id, "text": text}, ref=f"app:{app_id}", dedupe=False)
+    tasks.enqueue("classify_response", {"application_id": app_id, "text": text, **chosen_model(f)}, ref=f"app:{app_id}", dedupe=False)
     return go(f"/applications/{app_id}?tab=timeline", msg="Reading their reply…")
 
 
@@ -671,9 +679,10 @@ async def application_prep(request: Request, app_id: int):
 
 
 @app.post("/applications/{app_id}/followup")
-def application_followup(request: Request, app_id: int):
-    tasks.enqueue("followup", {"application_id": app_id}, ref=f"app:{app_id}")
-    return go(f"/applications/{app_id}?tab=timeline", msg="Writing a follow-up…")
+async def application_followup(request: Request, app_id: int):
+    f = await form(request)
+    tasks.enqueue("followup", {"application_id": app_id, **chosen_model(f)}, ref=f"app:{app_id}")
+    return go(f"/applications/{app_id}?tab=timeline", msg=with_model_msg(f, "Writing a follow-up") + "…")
 
 
 @app.post("/applications/{app_id}/followup-sent")
@@ -915,7 +924,7 @@ async def redo_work(request: Request):
     kinds = [k for k in redo.KINDS if f.get(f"what_{k}")]
     if not kinds:
         return go("/settings#redo", err="Tick at least one kind of work to redo.")
-    counts = redo.enqueue(kinds, f.get("model") or None, f.get("only_model") or None)
+    counts = redo.enqueue(kinds, chosen_model(f).get("model"), f.get("only_model") or None)
     total = sum(counts.values())
     if not total:
         return go("/settings#redo", msg="Nothing matched, so nothing was queued.")
@@ -979,9 +988,10 @@ def fact_delete(request: Request, fact_id: int):
 
 
 @app.post("/facts/tidy")
-def facts_tidy(request: Request):
-    tasks.enqueue("consolidate_facts", {}, ref="facts")
-    return go("/profile?tab=facts", msg="Looking for duplicates…")
+async def facts_tidy(request: Request):
+    f = await form(request)
+    tasks.enqueue("consolidate_facts", {**chosen_model(f)}, ref="facts")
+    return go("/profile?tab=facts", msg=with_model_msg(f, "Looking for duplicates") + "…")
 
 
 @app.post("/style")
@@ -1010,6 +1020,11 @@ def insights_page(request: Request):
                   skills=insights.skills_demand(), ranks=insights.company_rankings(), spend=insights.spend())
 
 
+# The effort each step asks for when you haven't chosen one ("" = the Writing model's own effort setting).
+STEP_USUAL_EFFORT = {"screen": "low", "read_ad": "low", "score": "medium", "read_document": "medium", "reply": "low",
+                     "fact_check": "medium"}
+
+
 @app.get("/settings")
 def settings_page(request: Request):
     st = llm.status()
@@ -1018,6 +1033,9 @@ def settings_page(request: Request):
                   sources=db.q("SELECT * FROM sources ORDER BY id"), source_kinds=sources.KINDS,
                   data_dir=str(config.DATA_DIR), efforts=["low", "medium", "high", "xhigh", "max"],
                   search=retrieval.status(), letter_range=writer.LETTER_RANGE,
+                  steps=[{"key": k, "label": label, "tier": {"check": writer.check_tier()}.get(tier, tier),
+                          "own": llm.step_settings(k), "usual_effort": STEP_USUAL_EFFORT.get(k, "")} for k, label, tier, _ in llm.STEPS],
+                  model_groups=llm.model_choices(),
                   claude_code_models=llm.CLAUDE_CODE_MODELS, redo_kinds=redo.KINDS, redo_counts={k: len(v) for k, v in redo.candidates().items()},
                   models_used=redo.models_used())
 
@@ -1049,6 +1067,24 @@ def _save_models(f: dict) -> None:
 async def settings_models(request: Request):
     _save_models(await form(request))
     return go("/settings#models", msg="Model settings saved.")
+
+
+@app.post("/settings/steps")
+async def settings_steps(request: Request):
+    """A model and an effort for each step; a step left on "the usual" follows the Writing or Analysis model."""
+    f = await form(request)
+    steps = {}
+    for key, _, _, _ in llm.STEPS:
+        choice = llm.parse_choice(f.get(f"{key}_model")) or {}
+        effort = f.get(f"{key}_effort") if f.get(f"{key}_effort") in llm.EFFORTS else ""
+        entry = {**({"provider": choice["provider"], "model": choice["model"]} if choice.get("provider") else {}),
+                 **({"effort": effort} if effort else {})}
+        if entry:
+            steps[key] = entry
+    cfg = settings.get("llm")
+    cfg["steps"] = steps  # replaced whole, so a step set back to "the usual" is really cleared
+    settings.set("llm", cfg)
+    return go("/settings#steps", msg="Saved. Each step uses its model and effort from the next task on.")
 
 
 @app.post("/settings/key")
@@ -1245,9 +1281,10 @@ async def sources_add(request: Request):
 
 
 @app.post("/sources/{source_id}/run")
-def sources_run(request: Request, source_id: int):
-    tasks.enqueue("poll_source", {"source_id": source_id}, ref=f"source:{source_id}")
-    return go(back(request, "/settings#sources"), msg="Checking for new jobs…")
+async def sources_run(request: Request, source_id: int):
+    f = await form(request)
+    tasks.enqueue("poll_source", {"source_id": source_id, **chosen_model(f)}, ref=f"source:{source_id}")
+    return go(back(request, "/settings#sources"), msg=with_model_msg(f, "Checking for new jobs") + "…")
 
 
 @app.post("/sources/{source_id}/toggle")

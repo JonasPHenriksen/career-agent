@@ -227,3 +227,92 @@ def test_analyze_with_replace_keeps_ticked_and_hidden_facts(fake):
     assert "Made-up skill from a weak reading" not in titles
     assert db.q1("SELECT verified FROM facts WHERE id = ?", (keep,))["verified"] == 1
     assert db.q1("SELECT hidden FROM facts WHERE id = ?", (hide,))["hidden"] == 1
+
+
+def test_each_step_can_have_its_own_model_and_effort(fake, fake_claude, monkeypatch):
+    monkeypatch.setattr(llm, "_test_provider", None)
+    path, _ = fake_claude
+    settings.update("llm", {"claude_code_path": str(path), "writing": {"provider": "claude_code", "model": "opus", "effort": "high"},
+                            "analysis": {"provider": "ollama", "model": "gemma4:26b-mlx", "effort": "medium"}})
+
+    def built(tier, purpose, effort=None):
+        p = llm._build(tier, effort, purpose)
+        return type(p).__name__.replace("Provider", ""), p.model, getattr(p, "effort", None)
+
+    assert built("writing", "write_letter") == ("ClaudeCode", "opus", "high"), "the tier's model and effort"
+    assert built("writing", "revise_letter", "medium") == ("ClaudeCode", "opus", "medium"), "the step's usual effort"
+    assert built("analysis", "fit_score", "medium")[:2] == ("Ollama", "gemma4:26b-mlx")
+
+    cfg = settings.get("llm")
+    cfg["steps"] = {"score": {"provider": "claude_code", "model": "sonnet", "effort": "low"}, "letter": {"effort": "xhigh"}}
+    settings.set("llm", cfg)
+    assert built("analysis", "fit_score", "medium") == ("ClaudeCode", "sonnet", "low"), "its own model and effort"
+    assert built("analysis", "parse_job", "low")[:2] == ("Ollama", "gemma4:26b-mlx"), "other steps are untouched"
+    assert built("writing", "write_letter") == ("ClaudeCode", "opus", "xhigh"), "only the effort was set for the letter"
+    assert built("writing", "revise_letter", "medium") == ("ClaudeCode", "opus", "xhigh"), "your setting beats the usual effort"
+    assert built("writing", "write_cv") == ("ClaudeCode", "opus", "high")
+    with llm.using(model="||max"):  # one run at another effort, same model
+        assert built("writing", "write_letter") == ("ClaudeCode", "opus", "max")
+    with llm.using(model="claude_code|haiku|medium"):
+        assert built("analysis", "fit_score", "medium") == ("ClaudeCode", "haiku", "medium")
+
+    assert llm.step_provider("score") == "claude_code" and llm.step_provider("read_ad") == "ollama"
+    assert llm.step_provider("fact_check") == "claude_code", "a cloud writer also checks the facts"
+    assert llm.step_provider("read_ad", "claude_code|haiku") == "claude_code"
+    assert tasks.needs({"kind": "score_job", "payload": "{}"}) == {"claude_code"}
+    assert tasks.needs({"kind": "parse_job", "payload": "{}"}) == {"ollama", "network"}
+    assert tasks.concurrency() == 1, "a local model anywhere means one task at a time"
+    assert llm.parse_choice("claude_code|opus|high") == {"provider": "claude_code", "model": "opus", "effort": "high"}
+    assert llm.parse_choice("||high") == {"effort": "high"} and llm.parse_choice("||silly") is None
+    assert {p for _, _, _, ps in llm.STEPS for p in ps} >= {"triage", "parse_job", "fit_score", "write_letter", "write_cv",
+                                                            "claim_check", "style_guide", "interview_prep", "classify_response"}
+
+
+def test_effort_reaches_claude_and_can_be_picked_everywhere(fake, fake_claude, monkeypatch):
+    from career_agent.web import app as web
+
+    assert web.chosen_model({"model": "claude_code|opus", "effort": "high"}) == {"model": "claude_code|opus|high"}
+    assert web.chosen_model({"model": "", "effort": "xhigh"}) == {"model": "||xhigh"}
+    assert web.chosen_model({"model": "claude_code|opus", "effort": ""}) == {"model": "claude_code|opus"}
+    assert web.chosen_model({"model": "", "effort": ""}) == {} and web.chosen_model({"effort": "bogus"}) == {}
+    assert web.with_model_msg({"model": "claude_code|opus", "effort": "high"}, "Writing") == "Writing with Claude Code (opus) at high effort"
+    assert web.with_model_msg({"effort": "low"}, "Writing") == "Writing with low effort"
+
+    path, out = fake_claude
+    monkeypatch.setattr(llm, "_test_provider", None)
+    settings.update("llm", {"claude_code_path": str(path), "writing": {"provider": "claude_code", "model": "opus", "effort": "high"}})
+    with llm.using(ref="app:1", model="||medium"):
+        llm.run("writing", "write_letter", "S", "U")
+    args = json.loads(out.read_text())["args"]
+    assert args[args.index("--model") + 1] == "opus" and args[args.index("--effort") + 1] == "medium"
+
+    c = TestClient(app)
+    page = c.get("/settings")
+    assert page.status_code == 200 and "Model and effort for each step" in page.text and 'name="letter_effort"' in page.text
+    c.post("/settings/steps", data={"letter_effort": "xhigh", "score_model": "claude_code|sonnet", "score_effort": "low",
+                                    "cv_model": "", "cv_effort": ""}, follow_redirects=False)
+    assert settings.get("llm")["steps"] == {"letter": {"effort": "xhigh"},
+                                            "score": {"provider": "claude_code", "model": "sonnet", "effort": "low"}}
+    c.post("/settings/steps", data={"letter_effort": ""}, follow_redirects=False)
+    assert settings.get("llm")["steps"] == {}, "a step set back to the usual is cleared"
+
+
+def test_the_letter_or_the_cv_can_be_written_again_alone(fake):
+    from .test_cv import _draft
+
+    a = _draft()
+    writer.draft(a["id"], "letter")
+    after = db.q1("SELECT * FROM applications WHERE id = ?", (a["id"],))
+    assert after["cv_data"] == a["cv_data"] and after["cv"] == a["cv"], "the CV is left alone"
+    assert any("Only the letter was written again" in n for n in db.jload(after["writer_notes"]))
+    db.update("applications", a["id"], {"letter": "Min egen tekst."})
+    writer.draft(a["id"], "cv")
+    assert db.q1("SELECT letter FROM applications WHERE id = ?", (a["id"],))["letter"] == "Min egen tekst."
+
+    c = TestClient(app)
+    c.post(f"/applications/{a['id']}/redraft", data={"part": "cv", "model": "", "effort": "high"}, follow_redirects=False)
+    queued = db.q1("SELECT payload FROM tasks WHERE kind = 'draft_application' AND status = 'queued'")
+    assert json.loads(queued["payload"]) == {"application_id": a["id"], "part": "cv", "model": "||high"}
+    c.post(f"/applications/{a['id']}/revise", data={"part": "letter", "instructions": "Kortere.", "model": "claude_code|opus", "effort": "low"},
+           follow_redirects=False)
+    assert json.loads(db.q1("SELECT payload FROM tasks WHERE kind = 'revise_application'")["payload"])["model"] == "claude_code|opus|low"

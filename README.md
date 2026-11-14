@@ -89,6 +89,23 @@ job sources ──► quick screening ──► read the ad ──► fit score 
 * **Interview prep.** When you get an interview: likely questions with answers built from your real
   experience, the gaps they may probe, every claim you made, and questions to ask them.
 
+## Your CV, tailored and typeset
+
+The CV for a job is your own CV with small changes, not a new one. Under Profile → **Your CV**:
+
+* **Pick the base.** Choose one of your imported CVs. It is read once into data, word for word, and you can correct
+  the result. Switch to another CV at any time; new applications start from the one in use.
+* **Small changes per job.** The most relevant points and skills first, a point left out, the headline and profile
+  turned towards the job, translated if the ad is in another language. Employers, titles, dates and numbers never
+  change, and every change is listed in the draft's notes.
+* **Typeset in the app.** The CV is laid out on this Mac in two columns with a coloured sidebar. Colour, font, text
+  size, sidebar width and the order of the sections are settings on the same page. The application page shows the
+  pages, and gives you the PDF and a JSON Resume file that tools like rxresu.me can import.
+* **Your contact details stay here.** Name, email, phone and links come from About you when the CV is typeset; they
+  are taken out of a CV's text before a model reads it.
+
+The font is IBM Plex Serif if it's installed on this Mac (free from fonts.google.com), otherwise Charter.
+
 ## Retrieval: the right facts for each job
 
 Every document is split into passages and indexed on this Mac, by keywords and by meaning (a local
@@ -212,6 +229,13 @@ and your contact details are never included (they're added to the PDFs locally).
 * **Each start catches up.** Work an earlier session couldn't finish for one of those reasons is queued again,
   and job sources that failed are checked right away.
 * **Switch any time** in Settings → AI models: the next task uses the new model.
+* **A model and an effort for every step.** Settings → *Model and effort for each step* lists what the app does
+  (screening, reading ads, scoring, reading documents, the letter, the CV, the fact check, the style guide,
+  interview preparation, reading replies). Each uses the Writing or Analysis model unless you pick another, and
+  each can have its own effort (low to max: how carefully a Claude model works; on a local model, high or above
+  switches thinking on).
+* **For one run:** every button that starts work has a model and an effort picker next to it, and *Start over* can
+  write the letter or the CV again alone.
 * **See who made what.** Drafts, fact checks, job readings and scores, documents and the style guide say which
   model made them ("Read by gemma4:26b-mlx (local)").
 * **Redo one thing** with the picker next to its button (New draft, Run fact check, Score again, Read the ad
@@ -240,6 +264,9 @@ The default model is Claude Opus 5.5. A full application (letter, CV, fact check
 order of a few tens of cents, and reading and scoring a job a few cents. The large shared context
 (your career database, style guide and examples) is prompt-cached, so batches cost less. Insights → AI usage
 shows your actual spend. For cheaper bulk work, choose Claude Haiku 5.5 or Sonnet 5.5 for Analysis.
+
+**Which model for which step?** [reports/model-findings-2026-11.md](reports/model-findings-2026-11.md) has the short
+version from real job ads: Claude Opus at high effort for writing, the local model for the rest, and why.
 
 **How much better is it?** [reports/claude-vs-local.md](reports/claude-vs-local.md) has a side-by-side
 on two real Jobindex ads with identical prompts. A blind reviewer would have sent Claude's version in all
@@ -300,6 +327,7 @@ uv run python -m career_agent --port 8765 --data ./data --no-browser
 | `career_agent/voice.py` | Style guide, writing statistics, the voice check |
 | `career_agent/jobs.py`, `sources.py`, `fetch.py` | Adding, reading, screening and scoring jobs |
 | `career_agent/writer.py` | Letters, CVs, revisions, fact check, interview prep, follow-ups |
+| `career_agent/cvdata.py`, `cvrender.py`, `cv_templates/` | The CV as data: base CVs, tailoring, JSON Resume; typesetting with Typst |
 | `career_agent/exporter.py`, `mailer.py` | PDF/Word rendering, Apple Mail drafts |
 | `career_agent/tracker.py`, `companies.py`, `insights.py` | Timeline, ghosting, employer grades, stats |
 | `career_agent/tasks.py` | Background queue, worker and scheduler, retries after passing errors |

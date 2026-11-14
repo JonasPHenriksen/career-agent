@@ -91,7 +91,7 @@ def _handlers() -> dict:
         "consolidate_facts": consolidate,
         "parse_job": lambda p: jobs.parse(p["job_id"], use_text=p.get("use_text", False)),
         "score_job": lambda p: jobs.score(p["job_id"]),
-        "draft_application": lambda p: writer.draft(p["application_id"]),
+        "draft_application": lambda p: writer.draft(p["application_id"], p.get("part", "both")),
         "revise_application": lambda p: writer.revise(p["application_id"], p["instructions"], p.get("part", "letter")),
         "check_application": lambda p: writer.run_checks(p["application_id"]),
         "interview_prep": lambda p: writer.interview_prep(p["application_id"]),
@@ -175,9 +175,14 @@ def is_transient(e: Exception) -> bool:
 # The queue holds those tasks instead of using up their retries, and carries on when it's back.
 # ---------------------------------------------------------------------------------------
 
-WRITING_TASKS = {"draft_application", "revise_application", "interview_prep", "followup", "build_style", "build_cv_base"}
+# Which steps (llm.STEPS) each kind of task runs, so the queue knows which models it needs.
+TASK_STEPS = {
+    "draft_application": ("letter", "cv", "fact_check"), "revise_application": ("letter", "cv", "fact_check"),
+    "check_application": ("fact_check",), "interview_prep": ("prep",), "followup": ("letter",), "build_style": ("style",),
+    "build_cv_base": ("cv",), "parse_job": ("read_ad",), "score_job": ("score",), "poll_source": ("screen",),
+    "analyze_document": ("read_document",), "consolidate_facts": ("read_document",), "classify_response": ("reply",),
+}
 FETCH_TASKS = {"poll_source", "parse_job"}
-NO_MODEL_TASKS = {"maintenance", "scan_folder", "embed_index"}
 NEED_LABELS = {"ollama": "Ollama (the local models)", "network": "an internet connection",
                "claude_code": "Claude (your plan's usage limit)", "anthropic": "the Claude API",
                "openai": "the model server"}
@@ -208,7 +213,7 @@ def holds() -> dict[str, str]:
 
 def needs(task: dict) -> set[str]:
     """What a task can't run without: the provider behind its model tier, and the internet for fetching."""
-    from . import llm, writer
+    from . import llm
 
     kind = task["kind"]
     try:
@@ -220,18 +225,8 @@ def needs(task: dict) -> set[str]:
         out.add("network")
     if kind == "pull_model":
         return {"ollama", "network"}
-    if kind in NO_MODEL_TASKS:
-        return out
-    if kind in WRITING_TASKS:
-        tiers = {"writing"}
-        if kind in ("draft_application", "revise_application"):  # a draft is fact-checked as part of writing it
-            tiers.add(writer.check_tier())
-    elif kind == "check_application":
-        tiers = {writer.check_tier()}
-    else:
-        tiers = {"analysis"}
-    for tier in tiers:
-        provider = llm.tier_provider(tier, payload.get("model"))
+    for step in TASK_STEPS.get(kind, ()):
+        provider = llm.step_provider(step, payload.get("model"))
         if provider:
             out.add(provider)
     return out
@@ -344,7 +339,8 @@ def concurrency() -> int:
     cfg = settings.get("llm")
     if int(cfg.get("concurrency") or 0) > 0:
         return int(cfg["concurrency"])
-    local = any((cfg.get(t) or {}).get("provider") == "ollama" for t in ("writing", "analysis"))
+    chosen = [cfg.get(t) or {} for t in ("writing", "analysis")] + list((cfg.get("steps") or {}).values())
+    local = any(c.get("provider") == "ollama" for c in chosen)  # a local model runs one thing at a time
     return 1 if local else 3
 
 

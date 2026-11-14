@@ -100,7 +100,7 @@
           {% endfor %}
         </div>
         <textarea id="instr" name="instructions" rows="4" placeholder="e.g. Mention my project at Novo instead of the bank one, and say I can start 1 March."></textarea>
-        <div class="row end" style="margin-top:.5rem"><button class="btn" data-busy="Revising…">Revise letter</button></div>
+        <div class="row end" style="margin-top:.5rem">{{ model_picker() }}<button class="btn" data-busy="Revising…">Revise letter</button></div>
       </form>
     </section>
     {% if notes %}
@@ -121,7 +121,7 @@
       <h2>Start over</h2>
       <form method="post" action="/applications/{{ a.id }}/redraft" data-confirm="Write a completely new draft? The current one is kept under Versions.">
         <textarea name="instructions" rows="3" placeholder="Instructions for the new draft (optional)">{{ a.instructions or '' }}</textarea>
-        <div class="row end" style="margin-top:.5rem">{{ made_by(made.letter, 'This draft written') }}{{ model_picker() }}<button class="btn small">New draft</button></div>
+        <div class="row end" style="margin-top:.5rem">{{ made_by(made.letter, 'This draft written') }}<select name="part" class="model-picker" aria-label="What to write again"><option value="both">letter and CV</option><option value="letter">letter only</option><option value="cv">CV only</option></select>{{ model_picker() }}<button class="btn small">New draft</button></div>
       </form>
     </section>
   </div>
@@ -137,7 +137,7 @@
       <label for="cvinstr">Ask for changes</label>
       <div class="chips">{% for c in ['Fit it on one page', 'Put the most relevant points first', 'Shorter bullets', 'Go back to my base CV'] %}<button type="button" class="chip" data-fill="#cvinstr" data-text="{{ c }}.">{{ c }}</button>{% endfor %}</div>
       <textarea id="cvinstr" name="instructions" rows="3"></textarea>
-      <div class="row end" style="margin-top:.5rem"><button class="btn" data-busy="Revising…">Revise CV</button></div>
+      <div class="row end" style="margin-top:.5rem">{{ model_picker() }}<button class="btn" data-busy="Revising…">Revise CV</button></div>
     </form>
     <div class="row" style="margin-top:1rem">
       <a class="btn primary" href="/applications/{{ a.id }}/export/cv.pdf">Download PDF</a>
@@ -162,7 +162,7 @@
       <label for="cvinstr">Ask for changes</label>
       <div class="chips">{% for c in ['Fit it on one page', 'Lead with the most relevant role', 'Shorter bullets', 'Emphasise leadership'] %}<button type="button" class="chip" data-fill="#cvinstr" data-text="{{ c }}.">{{ c }}</button>{% endfor %}</div>
       <textarea id="cvinstr" name="instructions" rows="3"></textarea>
-      <div class="row end" style="margin-top:.5rem"><button class="btn" data-busy="Revising…">Revise CV</button></div>
+      <div class="row end" style="margin-top:.5rem">{{ model_picker() }}<button class="btn" data-busy="Revising…">Revise CV</button></div>
     </form>
     {% endif %}
   </section>
@@ -237,7 +237,7 @@
     <form method="post" action="/applications/{{ a.id }}/revise">
       <input type="hidden" name="part" value="letter">
       <input type="hidden" name="instructions" value="Rewrite the sentences containing these phrases in my own words: {{ v.phrases|map(attribute='phrase')|join(', ') }}.">
-      <button class="btn small" data-busy="Revising…">Rewrite those in my words</button>
+      {{ model_picker() }}<button class="btn small" data-busy="Revising…">Rewrite those in my words</button>
     </form>
     {% else %}<p class="text-2">None found.</p>{% endif %}
     <p class="small muted" style="margin-top:1rem">Add your own pet-hate phrases under Settings → Writing.</p>
@@ -304,7 +304,7 @@
       <h2>Got a reply?</h2>
       <form method="post" action="/applications/{{ a.id }}/reply">
         <textarea name="text" rows="6" placeholder="Paste their email or message. I'll work out what it is (rejection, interview…), pull out any real feedback, and update the status and the company's record."></textarea>
-        <div class="row end" style="margin-top:.5rem"><button class="btn primary" data-busy="Reading…">Read reply</button></div>
+        <div class="row end" style="margin-top:.5rem">{{ model_picker() }}<button class="btn primary" data-busy="Reading…">Read reply</button></div>
       </form>
     </section>
     <section class="card">
@@ -326,10 +326,10 @@
         <div class="quote" id="fu">{{ a.followup_draft }}</div>
         <div class="row"><button type="button" class="btn small" data-copy="#fu">Copy</button>
           <form method="post" action="/applications/{{ a.id }}/followup-sent" class="inline"><button class="btn small">I sent it</button></form>
-          <form method="post" action="/applications/{{ a.id }}/followup" class="inline"><button class="btn small ghost" data-busy="Writing…">Rewrite</button></form></div>
+          <form method="post" action="/applications/{{ a.id }}/followup" class="inline">{{ model_picker() }}<button class="btn small ghost" data-busy="Writing…">Rewrite</button></form></div>
       {% else %}
         <p class="small text-2">No answer after a while? A short, polite nudge in your own voice.</p>
-        <form method="post" action="/applications/{{ a.id }}/followup"><button class="btn small" data-busy="Writing…">Draft a follow-up email</button></form>
+        <form method="post" action="/applications/{{ a.id }}/followup">{{ model_picker() }}<button class="btn small" data-busy="Writing…">Draft a follow-up email</button></form>
       {% endif %}
     </section>
     {% endif %}

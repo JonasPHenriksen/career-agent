@@ -405,7 +405,8 @@ def _save_version(app_id: int, label: str) -> None:
                                    "letter": a["letter"], "cv": a["cv"], "cv_data": a["cv_data"], "created_at": db.now()})
 
 
-def draft(app_id: int) -> dict:
+def draft(app_id: int, part: str = "both") -> dict:
+    """Write the application: the letter, the CV, or both (`part`). What isn't rewritten stays as it is."""
     app = tracker.app_with_job(app_id)
     if not app:
         return {"skipped": "application deleted"}
@@ -414,32 +415,41 @@ def draft(app_id: int) -> dict:
         raise llm.LLMError("The job ad hasn't been read yet. Wait for it to be analysed, then try again.")
     if not profile.has_facts():
         raise llm.LLMError("Your career database is empty. Import your CV and past applications first (Profile).")
+    part = part if part in ("letter", "cv") else "both"
     language = choose_language(job)
     rewrite = bool(app.get("letter") or app.get("cv"))
     if rewrite:  # a fresh draft never loses the current one: it stays under Versions
         _save_version(app_id, "Before a new draft")
     db.update("applications", app_id, {"status": "drafting", "language": language, "updated_at": db.now()})
     system = writer_system(language, job)
-    letter = llm.run("writing", "write_letter", system, _letter_task(job, language, app["instructions"]),
-                     LETTER_SCHEMA, max_tokens=16000).data
-    tailored = tailor_cv(job, language, app["instructions"], system)
-    if tailored:  # your own CV with small changes for this job
-        cv_data, cv_notes = tailored
-        cv_text = cvdata.to_markdown(cv_data)
-    else:  # no CV of yours to start from: one is written from the career database
-        cv = llm.run("writing", "write_cv", system, _cv_task(job, language, app["instructions"]),
-                     CV_SCHEMA, max_tokens=16000).data
-        cv_data, cv_notes, cv_text = None, cv["notes"], strip_citations(cv["cv_markdown"])
-    db.update("applications", app_id, {
-        "subject": letter["subject"], "letter": strip_citations(letter["letter"]), "cv": cv_text,
-        "cv_data": db.jdump(cv_data) if cv_data else None,
-        "writer_notes": db.jdump(_gap_note(letter) + _assumed_notes(letter) + letter["notes"] + cv_notes),
-        "status": "draft", "updated_at": db.now(),
-    })
+    patch: dict = {"status": "draft", "updated_at": db.now()}
+    notes: list[str] = []
+    words = len((app.get("letter") or "").split())
+    if part in ("letter", "both"):
+        letter = llm.run("writing", "write_letter", system, _letter_task(job, language, app["instructions"]),
+                         LETTER_SCHEMA, max_tokens=16000).data
+        patch.update({"subject": letter["subject"], "letter": strip_citations(letter["letter"])})
+        notes += _gap_note(letter) + _assumed_notes(letter) + letter["notes"]
+        words = len(letter["letter"].split())
+    if part in ("cv", "both"):
+        tailored = tailor_cv(job, language, app["instructions"], system)
+        if tailored:  # your own CV with small changes for this job
+            cv_data, cv_notes = tailored
+            patch.update({"cv": cvdata.to_markdown(cv_data), "cv_data": db.jdump(cv_data)})
+        else:  # no CV of yours to start from: one is written from the career database
+            cv = llm.run("writing", "write_cv", system, _cv_task(job, language, app["instructions"]),
+                         CV_SCHEMA, max_tokens=16000).data
+            cv_notes = cv["notes"]
+            patch.update({"cv": strip_citations(cv["cv_markdown"]), "cv_data": None})
+        notes += cv_notes
+    if part != "both":
+        notes.append(f"Only the {'letter' if part == 'letter' else 'CV'} was written again; the other part is unchanged.")
+    patch["writer_notes"] = db.jdump(notes)
+    db.update("applications", app_id, patch)
     _save_version(app_id, "New draft" if rewrite else "First draft")
     run_checks(app_id)
     notify.send("Draft ready to review", f"{job['title']} at {job['company_name'] or '?'}")
-    return {"words": len(letter["letter"].split())}
+    return {"words": words}
 
 
 def revise(app_id: int, instructions: str, part: str = "letter") -> dict:

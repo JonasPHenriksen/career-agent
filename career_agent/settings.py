@@ -39,6 +39,7 @@ DEFAULTS: dict[str, Any] = {
         "redact_for_cloud": True,
         "concurrency": 0,  # 0 = automatic (1 for local models, 3 for cloud)
         "embed_model": "bge-m3",  # local Ollama embedding model for semantic search
+        "steps": {},  # per step (see llm.STEPS): {"provider", "model", "effort"}; missing = the tier's model, usual effort
         "check_with": "auto",  # which model fact-checks drafts: "auto", "writing" or "analysis"
         "claude_code_path": "",  # the `claude` program; "" = find it (PATH, ~/.local/bin, the Claude desktop app)
     },
