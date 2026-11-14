@@ -135,7 +135,7 @@ class FakeProvider:
                     "interests": [], "certificates": []}
         if schema is cvdata.TAILOR_SCHEMA:  # the base with one small change: the second point of the first job goes first
             cv = json.loads(user.split("<cv>\n", 1)[1].split("\n</cv>", 1)[0])
-            if "Shorter" in user:
+            if "Shorter" in user or "Shorten it" in user:
                 cv["work"][0]["highlights"] = cv["work"][0]["highlights"][:1]
                 return {"cv": cv, "changes": ["Kept one point per job."], "used_fact_ids": [], "notes": []}
             cv["work"][0]["highlights"].reverse()

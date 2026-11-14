@@ -258,9 +258,19 @@ def _cv_tailor_task(job: dict, language: str, instructions: str | None, base: di
     lang = LANG_NAMES.get(language, language)
     doc = json.dumps(current or base, ensure_ascii=False, indent=1)
     what = ("the CV as it is now, already tailored for this job" if current else "the candidate's own CV, the base")
-    return (f"Tailor the candidate's CV for the job below.\n\n{cvdata.TAILOR_RULES.format(language=lang)}\n\n"
+    return (f"Tailor the candidate's CV for the job below.\n\n{cvdata.TAILOR_RULES.format(language=lang, pages=_cv_pages(base))}\n\n"
             f"Return cv, changes, used_fact_ids and notes.\n\nTHE CV ({what}):\n<cv>\n{doc}\n</cv>\n\n"
             + _job_context(job, language, instructions))
+
+
+def _cv_pages(data: dict, language: str | None = None) -> int:
+    """How many pages a CV fills when typeset (1 if it can't be typeset right now)."""
+    from . import cvrender
+
+    try:
+        return max(1, cvrender.pages(data, language))
+    except Exception:  # noqa: BLE001 - the page count is a nicety; a draft must not fail on it
+        return 1
 
 
 def tailor_cv(job: dict, language: str, instructions: str | None, system: str, purpose: str = "write_cv",
@@ -276,7 +286,22 @@ def tailor_cv(job: dict, language: str, instructions: str | None, system: str, p
         data = current or cvdata.clean(base["data"])
     data["language"] = language
     changes = [f"CV: {c.strip()}" for c in d["changes"][:8] if c.strip()] or ["CV: your base CV, unchanged."]
-    return data, changes + d["notes"]
+    notes = list(d["notes"])
+    # Your CV's length is the limit: if the result runs longer (a translation often does), it is cut once to fit.
+    limit, pages = _cv_pages(base["data"], base.get("language")), _cv_pages(data, language)
+    if pages > limit:
+        fit = (f"This CV now fills {pages} pages; the candidate's own CV fills {limit}. Shorten it to fit {limit} page(s): leave out "
+               "the points, skills or interests that matter least for this job. Change nothing else.")
+        again = llm.run("writing", "revise_cv", system, _cv_tailor_task(job, language, fit, base["data"], data),
+                        cvdata.TAILOR_SCHEMA, max_tokens=16000, effort=effort or "medium").data
+        shorter = cvdata.clean(again["cv"])
+        if not cvdata.is_empty(shorter):
+            shorter["language"] = language
+            data = shorter
+            changes += [f"CV: {c.strip()}" for c in again["changes"][:5] if c.strip()]
+        if _cv_pages(data, language) > limit:
+            notes.append(f"The CV still fills more than {limit} page(s). Ask for “Fit it on one page” or trim it under CV.")
+    return data, changes + cvdata.keep_base_facts(base["data"], data) + notes
 
 
 # ---------------------------------------------------------------------------------------

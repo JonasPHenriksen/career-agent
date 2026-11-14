@@ -131,3 +131,31 @@ def test_cv_pages_in_the_app(fake):
     assert cv["main_order"] == ["education", "work"] and cv["sidebar_order"] == ["languages", "skills"]
     r = c.post("/cv/base", data={"doc_id": str(base["document_id"])}, follow_redirects=False)
     assert r.status_code == 303 and db.q1("SELECT 1 FROM tasks WHERE kind = 'build_cv_base' AND status = 'queued'")
+
+
+def test_dates_and_employers_from_your_cv_are_put_back():
+    base = cvdata.clean({"work": [{"name": "Havbro ApS", "position": "Intern", "start": "Jul 2024", "end": "Dec 2024"},
+                                  {"name": "Nordvik P/S", "position": "Consultant", "start": "May 2026", "end": "Present"}],
+                         "education": [{"institution": "VIA", "degree": "BEng", "start": "2022", "end": "2026"}]})
+    tailored = cvdata.clean({"work": [{"name": "Havbro", "position": "Praktikant", "start": "aug. 2024", "end": "dec. 2024"},
+                                      {"name": "Nordvik P/S", "position": "Konsulent", "start": "maj 2026", "end": "nu"}],
+                             "education": [{"institution": "VIA", "degree": "BEng", "start": "2022", "end": "2025"}]})
+    notes = cvdata.keep_base_facts(base, tailored)
+    assert [(w["name"], w["start"], w["end"]) for w in tailored["work"]] == \
+           [("Havbro ApS", "Jul 2024", "dec. 2024"), ("Nordvik P/S", "maj 2026", "nu")], "a translated date is fine, a changed one is not"
+    assert tailored["education"][0]["end"] == "2026" and tailored["work"][0]["position"] == "Praktikant"
+    assert len(notes) == 3 and "Jul 2024" in notes[1] and "correct it under Profile" in notes[1]
+
+
+def test_a_cv_that_runs_longer_than_yours_is_cut_once(fake, monkeypatch):
+    a = _draft()
+    def pages(data, language=None):  # the tailored CV (support result first, two points) runs to a second page
+        points = data["work"][0]["highlights"]
+        return 2 if len(points) > 1 and points[0].startswith("Reducerede") else 1
+
+    monkeypatch.setattr(writer, "_cv_pages", pages)
+    job = jobs.get(a["job_id"])
+    data, notes = writer.tailor_cv(job, "da", None, writer.writer_system("da", job))
+    assert len(data["work"][0]["highlights"]) == 1, "the second call left a point out"
+    assert any(n == "CV: Kept one point per job." for n in notes) and not any("still fills" in n for n in notes)
+    assert "Shorten it to fit 1 page(s)" in fake.calls[-1][1]

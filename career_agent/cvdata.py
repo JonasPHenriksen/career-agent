@@ -59,7 +59,8 @@ TAILOR_RULES = """The base CV below is the candidate's own CV and stays the base
 - You may leave out a point, a skill or a hobby that adds nothing for this job. Never leave out a job or an education.
 - Turn the headline and the profile towards this job, truthfully and in the candidate's own wording where you can.
 - You may add at most two points, only when the career database clearly backs them and they matter for this job. Say so in changes.
-- Never change an employer, a job title, a date or a number.
+- Never change an employer, a job title, a date or a number, even when the career database says something else. If they disagree, keep the CV's version and say so in notes, so the candidate can correct their CV.
+- Length: the base fills {pages} page(s) and the result must not run longer. If you add a point, leave another out. A translation often runs longer: then leave out the points that matter least for this job.
 - Write everything, headings included, in {language}. Translate only if the base is in another language, and then translate faithfully.
 - No name or contact details: they are added automatically.
 Return the whole CV in the same structure, and list every change in changes. If the base already fits, return it unchanged with no changes."""
@@ -80,6 +81,33 @@ def clean(data: dict | None) -> dict:
         for e in d[key]:
             e["highlights"] = [h for h in e["highlights"] if h]
     return d
+
+
+def _same(a: str | None, b: str | None) -> bool:
+    return re.sub(r"[\W_]+", "", (a or "").lower()) == re.sub(r"[\W_]+", "", (b or "").lower())
+
+
+def keep_base_facts(base: dict, tailored: dict) -> list[str]:
+    """Employers, schools and dates come from your own CV and stay as they are there. A date may be rewritten
+    in another language ("May 2026" → "maj 2026") but not changed. Returns a note for each thing put back."""
+    notes = []
+    for key, name_field in (("work", "name"), ("education", "institution"), ("projects", "name")):
+        originals = list(base.get(key) or [])
+        for n, entry in enumerate(tailored.get(key) or []):
+            original = next((o for o in originals if _same(o.get(name_field), entry.get(name_field))), None)
+            if original is None and n < len(originals) and len(originals) == len(tailored[key]):
+                original = originals[n]  # same place under another name
+                if key != "projects":  # an employer or a school keeps its name; a project's name may be translated
+                    notes.append(f"CV: kept “{original[name_field]}” as your CV writes it (the writer had “{entry[name_field]}”).")
+                    entry[name_field] = original[name_field]
+            if original is None:
+                continue
+            for field in ("start", "end"):
+                if iso_date(entry.get(field)) != iso_date(original.get(field)) or bool(entry.get(field)) != bool(original.get(field)):
+                    notes.append(f"CV: kept your CV's date “{original.get(field) or 'none'}” for {original[name_field]} "
+                                 f"(the writer wanted “{entry.get(field) or 'none'}”). If your CV is wrong, correct it under Profile → Your CV.")
+                    entry[field] = original.get(field) or ""
+    return notes
 
 
 def is_empty(data: dict | None) -> bool:
