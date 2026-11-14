@@ -202,6 +202,7 @@ def _letter_task(job: dict, language: str, instructions: str | None) -> str:
             f"Gaps: {GAP_RULE} Name it in main_gap and write the sentence in gap_line; leave both empty if there is none.\n"
             "assumed: every interest, opinion, motivation or reason in the letter that you inferred rather than read in "
             "the candidate's own words, so they can confirm it or take it out.\n\n"
+            + (_siblings_note(job) + "\n\n" if job.get("id") and _siblings_note(job) else "")
             + _job_context(job, language, instructions) + "\n\n" + DATE_RULE)
 
 
@@ -398,6 +399,7 @@ def import_manual(app_id: int, text: str) -> dict:
         patch["cv_data"] = None  # pasted as text: shown and exported as text
     if not app["language"]:
         patch["language"] = choose_language(jobs.get(app["job_id"]))
+    patch["review"] = db.jdump(_review({"main_gap": d["main_gap"]}, d["letter"]))
     notes = _gap_note({"main_gap": d["main_gap"], "gap_line": "", "letter": d["letter"]}) + d["notes"]
     patch["writer_notes"] = db.jdump(notes + ["Written in Claude.ai and fact-checked here."])
     db.update("applications", app_id, patch)
@@ -417,6 +419,31 @@ def _gap_note(letter: dict) -> list[str]:
         return [f"Honest about a gap: {gap}. Check you're comfortable with how the letter says it."]
     # Small models sometimes spot the gap but leave it out of the letter: hand the sentence to the user.
     return [f"The writer noticed a gap ({gap}) but the letter doesn't mention it. If you want to, add: “{line}”"]
+
+
+def _review(letter: dict, text: str) -> dict:
+    """What the writer decided and assumed for this letter, kept as data so the review screen can ask you about it."""
+    gap, line = (letter.get("main_gap") or "").strip(), (letter.get("gap_line") or "").strip()
+    said = bool(gap) and (not line or " ".join(line.lower().split())[:40] in " ".join((text or "").lower().split()))
+    return {"angle": (letter.get("angle") or "").strip(), "main_gap": gap, "gap_line": line, "gap_in_letter": said,
+            "assumed": [a.strip() for a in (letter.get("assumed") or []) if a and a.strip()][:6]}
+
+
+def _siblings_note(job: dict) -> str:
+    """Other applications to the same employer, so a new letter doesn't open and argue the same way."""
+    if not job.get("company_id"):
+        return ""
+    rows = db.q("SELECT a.letter, a.review, j.title FROM applications a JOIN jobs j ON j.id = a.job_id WHERE j.company_id = ? "
+                "AND j.id != ? AND a.letter IS NOT NULL ORDER BY a.id DESC LIMIT 4", (job["company_id"], job["id"]))
+    lines = []
+    for r in rows:
+        angle = (db.jload(r["review"], {}) or {}).get("angle") or ""
+        opening = next((s for s in voice.sentences(r["letter"] or "")[1:3] if len(s.split()) > 4), "")
+        lines.append(f"- {r['title']}: " + " | ".join(x for x in (angle, f"opens: “{opening[:160]}”" if opening else "") if x))
+    if not lines:
+        return ""
+    return ("The candidate has also applied to this employer for other jobs. The same people may read both letters, so "
+            "choose another angle and another opening than these:\n" + "\n".join(lines))
 
 
 def _assumed_notes(letter: dict) -> list[str]:
@@ -453,7 +480,8 @@ def draft(app_id: int, part: str = "both") -> dict:
     if part in ("letter", "both"):
         letter = llm.run("writing", "write_letter", system, _letter_task(job, language, app["instructions"]),
                          LETTER_SCHEMA, max_tokens=16000).data
-        patch.update({"subject": letter["subject"], "letter": strip_citations(letter["letter"])})
+        patch.update({"subject": letter["subject"], "letter": strip_citations(letter["letter"]),
+                      "review": db.jdump(_review(letter, letter["letter"]))})
         notes += _gap_note(letter) + _assumed_notes(letter) + letter["notes"]
         words = len(letter["letter"].split())
     if part in ("cv", "both"):
@@ -491,7 +519,7 @@ def revise(app_id: int, instructions: str, part: str = "letter") -> dict:
                 f"INSTRUCTIONS:\n{instructions}\n\nCURRENT SUBJECT: {app['subject'] or ''}\n\nCURRENT LETTER:\n"
                 f"<letter>\n{app['letter'] or ''}\n</letter>\n\n" + _job_context(job, language, None))
         d = llm.run("writing", "revise_letter", system, task, LETTER_SCHEMA, max_tokens=16000, effort="medium").data
-        patch.update({"subject": d["subject"], "letter": strip_citations(d["letter"])})
+        patch.update({"subject": d["subject"], "letter": strip_citations(d["letter"]), "review": db.jdump(_review(d, d["letter"]))})
         notes = _assumed_notes(d) + d["notes"]
     current = db.jload(app.get("cv_data"), None) if part in ("cv", "both") else None
     if current:  # a CV kept as data is revised as data

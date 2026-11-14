@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .. import (companies, config, cvdata, cvrender, db, exporter, ingest, insights, jobs, keychain, knowledge, llm, mailer,
-                profile, redo, retrieval, settings, sources, tasks, todos, tracker, voice, watch, writer)
+                profile, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
 HERE = Path(__file__).parent
@@ -391,14 +391,28 @@ def job_delete(request: Request, job_id: int):
 # Applications
 # ---------------------------------------------------------------------------------------
 
-APP_TABS = [("letter", "Letter"), ("claude", "Claude.ai"), ("cv", "CV"), ("check", "Fact check"), ("voice", "Voice"),
+APP_TABS = [("review", "Review"), ("letter", "Letter"), ("claude", "Claude.ai"), ("cv", "CV"), ("check", "Fact check"), ("voice", "Voice"),
             ("send", "Send"), ("timeline", "Timeline"), ("interview", "Interview prep"), ("history", "Versions")]
 
 
 @app.get("/applications/{app_id}")
-def application(request: Request, app_id: int, tab: str = "letter"):
+def application(request: Request, app_id: int, tab: str = ""):
     a = need(tracker.app_with_job(app_id))
     job = jobs.get(a["job_id"])
+    if tab not in dict(APP_TABS):  # a draft opens on the review screen; nothing to review yet opens on the letter
+        tab = "review" if (a["letter"] or a["cv"]) else "letter"
+    look = {}
+    if tab == "review":
+        waiting = [r["id"] for r in db.q(  # the same order as Today's "Waiting for your review": nearest deadline first
+            "SELECT a.id FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.status IN ('draft', 'ready') AND a.letter IS NOT NULL "
+            "ORDER BY CASE WHEN j.deadline IS NULL THEN 1 ELSE 0 END, j.deadline, a.updated_at DESC")]
+        at = waiting.index(app_id) if app_id in waiting else -1
+        look = {"questions": review.questions(a), "letter_html": review.marked(a["letter"], a),
+                "decided": db.jload(a.get("review"), {}) or {},
+                "siblings": db.q("SELECT a.id, j.title, a.status FROM applications a JOIN jobs j ON j.id = a.job_id "
+                                 "WHERE j.company_id = ? AND a.id != ? ORDER BY a.id DESC", (a["company_id"], app_id)) if a["company_id"] else [],
+                "waiting": {"total": len(waiting), "position": at + 1, "prev": waiting[at - 1] if at > 0 else None,
+                            "next": waiting[at + 1] if 0 <= at < len(waiting) - 1 else None}}
     claims = db.jload(a["claims"], {}) or {}
     ids = {i for c in claims.get("claims", []) for i in c.get("fact_ids", [])}
     facts = {f["id"]: f for f in db.q(f"SELECT id, title, organization, evidence FROM facts WHERE id IN ({','.join('?' * len(ids))})",
@@ -409,14 +423,14 @@ def application(request: Request, app_id: int, tab: str = "letter"):
             "check": llm.made_by(ref, ("claim_check",)), "prep": llm.made_by(ref, ("interview_prep",))}
     cv_data = db.jload(a.get("cv_data"), None)
     cv_pages, cv_error = 0, ""
-    if cv_data and tab == "cv":
+    if cv_data and tab in ("cv", "review"):
         try:
             cv_pages = cvrender.pages(cv_data, a["language"])
         except Exception as e:  # noqa: BLE001 - a CV that can't be typeset still has to be editable
             cv_error = str(e)[:300]
     return render(request, "application.html", a=a, job=job, tab=tab, tabs=APP_TABS, claims=claims, facts=facts, made=made,
                   cv_data=cv_data, cv_json=json.dumps(cv_data, ensure_ascii=False, indent=2) if cv_data else "",
-                  cv_pages=cv_pages, cv_error=cv_error, cv_base=cvdata.base(),
+                  cv_pages=cv_pages, cv_error=cv_error, cv_base=cvdata.base(), look=look,
                   prompt=prompt, prompt_words=len(prompt.split()),
                   v=db.jload(a["voice"], {}) or {}, notes=db.jload(a["writer_notes"], []) or [],
                   busy=tasks.active(ref=f"app:{app_id}"), error=tasks.last_error(f"app:{app_id}"),
@@ -470,7 +484,21 @@ async def application_revise(request: Request, app_id: int):
         return go(f"/applications/{app_id}?tab={part}", err="Write what you'd like changed.")
     tasks.enqueue("revise_application", {"application_id": app_id, "instructions": instructions, "part": part, **chosen_model(f)},
                   ref=f"app:{app_id}")
-    return go(f"/applications/{app_id}?tab={'cv' if part == 'cv' else 'letter'}", msg=with_model_msg(f, "Revising") + "…")
+    tab = "review" if f.get("from") == "review" else ("cv" if part == "cv" else "letter")
+    return go(f"/applications/{app_id}?tab={tab}", msg=with_model_msg(f, "Revising") + "…")
+
+
+@app.post("/applications/{app_id}/answers")
+async def application_answers(request: Request, app_id: int):
+    """Your answers to the review screen's questions: saved as facts, and the draft revised to match."""
+    f = await form(request)
+    a = need(tracker.app_with_job(app_id))
+    answers = {q["id"]: {"verdict": f.get(f"v_{q['id']}") or "", "text": f.get(f"t_{q['id']}") or ""} for q in review.questions(a)}
+    result = review.apply_answers(a, answers, chosen_model(f))
+    if not result["facts"] and not result["revised"]:
+        return go(f"/applications/{app_id}?tab=review", err="Answer at least one question first.")
+    saved = f"{result['facts']} answer{'s' if result['facts'] != 1 else ''} saved to your career database. " if result["facts"] else ""
+    return go(f"/applications/{app_id}?tab=review", msg=saved + ("Revising the draft to match…" if result["revised"] else "Checking the facts again…"))
 
 
 @app.post("/applications/{app_id}/redraft")
@@ -482,8 +510,8 @@ async def application_redraft(request: Request, app_id: int):
     payload = {"application_id": app_id, **({"part": part} if part != "both" else {}), **chosen_model(f)}
     tasks.enqueue("draft_application", payload, ref=f"app:{app_id}", dedupe=True)
     what = {"letter": "a fresh letter", "cv": "a fresh CV"}.get(part, "a fresh draft")
-    return go(f"/applications/{app_id}?tab={'cv' if part == 'cv' else 'letter'}",
-              msg=with_model_msg(f, f"Writing {what}") + ". The current one stays under Versions.")
+    tab = "review" if f.get("from") == "review" else ("cv" if part == "cv" else "letter")
+    return go(f"/applications/{app_id}?tab={tab}", msg=with_model_msg(f, f"Writing {what}") + ". The current one stays under Versions.")
 
 
 @app.post("/applications/{app_id}/manual-import")

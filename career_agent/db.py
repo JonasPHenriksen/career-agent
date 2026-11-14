@@ -288,6 +288,10 @@ MIGRATIONS: list[str] = [
     ALTER TABLE applications ADD COLUMN cv_data TEXT;
     ALTER TABLE app_versions ADD COLUMN cv_data TEXT;
     """,
+    # 5: what the writer decided and assumed for a draft (its angle, the gap, what it inferred), for the review screen
+    """
+    ALTER TABLE applications ADD COLUMN review TEXT;
+    """,
 ]
 
 

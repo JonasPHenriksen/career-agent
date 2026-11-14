@@ -127,6 +127,93 @@
   </div>
 </div>
 
+{% elif tab == 'review' %}
+{% set w = look.waiting %}
+{% if w.total > 1 %}
+<div class="row small review-bar"><span class="text-2">Draft {{ w.position }} of {{ w.total }} waiting for you</span><span class="spacer"></span>
+  {% if w.prev %}<a class="btn small ghost" href="/applications/{{ w.prev }}">← Previous</a>{% endif %}
+  {% if w.next %}<a class="btn small ghost" href="/applications/{{ w.next }}">Next →</a>{% endif %}</div>
+{% endif %}
+{% if look.siblings %}
+<div class="card warn" style="margin-bottom:1rem">You have {{ look.siblings|length }} other application{{ 's' if look.siblings|length > 1 }} for {{ a.company_name }}:
+  {% for sib in look.siblings %}<a href="/applications/{{ sib.id }}">{{ sib.title }}</a>{{ ', ' if not loop.last }}{% endfor %}.
+  The same people may read them, so check that they don't open and argue the same way.</div>
+{% endif %}
+<div class="review">
+  <section class="card pane" aria-label="The job post">
+    <div class="card-head"><h2>The job post</h2>{% if a.job_url %}<a class="small" href="{{ a.job_url }}" target="_blank" rel="noopener">Open the ad</a>{% endif %}</div>
+    {% if job.f.summary %}<p class="small">{{ job.f.summary }}</p>{% endif %}
+    {% if job.d.requirements %}<h3>Must-haves</h3><ul class="tight">{% for r in job.d.requirements %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+    {% if job.d.nice_to_have %}<h3>Nice to have</h3><ul class="tight">{% for r in job.d.nice_to_have %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+    {% if job.f.gaps %}<h3>Gaps the scoring saw</h3><ul class="tight">{% for g in job.f.gaps %}<li>{{ g.requirement }}{% if g.severity == 'major' %} <span class="pill warn">major</span>{% endif %}</li>{% endfor %}</ul>{% endif %}
+    <h3>The ad</h3>
+    <div class="ad-text">{{ job.description or 'The ad text was not saved.' }}</div>
+  </section>
+  <section class="card pane" aria-label="The letter">
+    <div class="card-head"><h2>Letter</h2><span class="small text-2">{{ (a.letter or '').split()|length }} words</span></div>
+    {% if look.decided.angle %}<p class="small text-2"><strong>The writer's angle:</strong> {{ look.decided.angle }}</p>{% endif %}
+    {% if a.subject %}<p class="small"><strong>{{ a.subject }}</strong></p>{% endif %}
+    <div class="letter-text">{{ look.letter_html|safe }}</div>
+    {% set cnt = claims.get('counts', {}) %}
+    <p class="small" style="margin-top:.8rem">{% if claims %}{% if cnt.get('unsupported') %}<span class="pill bad">{{ cnt.unsupported }} not backed</span> {% endif %}{% if cnt.get('partly') %}<span class="pill warn">{{ cnt.partly }} stretched</span> {% endif %}<span class="pill good">{{ cnt.get('supported', 0) }} backed</span>{% else %}<span class="text-2">Not fact-checked yet.</span>{% endif %}
+      {% if v.get('score') is not none %} <span class="pill">Voice {{ v.score }}</span>{% endif %}</p>
+    <div class="row" style="margin-top:.6rem"><a class="btn small" href="?tab=letter">Edit the letter</a><a class="btn small ghost" href="/applications/{{ a.id }}/export/letter.pdf?view=1" target="_blank">PDF</a><a class="btn small ghost" href="?tab=check">Fact check</a></div>
+  </section>
+  <section class="card pane" aria-label="The CV">
+    <div class="card-head"><h2>CV</h2></div>
+    {% if cv_data %}
+      {% if cv_error %}<p class="empty">The CV couldn't be typeset: {{ cv_error }}</p>{% endif %}
+      <div class="cv-pages">{% for n in range(1, cv_pages + 1) %}<img class="cv-page" src="/applications/{{ a.id }}/cv-page/{{ n }}.png?v={{ a.updated_at }}" alt="CV, page {{ n }}">{% endfor %}</div>
+    {% elif a.cv %}<div class="prose">{{ a.cv|md }}</div>
+    {% else %}<p class="empty">No CV yet.</p>{% endif %}
+    <div class="row" style="margin-top:.6rem"><a class="btn small" href="?tab=cv">Edit the CV</a>{% if a.cv %}<a class="btn small ghost" href="/applications/{{ a.id }}/export/cv.pdf?view=1" target="_blank">PDF</a>{% endif %}</div>
+  </section>
+</div>
+<div class="grid-2" style="margin-top:1rem">
+  <section class="card" id="questions">
+    <h2>Questions for you</h2>
+    {% if look.questions %}
+    <p class="small text-2">Only you know these. Your answers are saved as facts in your career database, so later drafts know them too, and this draft is revised to match.</p>
+    <form method="post" action="/applications/{{ a.id }}/answers">
+      {% for q in look.questions %}
+      <fieldset class="question">
+        <legend>{{ q.ask }}{% if q.where == 'cv' %} <span class="pill">CV</span>{% endif %}</legend>
+        <blockquote>{{ q.text }}</blockquote>
+        {% if q.detail %}<p class="small text-2">{{ q.detail }}</p>{% endif %}
+        <div class="row">
+          <label><input type="radio" name="v_{{ q.id }}" value="yes"> {{ q.yes }}</label>
+          <label><input type="radio" name="v_{{ q.id }}" value="no"> {{ q.no }}</label>
+          <label><input type="radio" name="v_{{ q.id }}" value="" checked> Skip</label>
+        </div>
+        <input type="text" name="t_{{ q.id }}" placeholder="Anything to add, in your own words (optional)" aria-label="More about: {{ q.text[:60] }}">
+      </fieldset>
+      {% endfor %}
+      <div class="row end" style="margin-top:.6rem">{{ model_picker() }}<button class="btn primary" data-busy="Saving…">Save answers and revise</button></div>
+    </form>
+    {% else %}<p class="empty">No open questions. The fact check found nothing unbacked, and the writer assumed nothing about you.</p>{% endif %}
+  </section>
+  <div class="stack">
+    <section class="card">
+      <h2>Ask for changes</h2>
+      <form method="post" action="/applications/{{ a.id }}/revise">
+        <input type="hidden" name="from" value="review">
+        <textarea name="instructions" rows="3" placeholder="e.g. Open with the EDI agent instead, and make it shorter." aria-label="What to change"></textarea>
+        <div class="row end" style="margin-top:.5rem"><select name="part" class="model-picker" aria-label="What to change"><option value="letter">the letter</option><option value="cv">the CV</option><option value="both">both</option></select>{{ model_picker() }}<button class="btn" data-busy="Revising…">Revise</button></div>
+      </form>
+    </section>
+    <section class="card">
+      <h2>Start over</h2>
+      <form method="post" action="/applications/{{ a.id }}/redraft" data-confirm="Write it again from scratch? The current draft is kept under Versions.">
+        <input type="hidden" name="from" value="review">
+        <div class="row end">{{ made_by(made.letter, 'Letter written') }}<select name="part" class="model-picker" aria-label="What to write again"><option value="both">letter and CV</option><option value="letter">letter only</option><option value="cv">CV only</option></select>{{ model_picker() }}<button class="btn small">Write again</button></div>
+      </form>
+    </section>
+    {% if notes %}<section class="card"><h2>Notes from the writer</h2><ul class="notes">{% for n in notes %}<li>{{ n }}</li>{% endfor %}</ul></section>{% endif %}
+    <section class="card"><h2>Happy with it?</h2><div class="row"><a class="btn primary" href="?tab=send">Go to Send</a>
+      <form method="post" action="/applications/{{ a.id }}/status" class="inline"><input type="hidden" name="status" value="ready"><button class="btn">Mark ready to send</button></form></div></section>
+  </div>
+</div>
+
 {% elif tab == 'cv' %}
 <div class="grid-2">
   <section class="card">

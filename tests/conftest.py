@@ -178,7 +178,8 @@ class FakeProvider:
                     "letter": "Kære Mette\n\nJeg søger stillingen som product owner hos FinPay. I Danske Bank har jeg ansvaret for "
                               "betalingsfunktionerne i mobilbanken, og vi har fået supporthenvendelserne ned med 30 %.\n\n"
                               "Jeg har ledet et team på 12 udviklere. Ledte et team på 8 udviklere.\n\nMed venlig hilsen\nSara Lund",
-                    "used_fact_ids": [1, 3], "notes": ["Check the team size."]}
+                    "used_fact_ids": [1, 3], "assumed": ["You want to work with payments again."],
+                    "angle": "Payments product owner with a measurable result.", "notes": ["Check the team size."]}
         if schema is writer.CV_SCHEMA:
             return {"cv_markdown": "# Product Owner, betalinger\nErfaren product owner.\n\n## Erfaring\n### Product Owner — Danske Bank\n"
                                    "2022 – nu · København\n- Reducerede supporthenvendelser med **30 %**\n\n## Kompetencer\nScrum · SQL",
