@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from datetime import date
 
-from . import db, jobs, knowledge, llm, notify, privacy, profile, retrieval, settings, tracker, voice
+from . import cvdata, db, jobs, knowledge, llm, notify, privacy, profile, retrieval, settings, tracker, voice
 from .llm import jsonutil as J
 
 LANG_NAMES = {"da": "Danish", "en": "English", "sv": "Swedish", "no": "Norwegian", "nb": "Norwegian",
@@ -251,6 +251,34 @@ def _cv_task(job: dict, language: str, instructions: str | None) -> str:
             "Return cv_markdown, used_fact_ids and notes.\n\n" + _job_context(job, language, instructions))
 
 
+def _cv_tailor_task(job: dict, language: str, instructions: str | None, base: dict, current: dict | None = None) -> str:
+    """Tailor the candidate's own CV (the base) with small changes, or revise an already tailored one."""
+    import json
+
+    lang = LANG_NAMES.get(language, language)
+    doc = json.dumps(current or base, ensure_ascii=False, indent=1)
+    what = ("the CV as it is now, already tailored for this job" if current else "the candidate's own CV, the base")
+    return (f"Tailor the candidate's CV for the job below.\n\n{cvdata.TAILOR_RULES.format(language=lang)}\n\n"
+            f"Return cv, changes, used_fact_ids and notes.\n\nTHE CV ({what}):\n<cv>\n{doc}\n</cv>\n\n"
+            + _job_context(job, language, instructions))
+
+
+def tailor_cv(job: dict, language: str, instructions: str | None, system: str, purpose: str = "write_cv",
+              current: dict | None = None, effort: str | None = None) -> tuple[dict, list[str]] | None:
+    """The CV for this job as data, made from your base CV, with the list of changes. None if you have no base CV."""
+    base = cvdata.ensure_base()
+    if not base:
+        return None
+    task = _cv_tailor_task(job, language, instructions, base["data"], current)
+    d = llm.run("writing", purpose, system, task, cvdata.TAILOR_SCHEMA, max_tokens=16000, effort=effort).data
+    data = cvdata.clean(d["cv"])
+    if cvdata.is_empty(data):  # a model that returned nothing usable: keep what we had
+        data = current or cvdata.clean(base["data"])
+    data["language"] = language
+    changes = [f"CV: {c.strip()}" for c in d["changes"][:8] if c.strip()] or ["CV: your base CV, unchanged."]
+    return data, changes + d["notes"]
+
+
 # ---------------------------------------------------------------------------------------
 # Claude.ai by copy and paste: no API key, no per-call cost
 # ---------------------------------------------------------------------------------------
@@ -342,6 +370,7 @@ def import_manual(app_id: int, text: str) -> dict:
         patch["subject"] = d["subject"]
     if d["cv"]:
         patch["cv"] = strip_citations(d["cv"])
+        patch["cv_data"] = None  # pasted as text: shown and exported as text
     if not app["language"]:
         patch["language"] = choose_language(jobs.get(app["job_id"]))
     notes = _gap_note({"main_gap": d["main_gap"], "gap_line": "", "letter": d["letter"]}) + d["notes"]
@@ -370,10 +399,10 @@ def _assumed_notes(letter: dict) -> list[str]:
 
 
 def _save_version(app_id: int, label: str) -> None:
-    a = db.q1("SELECT subject, letter, cv FROM applications WHERE id = ?", (app_id,))
+    a = db.q1("SELECT subject, letter, cv, cv_data FROM applications WHERE id = ?", (app_id,))
     if a and (a["letter"] or a["cv"]):
         db.insert("app_versions", {"application_id": app_id, "label": label, "subject": a["subject"],
-                                   "letter": a["letter"], "cv": a["cv"], "created_at": db.now()})
+                                   "letter": a["letter"], "cv": a["cv"], "cv_data": a["cv_data"], "created_at": db.now()})
 
 
 def draft(app_id: int) -> dict:
@@ -393,11 +422,18 @@ def draft(app_id: int) -> dict:
     system = writer_system(language, job)
     letter = llm.run("writing", "write_letter", system, _letter_task(job, language, app["instructions"]),
                      LETTER_SCHEMA, max_tokens=16000).data
-    cv = llm.run("writing", "write_cv", system, _cv_task(job, language, app["instructions"]),
-                 CV_SCHEMA, max_tokens=16000).data
+    tailored = tailor_cv(job, language, app["instructions"], system)
+    if tailored:  # your own CV with small changes for this job
+        cv_data, cv_notes = tailored
+        cv_text = cvdata.to_markdown(cv_data)
+    else:  # no CV of yours to start from: one is written from the career database
+        cv = llm.run("writing", "write_cv", system, _cv_task(job, language, app["instructions"]),
+                     CV_SCHEMA, max_tokens=16000).data
+        cv_data, cv_notes, cv_text = None, cv["notes"], strip_citations(cv["cv_markdown"])
     db.update("applications", app_id, {
-        "subject": letter["subject"], "letter": strip_citations(letter["letter"]), "cv": strip_citations(cv["cv_markdown"]),
-        "writer_notes": db.jdump(_gap_note(letter) + _assumed_notes(letter) + letter["notes"] + cv["notes"]),
+        "subject": letter["subject"], "letter": strip_citations(letter["letter"]), "cv": cv_text,
+        "cv_data": db.jdump(cv_data) if cv_data else None,
+        "writer_notes": db.jdump(_gap_note(letter) + _assumed_notes(letter) + letter["notes"] + cv_notes),
         "status": "draft", "updated_at": db.now(),
     })
     _save_version(app_id, "New draft" if rewrite else "First draft")
@@ -422,7 +458,12 @@ def revise(app_id: int, instructions: str, part: str = "letter") -> dict:
         d = llm.run("writing", "revise_letter", system, task, LETTER_SCHEMA, max_tokens=16000, effort="medium").data
         patch.update({"subject": d["subject"], "letter": strip_citations(d["letter"])})
         notes = _assumed_notes(d) + d["notes"]
-    if part in ("cv", "both"):
+    current = db.jload(app.get("cv_data"), None) if part in ("cv", "both") else None
+    if current:  # a CV kept as data is revised as data
+        cv_data, cv_notes = tailor_cv(job, language, instructions, system, purpose="revise_cv", current=current, effort="medium")
+        patch.update({"cv": cvdata.to_markdown(cv_data), "cv_data": db.jdump(cv_data)})
+        notes = notes + cv_notes if part == "both" else cv_notes
+    elif part in ("cv", "both"):
         task = (f"Revise the tailored CV below following the candidate's instructions. Keep it true to the "
                 f"database and keep the same Markdown structure.\n\nINSTRUCTIONS:\n{instructions}\n\nCURRENT CV:\n"
                 f"<cv>\n{app['cv'] or ''}\n</cv>\n\n" + _job_context(job, language, None))

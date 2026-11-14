@@ -12,7 +12,7 @@ os.environ.pop("ANTHROPIC_API_KEY", None)
 
 import pytest  # noqa: E402
 
-from career_agent import config, db, jobs, llm, profile, settings, sources, tracker, writer  # noqa: E402
+from career_agent import config, cvdata, db, jobs, llm, profile, settings, sources, tracker, writer  # noqa: E402
 from career_agent.llm.providers import ProviderReply  # noqa: E402
 
 CV_TEXT = """Sara Lund
@@ -119,6 +119,27 @@ class FakeProvider:
                     "summary": "Test document.", "written_by_candidate": True,
                     "target_company": "" if is_cv else "Lunar", "target_role": "" if is_cv else "Product owner",
                     "facts": _facts_for(user)}
+        if schema is cvdata.CV_SCHEMA:  # the CV read into data, as written (and never with contact details)
+            assert "sara@example.com" not in user, "contact details must not reach the model"
+            return {"language": "da", "label": "Projektleder og product owner", "personal": [], "summary": "",
+                    "titles": {"work": "Erfaring", "education": "Uddannelse", "skills": "Kompetencer"},
+                    "work": [{"name": "Danske Bank", "position": "Product Owner", "location": "København", "start": "2022", "end": "nu",
+                              "highlights": ["Ansvarlig for mobilbankens betalingsfunktioner med 2 mio. brugere.",
+                                             "Reducerede antallet af supporthenvendelser om betalinger med 30 % på et år."]},
+                             {"name": "Novo Nordisk", "position": "Projektleder", "location": "Bagsværd", "start": "2018", "end": "2022",
+                              "highlights": ["Ledte digitaliseringsprojekter med et samlet budget på 12 mio. kr."]}],
+                    "education": [{"institution": "Copenhagen Business School", "degree": "Cand.merc.it", "area": "", "location": "",
+                                   "start": "2016", "end": "2018", "highlights": []}],
+                    "projects": [], "skills": [{"name": "", "keywords": ["Scrum", "Jira", "stakeholder management", "SQL", "Figma"]}],
+                    "languages": [{"language": "dansk", "fluency": "modersmål"}, {"language": "engelsk", "fluency": "flydende"}],
+                    "interests": [], "certificates": []}
+        if schema is cvdata.TAILOR_SCHEMA:  # the base with one small change: the second point of the first job goes first
+            cv = json.loads(user.split("<cv>\n", 1)[1].split("\n</cv>", 1)[0])
+            if "Shorter" in user:
+                cv["work"][0]["highlights"] = cv["work"][0]["highlights"][:1]
+                return {"cv": cv, "changes": ["Kept one point per job."], "used_fact_ids": [], "notes": []}
+            cv["work"][0]["highlights"].reverse()
+            return {"cv": cv, "changes": ["Put the support result first: the ad is about payments."], "used_fact_ids": [1], "notes": []}
         if schema is profile.CONSOLIDATE_SCHEMA:
             import re
             ids = {m.group(2): int(m.group(1)) for m in re.finditer(r"\[#(\d+)\] (\w+) \| ", user)}

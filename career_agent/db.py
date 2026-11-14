@@ -274,6 +274,20 @@ MIGRATIONS: list[str] = [
     ALTER TABLE llm_calls ADD COLUMN ref TEXT;
     CREATE INDEX IF NOT EXISTS llm_calls_ref ON llm_calls(ref);
     """,
+    # 4: the CV as data: base CVs (your own CV, transcribed) and the tailored CV of each application
+    """
+    CREATE TABLE IF NOT EXISTS cv_bases (
+      id           INTEGER PRIMARY KEY,
+      document_id  INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+      title        TEXT,
+      language     TEXT,
+      data         TEXT NOT NULL,
+      model        TEXT,
+      created_at   TEXT NOT NULL
+    );
+    ALTER TABLE applications ADD COLUMN cv_data TEXT;
+    ALTER TABLE app_versions ADD COLUMN cv_data TEXT;
+    """,
 ]
 
 

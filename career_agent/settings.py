@@ -58,6 +58,15 @@ DEFAULTS: dict[str, Any] = {
         "accent_color": "#1f4e79",
         "extra_banned_phrases": "",
     },
+    "cv": {
+        "base_id": None,  # which base CV (table cv_bases) tailored CVs start from
+        "primary": "#2254bf",  # the sidebar's colour; the light background is derived from it
+        "font": "IBM Plex Serif",  # falls back to Charter or Georgia when it isn't installed
+        "size": 9.6,  # body text size in points
+        "sidebar": 34,  # sidebar width in percent
+        "sidebar_order": ["skills", "certificates", "languages", "interests"],
+        "main_order": ["work", "education", "projects"],
+    },
     "knowledge": {
         "folder": "",  # the agent folder, e.g. ~/Nextcloud/Agents; "" = use <Nextcloud>/Agents if it exists
         "use": True,  # put its profile, summaries and style guides into the writing prompts

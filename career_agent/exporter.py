@@ -244,6 +244,13 @@ def letter_pdf(app: dict) -> bytes:
 
 
 def cv_pdf(app: dict) -> bytes:
+    data = app.get("cv_data")
+    if data:
+        import json
+
+        from . import cvrender
+
+        return cvrender.pdf(json.loads(data) if isinstance(data, str) else data, app.get("language"))
     p = settings.get("profile")
     blocks = parse_cv(app.get("cv") or "")
     headline = next((t for k, t in blocks if k == "h1"), p.get("headline") or "")

@@ -36,6 +36,7 @@ TASK_LABELS = {
     "scan_folder": "Checking a watched folder",
     "embed_index": "Indexing documents for search",
     "pull_model": "Downloading the search model",
+    "build_cv_base": "Reading your CV as the base for tailored CVs",
 }
 
 _wake = threading.Event()
@@ -55,7 +56,7 @@ def enqueue(kind: str, payload: dict | None = None, ref: str | None = None, dedu
 
 
 def _handlers() -> dict:
-    from . import jobs, profile, retrieval, sources, tracker, voice, watch, writer
+    from . import cvdata, jobs, profile, retrieval, sources, tracker, voice, watch, writer
 
     def wait_for_analyses() -> None:
         """Let in-flight document analyses finish so we see everything."""
@@ -101,6 +102,7 @@ def _handlers() -> dict:
         "scan_folder": lambda p: watch.scan(p["folder_id"]),
         "embed_index": lambda p: retrieval.embed_pending(),
         "pull_model": lambda p: _pull_model(p["model"]),
+        "build_cv_base": lambda p: cvdata.build_base(p["doc_id"]),
     }
 
 
@@ -173,7 +175,7 @@ def is_transient(e: Exception) -> bool:
 # The queue holds those tasks instead of using up their retries, and carries on when it's back.
 # ---------------------------------------------------------------------------------------
 
-WRITING_TASKS = {"draft_application", "revise_application", "interview_prep", "followup", "build_style"}
+WRITING_TASKS = {"draft_application", "revise_application", "interview_prep", "followup", "build_style", "build_cv_base"}
 FETCH_TASKS = {"poll_source", "parse_job"}
 NO_MODEL_TASKS = {"maintenance", "scan_folder", "embed_index"}
 NEED_LABELS = {"ollama": "Ollama (the local models)", "network": "an internet connection",

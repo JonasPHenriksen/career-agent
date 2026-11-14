@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import sqlite3
 import tempfile
 import zipfile
@@ -16,7 +17,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import (companies, config, db, exporter, ingest, insights, jobs, keychain, knowledge, llm, mailer,
+from .. import (companies, config, cvdata, cvrender, db, exporter, ingest, insights, jobs, keychain, knowledge, llm, mailer,
                 profile, redo, retrieval, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
@@ -402,7 +403,16 @@ def application(request: Request, app_id: int, tab: str = "letter"):
     ref = f"app:{app_id}"
     made = {"letter": llm.made_by(ref, ("write_letter", "revise_letter")), "cv": llm.made_by(ref, ("write_cv", "revise_cv")),
             "check": llm.made_by(ref, ("claim_check",)), "prep": llm.made_by(ref, ("interview_prep",))}
+    cv_data = db.jload(a.get("cv_data"), None)
+    cv_pages, cv_error = 0, ""
+    if cv_data and tab == "cv":
+        try:
+            cv_pages = cvrender.pages(cv_data, a["language"])
+        except Exception as e:  # noqa: BLE001 - a CV that can't be typeset still has to be editable
+            cv_error = str(e)[:300]
     return render(request, "application.html", a=a, job=job, tab=tab, tabs=APP_TABS, claims=claims, facts=facts, made=made,
+                  cv_data=cv_data, cv_json=json.dumps(cv_data, ensure_ascii=False, indent=2) if cv_data else "",
+                  cv_pages=cv_pages, cv_error=cv_error, cv_base=cvdata.base(),
                   prompt=prompt, prompt_words=len(prompt.split()),
                   v=db.jload(a["voice"], {}) or {}, notes=db.jload(a["writer_notes"], []) or [],
                   busy=tasks.active(ref=f"app:{app_id}"), error=tasks.last_error(f"app:{app_id}"),
@@ -432,8 +442,16 @@ async def application_save(request: Request, app_id: int):
     if "cv" in f:
         patch["cv"] = f["cv"]
         tab = "cv"
+    if "cv_data" in f:  # the CV edited as data: it has to be valid before it replaces what's there
+        tab = "cv"
+        try:
+            data = cvdata.clean(json.loads(f["cv_data"]))
+            cvrender.render(data, a["language"])
+        except Exception as e:  # noqa: BLE001 - bad JSON or a CV that can't be typeset
+            return go(f"/applications/{app_id}?tab=cv", err=f"That isn't a CV I can use, so nothing was saved: {str(e)[:160]}")
+        patch.update({"cv_data": db.jdump(data), "cv": cvdata.to_markdown(data)})
     db.insert("app_versions", {"application_id": app_id, "label": "Before your edit", "subject": a["subject"],
-                               "letter": a["letter"], "cv": a["cv"], "created_at": db.now()})
+                               "letter": a["letter"], "cv": a["cv"], "cv_data": a["cv_data"], "created_at": db.now()})
     db.update("applications", app_id, patch)
     db.update("applications", app_id, {"voice": db.jdump(voice.check(patch.get("letter", a["letter"]) or "", a["language"]))})
     return go(f"/applications/{app_id}?tab={tab}", msg="Saved. Run the fact check again when you're done editing.")
@@ -483,6 +501,14 @@ async def application_check(request: Request, app_id: int):
 def application_export(request: Request, app_id: int, name: str):
     a = need(tracker.app_with_job(app_id))
     kind, _, fmt = name.partition(".")
+    if (kind, fmt) == ("cv", "json"):  # the open JSON Resume format, for other résumé tools
+        data = db.jload(a.get("cv_data"), None)
+        if not data:
+            return go(f"/applications/{app_id}?tab=cv", err="This CV is kept as text, so there is no data file for it.")
+        body = json.dumps(cvdata.to_json_resume(data), ensure_ascii=False, indent=2)
+        filename = exporter.filename("cv", "json", a.get("company_name"), a.get("language"))
+        return Response(body, media_type="application/json",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"})
     if kind not in ("letter", "cv") or fmt not in ("pdf", "docx"):
         raise HTTPException(404)
     if not a.get(kind):
@@ -492,6 +518,84 @@ def application_export(request: Request, app_id: int, name: str):
     disposition = "inline" if fmt == "pdf" and request.query_params.get("view") else "attachment"
     return Response(data, media_type=media,
                     headers={"Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(filename)}"})
+
+
+def _png(data: dict | None, language: str | None, page: int) -> Response:
+    image = cvrender.png(data, language, page) if data else None
+    if image is None:
+        raise HTTPException(404)
+    return Response(image, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/applications/{app_id}/cv-page/{page}.png")
+def application_cv_page(app_id: int, page: int):
+    a = need(db.q1("SELECT cv_data, language FROM applications WHERE id = ?", (app_id,)))
+    return _png(db.jload(a["cv_data"], None), a["language"], page)
+
+
+# ---- Your CV: the base that tailored CVs start from, and how CVs look ----
+
+@app.post("/cv/base")
+async def cv_base_build(request: Request):
+    f = await form(request)
+    doc = need(db.q1("SELECT id FROM documents WHERE id = ? AND kind = 'cv'", (int(f.get("doc_id") or 0),)))
+    tasks.enqueue("build_cv_base", {"doc_id": doc["id"], **chosen_model(f)}, ref="cv-base", dedupe=False)
+    return go("/profile?tab=cv", msg="Reading that CV. It becomes your base when it's done.")
+
+
+@app.post("/cv/base/{base_id}/use")
+def cv_base_use(base_id: int):
+    need(db.q1("SELECT id FROM cv_bases WHERE id = ?", (base_id,)))
+    settings.update("cv", {"base_id": base_id})
+    return go("/profile?tab=cv", msg="That is now the CV new applications start from.")
+
+
+@app.post("/cv/base/{base_id}/save")
+async def cv_base_save(request: Request, base_id: int):
+    f = await form(request)
+    need(db.q1("SELECT id FROM cv_bases WHERE id = ?", (base_id,)))
+    try:
+        data = cvdata.clean(json.loads(f.get("data") or ""))
+        cvrender.render(data)
+    except Exception as e:  # noqa: BLE001
+        return go("/profile?tab=cv", err=f"That isn't a CV I can use, so nothing was saved: {str(e)[:160]}")
+    cvdata.save_base(base_id, data)
+    return go("/profile?tab=cv", msg="Base CV saved.")
+
+
+@app.post("/cv/design")
+async def cv_design(request: Request):
+    f = await form(request)
+    patch: dict = {"primary": (f.get("primary") or "").strip(), "font": (f.get("font") or "").strip()}
+    for key, cast in (("size", float), ("sidebar", float)):
+        try:
+            patch[key] = cast(f.get(key) or 0) or settings.DEFAULTS["cv"][key]
+        except ValueError:
+            pass
+    for key in ("sidebar_order", "main_order"):
+        wanted = [x.strip() for x in (f.get(key) or "").replace(",", " ").split() if x.strip()]
+        if wanted:
+            patch[key] = wanted
+    settings.update("cv", patch)
+    return go("/profile?tab=cv", msg="CV design saved. Every CV uses it from now on.")
+
+
+@app.get("/cv/base/{base_id}/page/{page}.png")
+def cv_base_page(base_id: int, page: int):
+    b = need(cvdata.base(base_id))
+    return _png(b["data"], b["language"], page)
+
+
+@app.get("/cv/base/{base_id}/cv.{fmt}")
+def cv_base_export(base_id: int, fmt: str):
+    b = need(cvdata.base(base_id))
+    if fmt == "pdf":
+        return Response(cvrender.pdf(b["data"], b["language"]), media_type="application/pdf",
+                        headers={"Content-Disposition": "inline; filename=cv.pdf"})
+    if fmt == "json":
+        return Response(json.dumps(cvdata.to_json_resume(b["data"]), ensure_ascii=False, indent=2), media_type="application/json",
+                        headers={"Content-Disposition": "attachment; filename=cv.json"})
+    raise HTTPException(404)
 
 
 @app.post("/applications/{app_id}/mail")
@@ -583,8 +687,9 @@ def application_restore(request: Request, app_id: int, version_id: int):
     v = need(db.q1("SELECT * FROM app_versions WHERE id = ? AND application_id = ?", (version_id, app_id)))
     a = db.q1("SELECT * FROM applications WHERE id = ?", (app_id,))
     db.insert("app_versions", {"application_id": app_id, "label": "Before restore", "subject": a["subject"],
-                               "letter": a["letter"], "cv": a["cv"], "created_at": db.now()})
-    db.update("applications", app_id, {"subject": v["subject"], "letter": v["letter"], "cv": v["cv"], "updated_at": db.now()})
+                               "letter": a["letter"], "cv": a["cv"], "cv_data": a["cv_data"], "created_at": db.now()})
+    db.update("applications", app_id, {"subject": v["subject"], "letter": v["letter"], "cv": v["cv"],
+                                       "cv_data": v["cv_data"], "updated_at": db.now()})
     return go(f"/applications/{app_id}", msg="Version restored.")
 
 
@@ -655,7 +760,19 @@ def profile_page(request: Request, tab: str = "about"):
     n_docs = sum(1 for r in active_rows if r["kind"] == "analyze_document")
     style_busy = any(r["kind"] == "build_style" for r in active_rows)
     busy = len(active_rows)
-    return render(request, "profile.html", tab=tab, n_docs=n_docs, style_busy=style_busy, levels=profile.LEVELS,
+    cv = {}
+    if tab == "cv":
+        main = cvdata.base()
+        pages, cv_error = 0, ""
+        if main:
+            try:
+                pages = cvrender.pages(main["data"], main["language"])
+            except Exception as e:  # noqa: BLE001
+                cv_error = str(e)[:300]
+        cv = {"main": main, "bases": cvdata.bases(), "docs": cvdata.cv_documents(), "pages": pages, "error": cv_error,
+              "design": settings.get("cv"), "json": json.dumps(main["data"], ensure_ascii=False, indent=2) if main else "",
+              "busy": tasks.active(ref="cv-base"), "task_error": tasks.last_error("cv-base")}
+    return render(request, "profile.html", tab=tab, n_docs=n_docs, style_busy=style_busy, levels=profile.LEVELS, cv=cv,
                   made_style=llm.made_by("style", ("style_guide",)),
                   tidy_busy=any(r["kind"] == "consolidate_facts" for r in active_rows), p=settings.get("profile"), docs=docs, grouped=grouped,
                   kinds=profile.KINDS, kind_labels=profile.KIND_LABELS, outcomes=profile.OUTCOMES,

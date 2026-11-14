@@ -36,6 +36,7 @@ from career_agent import config, db, jobs, llm, settings, tasks, voice, writer  
 CONFIGS = {
     "haiku-xhigh": ("claude_code", "haiku", "xhigh"),
     "sonnet-high": ("claude_code", "sonnet", "high"),
+    "sonnet-xhigh": ("claude_code", "sonnet", "xhigh"),
     "opus-low": ("claude_code", "opus", "low"),
     "opus-medium": ("claude_code", "opus", "medium"),
     "opus-high": ("claude_code", "opus", "high"),

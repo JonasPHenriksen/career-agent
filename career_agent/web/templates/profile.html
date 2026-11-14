@@ -9,7 +9,7 @@
 {% if busy %}{% include "partials/profile_progress.html" %}{% endif %}
 
 <nav class="tabs">
-  {% for key, label in [('about','About you'),('documents','Documents'),('facts','Career database'),('style','Writing style')] %}
+  {% for key, label in [('about','About you'),('documents','Documents'),('facts','Career database'),('cv','Your CV'),('style','Writing style')] %}
   <a href="/profile?tab={{ key }}" class="{{ 'active' if tab == key }}">{{ label }}{% if key == 'documents' %}<span class="count">{{ docs|length }}</span>{% elif key == 'facts' %}<span class="count">{{ grouped|map(attribute=2)|map('length')|sum }}</span>{% endif %}</a>
   {% endfor %}
 </nav>
@@ -181,6 +181,61 @@
   <p class="empty">No documents yet. The more you give it (CVs, applications you've written, reference letters, project reports, emails), the better it knows what you've done and how you write.</p>
   {% endif %}
 </section>
+
+{% elif tab == 'cv' %}
+<div class="grid-2">
+  <div>
+    <section class="card" style="margin-bottom:1rem">
+      <h2>The CV every application starts from</h2>
+      <p class="small text-2">Pick one of your own CVs. It is read once into data, word for word, and each job's CV is that base with small changes: the most relevant points first, a point left out, the headline turned towards the job. Your name and contact details come from About you and never go to a model.</p>
+      {% if cv.busy %}<p><span class="spinner" aria-hidden="true"></span> Reading your CV…</p>{% endif %}
+      {% if cv.task_error %}<p class="small" style="color:var(--bad)">{{ cv.task_error.error }}</p>{% endif %}
+      {% if cv.docs %}
+      <form method="post" action="/cv/base" class="row">
+        <select name="doc_id" aria-label="Which CV">{% for d in cv.docs %}<option value="{{ d.id }}">{{ d.filename }}{% if d.doc_date %} · {{ d.doc_date }}{% endif %}{% if d.language %} · {{ d.language }}{% endif %}</option>{% endfor %}</select>
+        {{ model_picker() }}<button class="btn primary" data-busy="Reading…">Use as my base CV</button>
+      </form>
+      {% else %}<p class="empty">Import a CV under Documents first.</p>{% endif %}
+      {% if cv.bases %}
+      <ul class="list" style="margin-top:.8rem">{% for b in cv.bases %}
+        <li><div class="grow"><span class="title">{{ b.title }}</span><div class="small text-2">{{ b.filename or 'document removed' }} · {{ b.language }} · read by {{ b.model or '?' }}</div></div>
+          {% if cv.main and b.id == cv.main.id %}<span class="pill good">in use</span>{% else %}<form method="post" action="/cv/base/{{ b.id }}/use" class="inline"><button class="btn small">Use this one</button></form>{% endif %}</li>
+      {% endfor %}</ul>
+      {% endif %}
+    </section>
+    <section class="card" style="margin-bottom:1rem">
+      <h2>How CVs look</h2>
+      <form method="post" action="/cv/design">
+        <div class="fields-2">
+          <div class="field"><label for="cv_primary">Colour</label><input id="cv_primary" name="primary" type="color" value="{{ cv.design.primary }}"></div>
+          <div class="field"><label for="cv_font">Font <span class="hint">· must be installed on this Mac</span></label><input id="cv_font" name="font" type="text" value="{{ cv.design.font }}"></div>
+          <div class="field"><label for="cv_size">Text size (points)</label><input id="cv_size" name="size" type="number" step="0.1" min="8" max="11.5" value="{{ cv.design.size }}"></div>
+          <div class="field"><label for="cv_sidebar">Sidebar width (%)</label><input id="cv_sidebar" name="sidebar" type="number" step="1" min="24" max="42" value="{{ cv.design.sidebar }}"></div>
+          <div class="field"><label for="cv_main_order">Main column, in order <span class="hint">· work, education, projects</span></label><input id="cv_main_order" name="main_order" type="text" value="{{ cv.design.main_order|join(', ') }}"></div>
+          <div class="field"><label for="cv_side_order">Sidebar, in order <span class="hint">· skills, certificates, languages, interests</span></label><input id="cv_side_order" name="sidebar_order" type="text" value="{{ cv.design.sidebar_order|join(', ') }}"></div>
+        </div>
+        <div class="row end"><button class="btn primary">Save design</button></div>
+      </form>
+    </section>
+    {% if cv.main %}
+    <section class="card">
+      <h2>Correct the base CV</h2>
+      <p class="small text-2">If the reading got a line wrong or in the wrong place, fix it here. It is the data every tailored CV starts from.</p>
+      <form method="post" action="/cv/base/{{ cv.main.id }}/save">
+        <textarea name="data" class="editor code" spellcheck="false" aria-label="Base CV data">{{ cv.json }}</textarea>
+        <div class="row" style="margin-top:.5rem"><button class="btn">Save base CV</button><span class="spacer"></span>
+          <a class="btn ghost" href="/cv/base/{{ cv.main.id }}/cv.pdf" target="_blank">Open PDF</a>
+          <a class="btn ghost" href="/cv/base/{{ cv.main.id }}/cv.json">Download JSON</a></div>
+      </form>
+    </section>
+    {% endif %}
+  </div>
+  <section class="cv-pages" aria-label="Base CV preview">
+    {% if cv.error %}<p class="empty">The CV couldn't be typeset: {{ cv.error }}</p>{% endif %}
+    {% if cv.main %}{% for n in range(1, cv.pages + 1) %}<img class="cv-page" src="/cv/base/{{ cv.main.id }}/page/{{ n }}.png?v={{ range(100000)|random }}" alt="Base CV, page {{ n }}">{% endfor %}
+    {% else %}<p class="empty">No base CV yet. Pick one of your CVs on the left.</p>{% endif %}
+  </section>
+</div>
 
 {% elif tab == 'facts' %}
 <div class="split">

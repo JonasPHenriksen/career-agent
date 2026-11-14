@@ -130,6 +130,28 @@
 {% elif tab == 'cv' %}
 <div class="grid-2">
   <section class="card">
+    {% if cv_data %}
+    <p class="small text-2">This is your own CV{% if cv_base %} (<a href="/profile?tab=cv">{{ cv_base.title }}</a>){% endif %} with small changes for this job. What changed is listed under Letter → Notes from the writer.</p>
+    <form method="post" action="/applications/{{ a.id }}/revise">
+      <input type="hidden" name="part" value="cv">
+      <label for="cvinstr">Ask for changes</label>
+      <div class="chips">{% for c in ['Fit it on one page', 'Put the most relevant points first', 'Shorter bullets', 'Go back to my base CV'] %}<button type="button" class="chip" data-fill="#cvinstr" data-text="{{ c }}.">{{ c }}</button>{% endfor %}</div>
+      <textarea id="cvinstr" name="instructions" rows="3"></textarea>
+      <div class="row end" style="margin-top:.5rem"><button class="btn" data-busy="Revising…">Revise CV</button></div>
+    </form>
+    <div class="row" style="margin-top:1rem">
+      <a class="btn primary" href="/applications/{{ a.id }}/export/cv.pdf">Download PDF</a>
+      <a class="btn ghost" href="/applications/{{ a.id }}/export/cv.pdf?view=1" target="_blank">Open PDF</a>
+      <a class="btn ghost" href="/applications/{{ a.id }}/export/cv.json" title="The open JSON Resume format, which tools like rxresu.me can import">Download JSON</a>
+    </div>
+    <details style="margin-top:1rem"><summary>Edit the CV's data yourself</summary>
+      <form method="post" action="/applications/{{ a.id }}/save">
+        <div class="field"><label for="cv_data">CV data <span class="hint">· JSON; reorder, remove or reword, then save. Colour and layout are under Profile → Your CV</span></label>
+          <textarea id="cv_data" name="cv_data" class="editor code" spellcheck="false">{{ cv_json }}</textarea></div>
+        <div class="row"><button class="btn">Save edits</button></div>
+      </form>
+    </details>
+    {% else %}
     <form method="post" action="/applications/{{ a.id }}/save">
       <div class="field"><label for="cv">Tailored CV <span class="hint">· Markdown: # headline, ## section, ### Role — Employer, - bullet</span></label>
         <textarea id="cv" name="cv" class="editor code">{{ a.cv or '' }}</textarea></div>
@@ -142,8 +164,16 @@
       <textarea id="cvinstr" name="instructions" rows="3"></textarea>
       <div class="row end" style="margin-top:.5rem"><button class="btn" data-busy="Revising…">Revise CV</button></div>
     </form>
+    {% endif %}
   </section>
+  {% if cv_data %}
+  <section class="cv-pages" aria-label="CV preview">
+    {% if cv_error %}<p class="empty">The CV couldn't be typeset: {{ cv_error }}</p>{% endif %}
+    {% for n in range(1, cv_pages + 1) %}<img class="cv-page" src="/applications/{{ a.id }}/cv-page/{{ n }}.png?v={{ a.updated_at }}" alt="CV, page {{ n }}">{% endfor %}
+  </section>
+  {% else %}
   <section class="cv-preview prose" aria-label="CV preview">{{ a.cv|md }}</section>
+  {% endif %}
 </div>
 
 {% elif tab == 'check' %}
