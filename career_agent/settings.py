@@ -20,6 +20,7 @@ DEFAULTS: dict[str, Any] = {
         "target_roles": "",
         "target_industries": "",
         "locations": "",
+        "max_km": "",  # longest distance from `city` to on-site or hybrid work, measured in code (places.py); "" = no limit
         "work_modes": ["onsite", "hybrid", "remote"],
         # kinds of job to look at (False = skip those ads without spending model calls); see jobkinds.py
         "job_kinds": {"student": True, "internship": True, "part_time": True, "temporary": True,

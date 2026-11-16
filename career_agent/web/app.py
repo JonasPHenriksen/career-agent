@@ -842,7 +842,7 @@ def profile_progress(request: Request):
 
 
 PROFILE_FIELDS = ["name", "email", "phone", "city", "linkedin", "website", "headline", "level", "target_roles",
-                  "target_industries", "locations", "min_salary", "availability", "deal_breakers",
+                  "target_industries", "locations", "max_km", "min_salary", "availability", "deal_breakers",
                   "always_mention", "never_mention", "about"]
 
 

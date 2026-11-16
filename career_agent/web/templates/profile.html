@@ -35,6 +35,7 @@
       <div class="field"><label for="level">Your level <span class="hint">· jobs asking for much more are scored lower</span></label><select id="level" name="level"><option value="">Not said</option>{% for k, l in levels %}<option value="{{ k }}" {{ 'selected' if p.level == k }}>{{ l }}</option>{% endfor %}</select></div>
       <div class="field"><label for="target_industries">Industries you prefer</label><input id="target_industries" name="target_industries" type="text" value="{{ p.target_industries }}"></div>
       <div class="field"><label for="locations">Where you'll work</label><input id="locations" name="locations" type="text" value="{{ p.locations }}" placeholder="e.g. Greater Copenhagen, max 45 min commute"></div>
+      <div class="field"><label for="max_km">Longest distance from {{ p.city or 'your city' }} (km) <span class="hint">· straight line, measured by the app; on-site and hybrid jobs further away are set aside without scoring. Empty = no limit</span></label><input id="max_km" name="max_km" type="number" min="0" max="1000" value="{{ p.max_km }}"></div>
       <div class="field"><label for="min_salary">Salary expectation</label><input id="min_salary" name="min_salary" type="text" value="{{ p.min_salary }}"></div>
       <div class="field"><label for="availability">Availability / notice period</label><input id="availability" name="availability" type="text" value="{{ p.availability }}"></div>
     </div>

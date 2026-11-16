@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from career_agent import db, jobkinds, jobs, settings, sources, tasks
+from career_agent import db, jobkinds, jobs, profile, settings, sources, tasks
 
 from .conftest import JOB_TEXT
 
@@ -347,3 +347,42 @@ def test_drafting_skips_blocked_companies_and_past_deadlines(fake):
     assert jobs.draft_best() == []
     db.ex("UPDATE companies SET blocked = 0")
     assert jobs.draft_best() == [ids[1], ids[2]]
+
+
+def test_distance_from_home_is_measured_not_guessed(fake):
+    from career_agent import places
+
+    def km(where):
+        return places.reach(where, "Horsens", 50)
+
+    assert km("Aarhus C")["km"] == 40 and km("Aarhus C")["inside"] is True
+    assert km("Gothersgade 20, 7000 Fredericia")["town"] == "Fredericia", "a street address is not a place of its own"
+    assert km("Odense")["inside"] is False and km("Odense")["km"] > 80, "over the bridge, not across the water"
+    assert km("Copenhagen, Aarhus or Aalborg, Denmark")["inside"] is True, "one office within reach is enough"
+    assert km("Leeds, United Kingdom")["inside"] is False and km("Leeds, United Kingdom")["town"] is None
+    assert km("Herning (VELUX hovedsæde)")["inside"] is None, "part of the location is unclear: not ruled out"
+    assert km("Sydøstjylland") is None and places.reach("Aarhus", "", 50) is None
+    assert "Aarhus is 40 km from Horsens" in places.describe(km("Aarhus"), 50)
+
+    wanted = settings.get("profile")
+    settings.update("profile", {"city": "Horsens", "max_km": "50"})
+    try:
+        assert "too far" in jobs.too_far("Roskilde", "onsite") and "199 km" in jobs.too_far("Roskilde", "hybrid")
+        assert jobs.too_far("Roskilde", "remote") is None and jobs.too_far("Roskilde", "unknown") is None
+        assert jobs.too_far("Aarhus", "onsite") is None and jobs.too_far("Et sted i Jylland", "onsite") is None
+        assert "Longest distance to on-site or hybrid work: 50 km from Horsens" in profile.candidate_block()
+
+        # A far on-site job that was read earlier is set aside without asking a model; one you keep is scored.
+        sid = db.insert("sources", {"name": "Feed", "kind": "rss", "url": "https://example.com/far", "created_at": db.now()})
+        far = db.insert("jobs", {"title": "Backend developer", "url": "https://example.com/far/1", "status": "new",
+                                 "parse_status": "parsed", "source_id": sid, "location": "Roskilde", "work_mode": "onsite",
+                                 "description": "Backend developer in Roskilde.", "created_at": db.now(), "updated_at": db.now()})
+        calls = len(fake.calls)
+        assert jobs.score(far) == {"skipped": "too far"} and len(fake.calls) == calls
+        row = jobs.get(far)
+        assert row["status"] == "filtered" and row["notes"].startswith("Skipped: too far. On site in Roskilde, 199 km")
+        assert "Distance from home (measured): Roskilde is 199 km from Horsens" in jobs.job_block(row)
+        settings.update("profile", {"max_km": ""})
+        assert jobs.too_far("Roskilde", "onsite") is None, "no limit set: nothing is ruled out"
+    finally:
+        settings.update("profile", {"city": wanted.get("city", ""), "max_km": wanted.get("max_km", "")})

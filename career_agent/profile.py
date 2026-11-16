@@ -500,6 +500,15 @@ LEVELS = [("student", "Student"), ("junior", "Junior (up to about 2 years' exper
 LEVEL_LABELS = dict(LEVELS)
 
 
+def distance_limit() -> float | None:
+    """The longest distance from home to on-site or hybrid work, in km, or None for no limit."""
+    try:
+        km = float(settings.get("profile").get("max_km") or 0)
+    except (TypeError, ValueError):
+        return None
+    return km if km > 0 else None
+
+
 def candidate_block() -> str:
     p = settings.get("profile")
     rows = [
@@ -507,6 +516,9 @@ def candidate_block() -> str:
         ("Level", LEVEL_LABELS.get(p.get("level") or "")),
         ("Target roles", p.get("target_roles")), ("Target industries", p.get("target_industries")),
         ("Preferred locations", p.get("locations")),
+        ("Longest distance to on-site or hybrid work",
+         f"{distance_limit():g} km from {p.get('city')} in a straight line (measured for each job, never estimate it)"
+         if distance_limit() and p.get("city") else None),
         ("Work modes", ", ".join(p.get("work_modes") or [])), ("Salary expectation", p.get("min_salary")),
         ("Availability / notice", p.get("availability")), ("Deal-breakers", p.get("deal_breakers")),
         ("Always mention when relevant", p.get("always_mention")), ("Never mention", p.get("never_mention")),

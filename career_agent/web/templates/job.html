@@ -8,7 +8,7 @@
     <h1>{{ job.title or 'Reading the ad…' }}</h1>
     <p class="sub">
       {% if job.company_id %}<a href="/companies/{{ job.company_id }}">{{ job.company_name }}</a> {{ grade(badge) }}{% elif job.company_name %}{{ job.company_name }}{% endif %}
-      {% if job.location %} · {{ job.location }}{% endif %}{% if job.work_mode and job.work_mode != 'unknown' %} · {{ job.work_mode }}{% endif %}
+      {% if job.location %} · {{ job.location }}{% if job.reach and job.reach.town %} <span class="text-2" title="Straight line from {{ job.reach.home }}, measured by the app; roughly {{ job.reach.road_km }} km by road">({{ job.reach.km }} km)</span>{% endif %}{% endif %}{% if job.work_mode and job.work_mode != 'unknown' %} · {{ job.work_mode }}{% endif %}
       {% if job.deadline %} · {{ deadline(job.deadline) }}{% elif job.d.get('deadline_note') %} · deadline: {{ job.d.deadline_note }}{% endif %}
     </p>
   </div>
