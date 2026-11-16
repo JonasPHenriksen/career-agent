@@ -38,6 +38,7 @@ TASK_LABELS = {
     "pull_model": "Downloading the search model",
     "build_cv_base": "Reading your CV as the base for tailored CVs",
     "rescreen_jobs": "Screening job listings again",
+    "check_cv_base": "Checking your base CV against your career database",
 }
 
 _wake = threading.Event()
@@ -57,7 +58,7 @@ def enqueue(kind: str, payload: dict | None = None, ref: str | None = None, dedu
 
 
 def _handlers() -> dict:
-    from . import cvdata, jobs, profile, retrieval, sources, tracker, voice, watch, writer
+    from . import cvdata, jobs, profile, retrieval, review, sources, tracker, voice, watch, writer
 
     def wait_for_analyses() -> None:
         """Let in-flight document analyses finish so we see everything."""
@@ -103,9 +104,15 @@ def _handlers() -> dict:
         "scan_folder": lambda p: watch.scan(p["folder_id"]),
         "embed_index": lambda p: retrieval.embed_pending(),
         "pull_model": lambda p: _pull_model(p["model"]),
-        "build_cv_base": lambda p: cvdata.build_base(p["doc_id"]),
+        "build_cv_base": lambda p: _then_check_base(cvdata.build_base(p["doc_id"])),
+        "check_cv_base": lambda p: review.check_base(p.get("base_id")),
         "rescreen_jobs": lambda p: sources.rescreen(p.get("job_ids")),
     }
+
+
+def _then_check_base(result: dict) -> dict:
+    enqueue("check_cv_base", {"base_id": result.get("base_id")}, ref="cv-base-check")
+    return result
 
 
 def _pull_model(model: str) -> dict:
@@ -181,7 +188,7 @@ def is_transient(e: Exception) -> bool:
 TASK_STEPS = {
     "draft_application": ("letter", "cv", "fact_check"), "revise_application": ("letter", "cv", "fact_check"),
     "check_application": ("fact_check",), "interview_prep": ("prep",), "followup": ("letter",), "build_style": ("style",),
-    "build_cv_base": ("cv",), "rescreen_jobs": ("screen",), "parse_job": ("read_ad",), "score_job": ("score",), "poll_source": ("screen",),
+    "build_cv_base": ("cv",), "check_cv_base": ("fact_check",), "rescreen_jobs": ("screen",), "parse_job": ("read_ad",), "score_job": ("score",), "poll_source": ("screen",),
     "analyze_document": ("read_document",), "consolidate_facts": ("read_document",), "classify_response": ("reply",),
 }
 FETCH_TASKS = {"poll_source", "parse_job"}

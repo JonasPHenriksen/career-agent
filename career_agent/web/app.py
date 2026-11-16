@@ -412,7 +412,7 @@ def application(request: Request, app_id: int, tab: str = ""):
             "SELECT a.id FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.status IN ('draft', 'ready') AND a.letter IS NOT NULL "
             "ORDER BY CASE WHEN j.deadline IS NULL THEN 1 ELSE 0 END, j.deadline, a.updated_at DESC")]
         at = waiting.index(app_id) if app_id in waiting else -1
-        look = {"questions": review.questions(a), "letter_html": review.marked(a["letter"], a),
+        look = {"base_open": len(review.base_questions(cvdata.base())), "questions": review.questions(a), "letter_html": review.marked(a["letter"], a),
                 "decided": db.jload(a.get("review"), {}) or {},
                 "siblings": db.q("SELECT a.id, j.title, a.status FROM applications a JOIN jobs j ON j.id = a.job_id "
                                  "WHERE j.company_id = ? AND a.id != ? ORDER BY a.id DESC", (a["company_id"], app_id)) if a["company_id"] else [],
@@ -602,6 +602,44 @@ async def cv_base_save(request: Request, base_id: int):
         return go("/profile?tab=cv", err=f"That isn't a CV I can use, so nothing was saved: {str(e)[:160]}")
     cvdata.save_base(base_id, data)
     return go("/profile?tab=cv", msg="Base CV saved.")
+
+
+@app.post("/cv/base/{base_id}/check")
+def cv_base_check(base_id: int):
+    need(db.q1("SELECT id FROM cv_bases WHERE id = ?", (base_id,)))
+    tasks.enqueue("check_cv_base", {"base_id": base_id}, ref="cv-base-check")
+    return go("/profile?tab=cv", msg="Checking your base CV against your career database…")
+
+
+@app.post("/cv/base/{base_id}/answers")
+async def cv_base_answers(request: Request, base_id: int):
+    """Your answers about base CV lines the career database doesn't back: a fact is added, or the CV is changed."""
+    f = await form(request)
+    base = need(cvdata.base(base_id))
+    answers = {q["id"]: {"verdict": f.get(f"v_{q['id']}") or "", "text": f.get(f"t_{q['id']}") or ""}
+               for q in review.base_questions(base)}
+    result = review.apply_base_answers(base, answers)
+    if not (result["facts"] or result["changed"] or result["missed"]):
+        return go("/profile?tab=cv#cv-check", err="Answer at least one question first.")
+    said = []
+    if result["facts"]:
+        said.append(f"{result['facts']} saved as fact{'s' if result['facts'] != 1 else ''}")
+    if result["changed"]:
+        said.append(f"{result['changed']} line{'s' if result['changed'] != 1 else ''} changed in the base CV")
+    msg = (", ".join(said).capitalize() + ". Checking again…") if said else None
+    err = ("Couldn't find this in the CV data, so change it by hand under Correct the base CV: "
+           + "; ".join(t[:80] for t in result["missed"])) if result["missed"] else None
+    return go("/profile?tab=cv#cv-check", msg=msg, err=err)
+
+
+@app.post("/cv/base/redo-drafts")
+def cv_base_redo_drafts():
+    """Make the CVs of the applications you haven't sent again, from the base CV as it is now."""
+    ids = review.open_drafts()
+    for app_id in ids:
+        tasks.enqueue("draft_application", {"application_id": app_id, "part": "cv"}, ref=f"app:{app_id}")
+    return go("/profile?tab=cv", msg=f"Making the CV again for {len(ids)} application{'s' if len(ids) != 1 else ''}. "
+                                     "The letters stay as they are.")
 
 
 @app.post("/cv/design")
@@ -813,7 +851,10 @@ def profile_page(request: Request, tab: str = "about"):
                 cv_error = str(e)[:300]
         cv = {"main": main, "bases": cvdata.bases(), "docs": cvdata.cv_documents(), "pages": pages, "error": cv_error,
               "design": settings.get("cv"), "json": json.dumps(main["data"], ensure_ascii=False, indent=2) if main else "",
-              "busy": tasks.active(ref="cv-base"), "task_error": tasks.last_error("cv-base")}
+              "busy": tasks.active(ref="cv-base"), "task_error": tasks.last_error("cv-base"),
+              "questions": review.base_questions(main), "checked": db.jload((main or {}).get("claims"), None),
+              "checking": tasks.active(ref="cv-base-check"), "check_error": tasks.last_error("cv-base-check"),
+              "open_drafts": len(review.open_drafts())}
     return render(request, "profile.html", tab=tab, n_docs=n_docs, style_busy=style_busy, levels=profile.LEVELS, cv=cv,
                   job_kinds=jobkinds.KINDS, kinds_wanted=jobkinds.wanted_kinds(),
                   made_style=llm.made_by("style", ("style_guide",)),

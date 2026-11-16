@@ -303,6 +303,11 @@ MIGRATIONS: list[str] = [
     ALTER TABLE jobs ADD COLUMN keep INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX IF NOT EXISTS jobs_duplicate_of ON jobs(duplicate_of);
     """,
+    # 8: the base CV checked against the career database, so a line the database doesn't back is settled once
+    # instead of being flagged again in every application's CV
+    """
+    ALTER TABLE cv_bases ADD COLUMN claims TEXT;
+    """,
 ]
 
 

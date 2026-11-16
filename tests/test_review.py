@@ -107,3 +107,46 @@ def test_an_ad_that_turns_down_ai_written_applications_raises_a_warning(fake):
     plain = jobs.add_from_text(JOB_TEXT.replace("Product Owner", "Produktejer"))
     jobs.parse(plain, use_text=True)
     assert jobs.get(plain)["d"]["ai_policy"] == "" and jobs.get(plain)["ai_notice"] is None
+
+
+def test_a_line_in_the_cv_data_is_changed_the_way_it_was_shown():
+    data = {"summary": "Engineer. Built 20+ projects.",
+            "work": [{"name": "Havbro", "position": "Intern", "start": "Jul 2024", "end": "Dec 2024", "location": "Horsens",
+                      "highlights": ["Did A", "Did B"]}],
+            "skills": [{"name": "Languages", "keywords": ["Go", "Java"]}]}
+    assert review.replace_in_cv(data, "Jul 2024 – Dec 2024 · Horsens", "Aug 2024 – Dec 2024 · Horsens")
+    assert (data["work"][0]["start"], data["work"][0]["end"], data["work"][0]["location"]) == ("Aug 2024", "Dec 2024", "Horsens")
+    assert review.replace_in_cv(data, "Built 20+ projects.", "") and data["summary"] == "Engineer."
+    assert review.replace_in_cv(data, "Did B", "") and data["work"][0]["highlights"] == ["Did A"]
+    assert review.replace_in_cv(data, "Languages: Go, Java", "Languages: Go, C#") and data["skills"][0]["keywords"] == ["Go", "C#"]
+    assert not review.replace_in_cv(data, "Never said this", "x")
+
+
+def test_base_cv_lines_the_database_does_not_back_are_settled_once(fake):
+    from career_agent import cvdata, tasks
+
+    _draft()
+    assert review.check_base()["claims"] and not review.base_questions(cvdata.base()), "this CV is where the facts came from"
+    base = cvdata.base()
+    lines = [text for where, text in writer.check_items("", cvdata.to_markdown(base["data"])) if len(text.split()) >= 4][:2]
+    db.update("cv_bases", base["id"], {"claims": json.dumps({"checked_at": db.now(), "claims": [
+        {"text": lines[0], "where": "cv", "status": "unsupported", "note": "not in the database"},
+        {"text": lines[1], "where": "cv", "status": "partly", "note": "the database says otherwise"}]})})
+    base = cvdata.base()
+    qs = review.base_questions(base)
+    assert [q["text"] for q in qs] == lines and all(q["where"] == "cv" for q in qs)
+    c = TestClient(app)
+    page = c.get("/profile?tab=cv").text
+    assert "Does your CV agree with your career database?" in page and qs[0]["text"] in page
+
+    facts = db.scalar("SELECT COUNT(*) FROM facts")
+    r = c.post(f"/cv/base/{base['id']}/answers", follow_redirects=False, data={
+        f"v_{qs[0]['id']}": "yes", f"t_{qs[0]['id']}": "", f"v_{qs[1]['id']}": "no", f"t_{qs[1]['id']}": "What is true instead"})
+    assert r.status_code == 303 and "saved+as+fact" in r.headers["location"] and "changed" in r.headers["location"]
+    assert db.scalar("SELECT COUNT(*) FROM facts") == facts + 1
+    added = db.q1("SELECT title, evidence, verified FROM facts ORDER BY id DESC LIMIT 1")
+    assert added["title"] == qs[0]["text"] and added["verified"] == 1 and "your base CV" in added["evidence"]
+    text = cvdata.to_markdown(cvdata.base()["data"])
+    assert "What is true instead" in text and qs[1]["text"] not in text
+    assert tasks.active(ref="cv-base-check"), "the base is checked again after your answers"
+    db.ex("DELETE FROM tasks")

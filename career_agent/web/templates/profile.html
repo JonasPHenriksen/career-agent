@@ -206,6 +206,37 @@
       {% endfor %}</ul>
       {% endif %}
     </section>
+    {% if cv.main %}
+    <section class="card" id="cv-check" style="margin-bottom:1rem">
+      <div class="card-head"><h2>Does your CV agree with your career database?</h2>
+        <form method="post" action="/cv/base/{{ cv.main.id }}/check" class="inline"><button class="btn small" data-busy="Checking…">{{ 'Check again' if cv.checked else 'Check now' }}</button></form></div>
+      {% if cv.checking %}<p><span class="spinner" aria-hidden="true"></span> Checking every line of your base CV…</p>
+      {% elif cv.check_error %}<p class="small" style="color:var(--bad)">{{ cv.check_error.error }}</p>{% endif %}
+      {% if cv.questions %}
+      <p class="small text-2">Every application's CV starts from this one, so a line your career database doesn't back is flagged in every application. Settle each line once here: say it's true and it becomes a fact, or write what the CV should say. Leave the box empty with “Not true” to take the line out.</p>
+      <form method="post" action="/cv/base/{{ cv.main.id }}/answers">
+        {% for q in cv.questions %}
+        <fieldset class="question">
+          <legend>{{ q.ask }}</legend>
+          <blockquote>{{ q.text }}</blockquote>
+          {% if q.detail %}<p class="small text-2">{{ q.detail }}</p>{% endif %}
+          <div class="row">
+            <label><input type="radio" name="v_{{ q.id }}" value="yes"> {{ q.yes }}</label>
+            <label><input type="radio" name="v_{{ q.id }}" value="no"> {{ q.no }}</label>
+            <label><input type="radio" name="v_{{ q.id }}" value="" checked> Skip</label>
+          </div>
+          <input type="text" name="t_{{ q.id }}" placeholder="If true: anything to add. If not: what the line should say instead" aria-label="About: {{ q.text[:60] }}">
+        </fieldset>
+        {% endfor %}
+        <div class="row end" style="margin-top:.6rem"><button class="btn primary" data-busy="Saving…">Save answers</button></div>
+      </form>
+      {% elif cv.checked %}<p class="empty">Every line of your base CV is backed by your career database. Checked {{ cv.checked.checked_at|local_date }}.</p>
+      {% elif not cv.checking %}<p class="small text-2">Not checked yet. The check reads each line of your base CV against your career database, so anything they disagree on is settled once instead of in every application.</p>{% endif %}
+      {% if cv.open_drafts and cv.checked %}
+      <form method="post" action="/cv/base/redo-drafts" class="row" style="margin-top:.6rem"><span class="small text-2" style="flex:1">Changed the base CV? The {{ cv.open_drafts }} application{{ 's' if cv.open_drafts != 1 }} you haven't sent still have a CV made from the old one.</span><button class="btn small" data-busy="Queued…">Make their CVs again</button></form>
+      {% endif %}
+    </section>
+    {% endif %}
     <section class="card" style="margin-bottom:1rem">
       <h2>How CVs look</h2>
       <form method="post" action="/cv/design">
