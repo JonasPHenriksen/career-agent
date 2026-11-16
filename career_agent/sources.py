@@ -8,7 +8,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import feedparser
 from bs4 import BeautifulSoup
 
-from . import db, fetch, jobkinds, jobs, llm, profile, tasks
+from . import db, fetch, jobkinds, jobs, llm, profile, robots, tasks
 from .llm import jsonutil as J
 
 KINDS = {"rss": "RSS / Atom feed", "page": "Search results page"}
@@ -17,6 +17,8 @@ TRIAGE_BATCH = 40
 MAX_PAGES = 5
 PAGE_PAUSE = 1.5  # seconds between page fetches from the same site
 FILTERED_NOTE = "Filtered out by quick screening. Open it and press Analyse to look anyway."
+UNREADABLE_NOTE = ("From a job alert. The site doesn't let the app open this link on its own, so the ad wasn't read "
+                   "or scored. Open it and paste the ad text to have it read.")
 
 PAGE_SCHEMA = J.obj(jobs=J.arr(J.obj(
     n=J.i("The [n] number of the link"),
@@ -46,8 +48,18 @@ def detect_kind(url: str) -> str:
     return "rss" if fetch.looks_like_feed(resp) else "page"
 
 
+class NotAllowed(ValueError):
+    """The site's robots.txt doesn't let the app read this address on its own. The message says what to do."""
+
+
 def add(name: str, url: str, kind: str = "auto", interval_minutes: int = 360) -> int:
     url = suggest_url(url)
+    try:
+        problem = robots.check(url)
+    except fetch.FetchError:
+        problem = None  # site unreachable right now: the first check will try again and say so
+    if problem:
+        raise NotAllowed(problem)
     if kind not in KINDS:
         kind = detect_kind(url)
     return db.insert("sources", {"name": name.strip() or urlparse(url).netloc, "kind": kind, "url": url,
@@ -86,20 +98,28 @@ def _rss_items(content: bytes, feed_url: str) -> list[dict]:
     return items
 
 
-def _page_items(html: str, page_url: str) -> list[dict]:
-    links = fetch.page_links(html, page_url)
+def pick_jobs(links: list[dict], header: str, system: str = PAGE_SYSTEM) -> list[dict]:
+    """Ask the model which of these links lead to single job ads (a results page, or a job-alert email)."""
     if not links:
         return []
-    title, _ = fetch.html_to_text(html)
     lines = [f"[{n}] {l['text']} → {l['url']}" + (f"  (context: {l['context']})" if l["context"] else "")
              for n, l in enumerate(links)]
-    user = f"Page: {page_url}\nTitle: {title}\n\nLinks:\n" + "\n".join(lines)
-    r = llm.run("analysis", "page_jobs", PAGE_SYSTEM, user[:60000], PAGE_SCHEMA, max_tokens=8000, effort="low")
+    user = f"{header}\n\nLinks:\n" + "\n".join(lines)
+    r = llm.run("analysis", "page_jobs", system, user[:60000], PAGE_SCHEMA, max_tokens=8000, effort="low")
     items = []
     for j in r.data["jobs"]:
         if 0 <= j["n"] < len(links):
-            items.append({"url": links[j["n"]]["url"], "title": j["title"] or links[j["n"]]["text"],
-                          "company": j["company"], "location": j["location"], "text": ""})
+            link = links[j["n"]]
+            items.append({"url": link["url"], "title": j["title"] or link["text"], "company": j["company"],
+                          "location": j["location"], "text": link.get("context") or ""})
+    return items
+
+
+def _page_items(html: str, page_url: str) -> list[dict]:
+    title, _ = fetch.html_to_text(html)
+    items = pick_jobs(fetch.page_links(html, page_url), f"Page: {page_url}\nTitle: {title}")
+    for it in items:
+        it["text"] = ""  # a results page's surrounding text is navigation more often than a teaser
     return items
 
 
@@ -156,8 +176,13 @@ def _screen_and_store(batch: list[dict], source_id: int) -> int:
     keep = _triage(wanted) if wanted else {}
     for n, it in enumerate(wanted):
         if n in keep:
-            jobs.add_from_url(it["url"], source_id=source_id, title=it["title"], company=it["company"],
-                              text=it["text"] or None)
+            # A link the site doesn't let robots open (a job alert's tracking link, say) is kept for you to open;
+            # the app doesn't read the ad behind it.
+            readable = it.get("readable", True)
+            jid, _ = jobs.add_from_url(it["url"], source_id=source_id, title=it["title"], company=it["company"],
+                                       text=it["text"] or None, queue=readable)
+            if not readable:
+                db.update("jobs", jid, {"notes": it.get("note") or UNREADABLE_NOTE})
         else:
             jid, _ = jobs.add_from_url(it["url"], source_id=source_id, title=it["title"],
                                        company=it["company"], text=it["text"] or None,
@@ -170,8 +195,14 @@ def poll(source_id: int) -> dict:
     src = db.q1("SELECT * FROM sources WHERE id = ?", (source_id,))
     if not src:
         return {"skipped": "source deleted"}
+    if src["kind"] == "mail":
+        from . import alerts
+        return alerts.poll(src)
     db.update("sources", source_id, {"last_run_at": db.now()})
     try:
+        problem = robots.check(src["url"])
+        if problem:
+            raise fetch.FetchError(problem)
         resp = fetch.get(src["url"])
         is_feed = src["kind"] == "rss" or fetch.looks_like_feed(resp)
         items = _rss_items(resp.content, src["url"]) if is_feed else _page_items(resp.text, str(resp.url))
@@ -183,7 +214,7 @@ def poll(source_id: int) -> dict:
         page = 1
         while is_feed and fresh and page < MAX_PAGES and len(fresh) < MAX_NEW_PER_RUN:
             more_url = _page_url(src["url"], page + 1)
-            if not more_url:
+            if not more_url or not robots.allowed(more_url):
                 break
             time.sleep(PAGE_PAUSE)
             try:

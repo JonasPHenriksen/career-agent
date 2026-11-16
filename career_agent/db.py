@@ -291,6 +291,9 @@ MIGRATIONS: list[str] = [
     # 5: what the writer decided and assumed for a draft (its angle, the gap, what it inferred), for the review screen
     """
     ALTER TABLE applications ADD COLUMN review TEXT;
+    """,    # 6: job alerts read from a Mail mailbox: how far back the mailbox has been read without a problem
+    """
+    ALTER TABLE sources ADD COLUMN read_until TEXT;
     """,
 ]
 

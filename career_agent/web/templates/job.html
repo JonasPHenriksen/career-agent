@@ -42,6 +42,17 @@
 </section>
 {% endif %}
 
+{% if job.parse_status == 'skipped' and job.status != 'filtered' %}
+<section class="card warn" style="margin-bottom:1rem">
+  <p style="margin:0">{{ job.notes or "This ad hasn't been read yet." }}</p>
+  <form method="post" action="/jobs/{{ job.id }}/text" style="margin-top:.6rem">
+    <label for="adtext2">Paste the ad text and I'll read and score it:</label>
+    <textarea id="adtext2" name="text" rows="6" placeholder="Copy the whole ad from your browser and paste it here"></textarea>
+    <div class="row" style="margin-top:.6rem"><button class="btn primary" data-busy="Reading…">Use this text</button></div>
+  </form>
+</section>
+{% endif %}
+
 {% if job.status == 'filtered' %}
 <section class="card warn" style="margin-bottom:1rem">
   <p style="margin:0">Quick screening filtered this job out, so it wasn't analysed. {% if job.notes %}<span class="text-2">{{ job.notes }}</span>{% endif %}</p>

@@ -224,3 +224,11 @@ def fake(tmp_path):
     llm.set_test_provider(provider)
     yield provider
     llm.set_test_provider(None)
+
+
+@pytest.fixture(autouse=True)
+def no_robots_rules(monkeypatch):
+    """Tests never fetch a real robots.txt: every site allows everything unless a test sets its own rules."""
+    from career_agent import robots
+
+    monkeypatch.setattr(robots, "rules_for", lambda url: [])

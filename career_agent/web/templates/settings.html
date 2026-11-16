@@ -140,7 +140,7 @@
 
 <section class="card" id="sources">
   <h2>Job sources</h2>
-  <p class="small text-2">Watched automatically. New jobs are screened, read and scored; strong matches get a draft. For Jobindex, run a search on jobindex.dk and paste the address of the results page (it becomes an RSS feed automatically). Most job sites' search pages work, as do any RSS feeds.</p>
+  <p class="small text-2">Watched automatically. New jobs are screened, read and scored; strong matches get a draft. For Jobindex, run a search on jobindex.dk and paste the address of the results page (it becomes an RSS feed automatically). Most job sites' search pages work, as do any RSS feeds. The app follows each site's rules for robots (robots.txt) and tells you when an address isn't allowed. On Jobindex that means up to two search words and a region (<code>area=storkbh</code>), but no distance, municipality or page number, so a feed shows the newest 20 jobs. To get every job, or Ofir and Jobnet, use their job alerts by email (below).</p>
   {% if sources %}
   <div class="table-wrap">
   <table class="data" style="margin-bottom:1rem">
@@ -148,7 +148,7 @@
     <tbody>
       {% for s in sources %}
       <tr>
-        <td><strong>{{ s.name }}</strong>{% if not s.enabled %} <span class="pill">paused</span>{% endif %}<div class="small muted" style="word-break:break-all">{{ s.kind }} · {{ s.url }}</div></td>
+        <td><strong>{{ s.name }}</strong>{% if not s.enabled %} <span class="pill">paused</span>{% endif %}<div class="small muted" style="word-break:break-all">{% if s.kind == 'mail' %}job alerts in Mail · mailbox “{{ s.url }}”{% else %}{{ s.kind }} · {{ s.url }}{% endif %}</div></td>
         <td class="small">{{ s.last_run_at|ago or 'never' }}<div class="muted">every {{ (s.interval_minutes / 60)|round(1) }} h</div></td>
         <td class="num">{{ s.jobs_found }}</td>
         <td class="small">{% if s.last_error %}<span class="pill bad">error</span> {{ s.last_error }}{% else %}{{ s.last_status or '' }}{% endif %}</td>
@@ -171,6 +171,22 @@
       <div class="field"><label for="sint">Check every</label><select id="sint" name="interval"><option value="120">2 hours</option><option value="360" selected>6 hours</option><option value="720">12 hours</option><option value="1440">day</option></select></div>
     </div>
     <button class="btn primary" data-busy="Adding…">Add source</button>
+  </form>
+
+  <h3 id="alerts" style="margin-top:1.6rem">Job alerts by email</h3>
+  <p class="small text-2">The job sites' own alerts send you every new job that matches, with any filters you like (distance included), and nothing is missed while this Mac is off. The app reads them from a mailbox in Apple Mail; it never logs in to the sites.</p>
+  <ol class="small text-2">
+    <li>Create a job alert (Jobagent) on the site: <a href="https://www.jobindex.dk" target="_blank" rel="noopener noreferrer">Jobindex</a>, <a href="https://www.ofir.dk" target="_blank" rel="noopener noreferrer">Ofir</a>, or <a href="https://jobnet.dk" target="_blank" rel="noopener noreferrer">Jobnet</a> (log in with MitID yourself). Choose daily emails.</li>
+    <li>In Mail, make a top-level mailbox, for example “Job alerts”, and a rule (Mail → Settings → Rules) that moves emails from the sites there.</li>
+    <li>Add the mailbox here. The first check reads the last {{ alert_days }} days.</li>
+  </ol>
+  <form method="post" action="/sources/add-mail">
+    <div class="fields-3">
+      <div class="field"><label for="aname">Name</label><input id="aname" type="text" name="name" placeholder="Jobindex, Ofir and Jobnet alerts"></div>
+      <div class="field"><label for="abox">Mailbox in Mail</label><input id="abox" type="text" name="mailbox" placeholder="Job alerts" required></div>
+      <div class="field"><label for="aint">Check every</label><select id="aint" name="interval"><option value="120">2 hours</option><option value="360" selected>6 hours</option><option value="720">12 hours</option><option value="1440">day</option></select></div>
+    </div>
+    <button class="btn primary" data-busy="Adding…">Add job alerts</button>
   </form>
 </section>
 

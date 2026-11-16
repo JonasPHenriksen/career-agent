@@ -17,7 +17,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import (companies, config, cvdata, cvrender, db, exporter, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
+from .. import (alerts, companies, config, cvdata, cvrender, db, exporter, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
                 profile, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
@@ -1061,7 +1061,7 @@ def settings_page(request: Request):
     st = llm.status()
     return render(request, "settings.html", st=st, cfg=settings.get("llm"), auto=settings.get("automation"),
                   w=settings.get("writing"), anthropic_models=llm.ANTHROPIC_MODELS,
-                  sources=db.q("SELECT * FROM sources ORDER BY id"), source_kinds=sources.KINDS,
+                  sources=db.q("SELECT * FROM sources ORDER BY id"), source_kinds=sources.KINDS, alert_days=alerts.FIRST_READ_DAYS,
                   data_dir=str(config.DATA_DIR), efforts=["low", "medium", "high", "xhigh", "max"],
                   search=retrieval.status(), letter_range=writer.LETTER_RANGE,
                   steps=[{"key": k, "label": label, "tier": {"check": writer.check_tier()}.get(tier, tier),
@@ -1321,9 +1321,27 @@ async def sources_add(request: Request):
         interval = int(f.get("interval") or 360)
     except ValueError:
         interval = 360
-    sid = await asyncio.to_thread(sources.add, f.get("name", ""), url, f.get("kind") or "auto", interval)
+    try:
+        sid = await asyncio.to_thread(sources.add, f.get("name", ""), url, f.get("kind") or "auto", interval)
+    except sources.NotAllowed as e:
+        return go("/settings#sources", err=f"Not added: {e}")
     tasks.enqueue("poll_source", {"source_id": sid}, ref=f"source:{sid}")
     return go("/settings#sources", msg="Source added. Checking it now…")
+
+
+@app.post("/sources/add-mail")
+async def sources_add_mail(request: Request):
+    f = await form(request)
+    try:
+        interval = int(f.get("interval") or 360)
+    except ValueError:
+        interval = 360
+    try:
+        sid = alerts.add(f.get("name", ""), f.get("mailbox", ""), interval)
+    except ValueError as e:
+        return go("/settings#alerts", err=str(e))
+    tasks.enqueue("poll_source", {"source_id": sid}, ref=f"source:{sid}")
+    return go("/settings#sources", msg="Job alerts added. Reading the mailbox now… (macOS may ask to let the app use Mail)")
 
 
 @app.post("/sources/{source_id}/run")
@@ -1342,6 +1360,7 @@ def sources_toggle(request: Request, source_id: int):
 @app.post("/sources/{source_id}/delete")
 def sources_delete(request: Request, source_id: int):
     db.ex("DELETE FROM sources WHERE id = ?", (source_id,))
+    db.ex("DELETE FROM settings WHERE key = ?", (f"alerts_seen:{source_id}",))
     return go("/settings#sources", msg="Source removed. Jobs it found are kept.")
 
 

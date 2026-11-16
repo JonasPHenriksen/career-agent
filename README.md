@@ -72,11 +72,19 @@ job sources ──► quick screening ──► read the ad ──► fit score 
 ```
 
 * **Job sources.** For Jobindex, run a search on jobindex.dk and paste the results page address in
-  Settings → Job sources (it becomes an RSS feed automatically). Jobindex's robots.txt doesn't allow automated
-  use of the distance and area filters, so use keyword searches: the quick screening drops jobs outside the area
-  you set under About you. Any RSS/Atom feed works, and so do
-  most job sites' search pages (the agent picks out the job links). LinkedIn needs a login, so paste
+  Settings → Job sources (it becomes an RSS feed automatically). Any RSS/Atom feed works, and so do
+  most job sites' search pages (the agent picks out the job links). The app checks each site's robots.txt
+  and won't add an address the site doesn't allow robots to read. On Jobindex that allows up to two search
+  words and a region (`area=storkbh`), but not distance (`radius=`), municipality (`geoareaid=`) or paging
+  (`page=`), so a Jobindex feed shows the newest 20 jobs. LinkedIn needs a login, so paste
   LinkedIn job links (or the ad text) by hand.
+* **Job alerts by email.** To get every job, with any filter, and from sites the app can't read on its own
+  (Ofir forbids robots; Jobnet needs MitID), set up the site's own job alert, have a Mail rule move the
+  emails to one mailbox, and add that mailbox under Settings → Job sources → Job alerts by email. The app
+  reads the emails through Apple Mail (macOS asks once for permission), picks out the jobs and screens them
+  like any other source. Links are only followed where the site's robots.txt allows; Jobindex's tracking
+  links are turned into the ad's own page where the link carries its id, and any other forbidden link is kept
+  for you to open and paste.
 * **Honesty guardrails.** The writer may only use facts from your career database; it never invents
   employers, titles, dates, numbers or skills. A separate fact check then marks every claim in the
   letter and CV as backed, stretched or unsupported, so you fix problems before an interviewer finds them.
