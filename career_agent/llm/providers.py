@@ -314,7 +314,10 @@ class ClaudeCodeProvider:
         import subprocess
         import tempfile
 
-        env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+        # A clean environment: no API key (so it can't be billed per call), and none of the CLAUDE_* variables a
+        # terminal inside the Claude app passes on. With those, Claude Code adds a small side-call to another
+        # model on every request, which costs usage and muddles which model did the work.
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("ANTHROPIC_", "CLAUDE_", "CLAUDECODE"))}
         if self.token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = self.token
         with tempfile.TemporaryDirectory(prefix="career-agent-claude-") as cwd:
@@ -346,7 +349,9 @@ class ClaudeCodeProvider:
         if schema is not None and d.get("structured_output") is not None:
             text = json.dumps(d["structured_output"], ensure_ascii=False)
         usage = d.get("usage") or {}
-        used = next(iter(d.get("modelUsage") or {}), "") or self.model
+        # The model that wrote the answer: when several are listed, the one with the most output.
+        by_model = d.get("modelUsage") or {}
+        used = max(by_model, key=lambda m: (by_model[m] or {}).get("outputTokens") or 0, default="") or self.model
         tokens_in = sum(int(usage.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens",
                                                             "cache_creation_input_tokens"))
         # "claude-code/…" never matches a price: a subscription isn't billed per call.

@@ -22,6 +22,7 @@ system = open(args[args.index("--system-prompt-file") + 1], encoding="utf-8").re
 user = sys.stdin.read()
 with open(os.environ["FAKE_OUT"], "w", encoding="utf-8") as fh:
     json.dump({"args": args, "system": system, "user": user, "api_key_seen": "ANTHROPIC_API_KEY" in os.environ,
+               "claude_vars": sorted(k for k in os.environ if k.startswith(("CLAUDE", "ANTHROPIC"))),
                "token": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")}, fh)
 mode = os.environ.get("FAKE_MODE", "ok")
 if mode == "login":
@@ -31,7 +32,7 @@ elif mode == "limit":
 else:
     out = {"type": "result", "subtype": "success", "is_error": False, "result": "Hello from Claude",
            "usage": {"input_tokens": 3, "cache_read_input_tokens": 7, "output_tokens": 2},
-           "modelUsage": {"claude-sonnet-5-5": {}}}
+           "modelUsage": {"claude-haiku-5-5": {"outputTokens": 14}, "claude-sonnet-5-5": {"outputTokens": 63}}}
     if "--json-schema" in args:
         out["structured_output"] = {"ok": True}
     print(json.dumps(out))
@@ -45,6 +46,7 @@ def fake_claude(tmp_path, monkeypatch):
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("FAKE_OUT", str(tmp_path / "out.json"))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-never-reach-claude-code")
+    monkeypatch.setenv("CLAUDE_AGENT_SDK_VERSION", "0.3.325")  # what a terminal inside the Claude app passes on
     return path, tmp_path / "out.json"
 
 
@@ -61,6 +63,7 @@ def test_claude_code_provider_runs_without_tools_and_without_the_api_key(fake_cl
     assert args[args.index("--setting-sources") + 1] == "" and args[args.index("--model") + 1] == "sonnet"
     assert args[args.index("--effort") + 1] == "high"
     assert not seen["api_key_seen"] and seen["token"] == "tok-123"  # the subscription, never per-call billing
+    assert seen["claude_vars"] == ["CLAUDE_CODE_OAUTH_TOKEN"], "nothing else from a Claude terminal's environment is passed on"
 
     structured = prov.complete("S", "U", {"type": "object", "properties": {"ok": {"type": "boolean"}}}, 4000)
     assert json.loads(structured.text) == {"ok": True} and "--json-schema" in json.loads(out.read_text())["args"]
