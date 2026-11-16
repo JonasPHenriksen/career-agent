@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from career_agent import db, fetch, jobs, sources, tasks
+from career_agent import db, fetch, jobs, profile, sources, tasks
 
 AD_BODY = "Vi søger en backendudvikler til vores team. " * 80  # well over the "short page" limit
 
@@ -220,3 +220,40 @@ def test_rescreen_moves_jobs_both_ways_and_leaves_others_alone(fake, monkeypatch
     seen.clear()
     assert sources.rescreen([now_dropped])["screened"] == 1, "a list of ids narrows it down"
     assert len(seen) == 1 and len(seen[0]) == 1
+
+
+def test_kinds_you_switched_off_are_set_aside_before_any_model_sees_them(fake, monkeypatch):
+    from career_agent import jobkinds, settings
+
+    settings.update("profile", {"job_kinds": {"student": False, "internship": False}})
+    profile.save_facts(None, [{"category": "skill", "title": "Scrum"}])
+    sid = db.insert("sources", {"name": "s", "kind": "rss", "url": "https://example.com/rss", "created_at": db.now()})
+    batch = [{"url": "https://example.com/a", "title": "Studentermedhjælper til IT", "company": "X", "location": "", "text": ""},
+             {"url": "https://example.com/b", "title": "Backend Developer", "company": "Y", "location": "", "text": ""},
+             {"url": "https://example.com/c", "title": "Marketing Intern", "company": "Z", "location": "", "text": ""}]
+    calls = len(fake.calls)
+    kept = sources._screen_and_store(batch, sid)
+    assert kept == 1 and len(fake.calls) == calls + 1, "one screening call, for the one listing that is left"
+    assert "Backend Developer" in fake.calls[-1][1] and "Studentermedhjælper" not in fake.calls[-1][1]
+    student = db.q1("SELECT status, parse_status, notes FROM jobs WHERE url = 'https://example.com/a'")
+    assert student["status"] == "filtered" and student["notes"] == jobkinds.skip_note("student job")
+    assert db.q1("SELECT status FROM jobs WHERE url = 'https://example.com/b'")["status"] == "new"
+
+    only_unwanted = [{"url": "https://example.com/d", "title": "Praktikant, salg", "company": "X", "location": "", "text": ""}]
+    calls = len(fake.calls)
+    assert sources._screen_and_store(only_unwanted, sid) == 0 and len(fake.calls) == calls, "no model call at all"
+
+    db.ex("UPDATE jobs SET status = 'new', notes = NULL WHERE url = 'https://example.com/a'")
+    calls = len(fake.calls)
+    result = sources.rescreen()
+    assert db.q1("SELECT status FROM jobs WHERE url = 'https://example.com/a'")["status"] == "filtered"
+    assert "Studentermedhjælper" not in fake.calls[-1][1] and len(fake.calls) == calls + 1 and result["screened"] == 4
+
+
+def test_a_card_whose_link_has_no_words_is_named_by_the_card():
+    html = ('<div class="card"><a href="/jobs/123"></a><h3>Backend Engineer</h3><span>Acme · Aarhus</span></div>'
+            '<div class="card"><a href="/jobs/456"><img src="x.png"></a><h3>Data Engineer</h3></div><a href="/about">About us</a>')
+    links = fetch.page_links(html, "https://example.com/jobs")
+    assert [(link["url"], link["text"]) for link in links] == [
+        ("https://example.com/jobs/123", "Backend Engineer Acme · Aarhus"), ("https://example.com/jobs/456", "Data Engineer"),
+        ("https://example.com/about", "About us")]

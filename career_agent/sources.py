@@ -8,7 +8,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import feedparser
 from bs4 import BeautifulSoup
 
-from . import db, fetch, jobs, llm, profile, tasks
+from . import db, fetch, jobkinds, jobs, llm, profile, tasks
 from .llm import jsonutil as J
 
 KINDS = {"rss": "RSS / Atom feed", "page": "Search results page"}
@@ -142,8 +142,19 @@ def _unseen(items: list[dict], seen: set[str]) -> list[dict]:
 
 def _screen_and_store(batch: list[dict], source_id: int) -> int:
     """Screen one batch and store it. Stored batch by batch so a model failure keeps the earlier ones."""
-    keep = _triage(batch)
-    for n, it in enumerate(batch):
+    # Kinds of job you've switched off (student jobs, internships…) are set aside by their title alone,
+    # before any model sees them: no time or tokens spent on what you don't want.
+    wanted = []
+    for it in batch:
+        skip = jobkinds.unwanted(it["title"], it["text"])
+        if skip:
+            jid, _ = jobs.add_from_url(it["url"], source_id=source_id, title=it["title"], company=it["company"],
+                                       text=it["text"] or None, status="filtered", queue=False)
+            db.update("jobs", jid, {"notes": jobkinds.skip_note(skip[1])})
+        else:
+            wanted.append(it)
+    keep = _triage(wanted) if wanted else {}
+    for n, it in enumerate(wanted):
         if n in keep:
             jobs.add_from_url(it["url"], source_id=source_id, title=it["title"], company=it["company"],
                               text=it["text"] or None)
@@ -207,6 +218,14 @@ def rescreen(job_ids: list[int] | None = None) -> dict:
         wanted = set(job_ids)
         rows = [r for r in rows if r["id"] in wanted]
     now_kept = now_dropped = 0
+    screened = len(rows)
+    for job in rows:  # kinds of job you've switched off never reach the model
+        skip = jobkinds.unwanted(job["title"], None, job["employment_type"], job["seniority"])
+        if skip:
+            now_dropped += 1
+            if job["status"] == "new":
+                db.update("jobs", job["id"], {"status": "filtered", "notes": jobkinds.skip_note(skip[1])})
+    rows = [r for r in rows if not jobkinds.unwanted(r["title"], None, r["employment_type"], r["seniority"])]
     for i in range(0, len(rows), TRIAGE_BATCH):
         batch = rows[i:i + TRIAGE_BATCH]
         items = [{"title": r["title"] or "", "company": r["company_name"] or "", "location": r["location"] or "",
@@ -227,4 +246,4 @@ def rescreen(job_ids: list[int] | None = None) -> dict:
                 now_dropped += 1
                 if job["status"] == "new":
                     db.update("jobs", job["id"], {"status": "filtered", "notes": FILTERED_NOTE})
-    return {"screened": len(rows), "now_kept": now_kept, "now_dropped": now_dropped}
+    return {"screened": screened, "now_kept": now_kept, "now_dropped": now_dropped}

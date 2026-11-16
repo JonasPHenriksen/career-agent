@@ -175,11 +175,13 @@ def page_links(html: str, base_url: str, limit: int = 300) -> list[dict]:
             continue
         url = canonical_url(urljoin(base_url, href))
         text = " ".join(a.get_text(" ", strip=True).split())[:160]
+        parent = a.find_parent(["li", "article", "div", "tr"])
+        context = " ".join(parent.get_text(" ", strip=True).split())[:200] if parent else ""
+        if not text:  # a card whose link covers it without words of its own: the card's text names the link
+            text = context[:160]
         if not text or len(text) < 4 or url in seen or url.rstrip("/") == base_url.rstrip("/"):
             continue
         seen.add(url)
-        parent = a.find_parent(["li", "article", "div", "tr"])
-        context = " ".join(parent.get_text(" ", strip=True).split())[:200] if parent else ""
         out.append({"text": text, "url": url, "context": context if context != text else "",
                     "same_site": urlparse(url).netloc == base_host})
         if len(out) >= limit:
