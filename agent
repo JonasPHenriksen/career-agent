@@ -40,6 +40,11 @@ app_pid() {
 
 ollama_up() { curl -s -m 2 "$OLLAMA_URL/api/version" >/dev/null 2>&1; }
 app_up() { curl -s -m 2 -o /dev/null "$URL/" 2>/dev/null; }
+uses_local_models() {  # "yes" if any step is set to a model on this Mac, "no" if all are cloud; yes when unsure
+  "$DIR/.venv/bin/python" -c 'from career_agent import config, db, llm
+config.configure(None); db.init()
+print("yes" if any(llm.step_provider(k) == "ollama" for k, *_ in llm.STEPS) else "no")' 2>/dev/null || echo yes
+}
 autostart_loaded() { launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; }
 
 wait_for() {  # wait_for <seconds> <command...>
@@ -65,7 +70,11 @@ start() {
   command -v uv >/dev/null 2>&1 || { echo "uv isn't installed. Run: brew install uv"; exit 1; }
   mkdir -p "$DATA"
 
-  if ollama_up; then
+  uv sync --quiet || { echo "Couldn't install the app's packages (uv sync failed)."; exit 1; }
+  if [ "$(uses_local_models)" = "no" ]; then
+    # Every step is set to a cloud model: nothing local is started. (Search then matches on keywords only.)
+    echo "Ollama: not started (no step uses a local model)"
+  elif ollama_up; then
     echo "Ollama: already running"
   else
     echo "Ollama: starting…"
@@ -84,7 +93,6 @@ start() {
     echo "Career Agent: already running at $URL"
   else
     echo "Career Agent: starting…"
-    uv sync --quiet || { echo "Couldn't install the app's packages (uv sync failed)."; exit 1; }
     nohup "$DIR/.venv/bin/python" -m career_agent --no-browser >>"$LOG" 2>&1 &
     echo $! >"$PIDFILE"
     disown
