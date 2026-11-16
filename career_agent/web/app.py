@@ -1378,6 +1378,12 @@ def tasks_cancel(request: Request, task_id: int):
     return go(back(request, "/tasks"), msg="Cancelled.")
 
 
+@app.post("/tasks/cancel-queued")
+def tasks_cancel_queued(request: Request):
+    n = tasks.cancel_queued()
+    return go(back(request, "/tasks"), msg=f"Cancelled {n} waiting task{'s' if n != 1 else ''}. What is running now finishes.")
+
+
 @app.post("/tasks/clear")
 def tasks_clear(request: Request):
     db.ex("DELETE FROM tasks WHERE status IN ('done', 'cancelled') OR (status = 'error' AND finished_at < ?)", (db.days_ago(1),))

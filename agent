@@ -4,6 +4,7 @@
 #   ./agent start     start Ollama and the app, keep the Mac awake while it works, open the browser
 #   ./agent stop      stop the app, unload the models and quit Ollama: nothing is left running
 #   ./agent run       start everything, work until the queue is empty, then stop everything again
+#   ./agent cancel    drop everything that is waiting in the queue (e.g. a big redo you want to end); then stop
 #   ./agent status    what is running right now
 #   ./agent restart
 #
@@ -165,6 +166,14 @@ status() {
   fi
 }
 
+cancel() {  # end a long job for good: what is waiting is dropped, then everything is stopped
+  cd "$DIR" || exit 1
+  local n
+  n="$("$DIR/.venv/bin/python" -c 'from career_agent import config, db, tasks; config.configure(None); db.init(); print(tasks.cancel_queued())' 2>/dev/null)"
+  echo "Queue: cancelled ${n:-0} waiting task(s). They won't be picked up again."
+  stop "$@"
+}
+
 queue_line() {  # prints "<tasks left>|<summary>", or nothing if the app doesn't answer
   curl -s -m 5 "$URL/api/queue" | "$DIR/.venv/bin/python" -c '
 import json, sys
@@ -230,8 +239,9 @@ run() {
 case "${1:-}" in
   start) shift; start "$@" ;;
   run) shift; run "$@" ;;
+  cancel) shift; cancel "$@" ;;
   stop) shift; stop "$@" ;;
   restart) stop; start --no-browser ;;
   status) status ;;
-  *) echo "Usage: ./agent start [--no-browser] | run [--max-hours N] | stop [--keep-ollama] | status | restart"; exit 1 ;;
+  *) echo "Usage: ./agent start [--no-browser] | run [--max-hours N] | stop [--keep-ollama] | cancel | status | restart"; exit 1 ;;
 esac

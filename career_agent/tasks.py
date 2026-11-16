@@ -37,6 +37,7 @@ TASK_LABELS = {
     "embed_index": "Indexing documents for search",
     "pull_model": "Downloading the search model",
     "build_cv_base": "Reading your CV as the base for tailored CVs",
+    "rescreen_jobs": "Screening job listings again",
 }
 
 _wake = threading.Event()
@@ -103,6 +104,7 @@ def _handlers() -> dict:
         "embed_index": lambda p: retrieval.embed_pending(),
         "pull_model": lambda p: _pull_model(p["model"]),
         "build_cv_base": lambda p: cvdata.build_base(p["doc_id"]),
+        "rescreen_jobs": lambda p: sources.rescreen(),
     }
 
 
@@ -179,7 +181,7 @@ def is_transient(e: Exception) -> bool:
 TASK_STEPS = {
     "draft_application": ("letter", "cv", "fact_check"), "revise_application": ("letter", "cv", "fact_check"),
     "check_application": ("fact_check",), "interview_prep": ("prep",), "followup": ("letter",), "build_style": ("style",),
-    "build_cv_base": ("cv",), "parse_job": ("read_ad",), "score_job": ("score",), "poll_source": ("screen",),
+    "build_cv_base": ("cv",), "rescreen_jobs": ("screen",), "parse_job": ("read_ad",), "score_job": ("score",), "poll_source": ("screen",),
     "analyze_document": ("read_document",), "consolidate_facts": ("read_document",), "classify_response": ("reply",),
 }
 FETCH_TASKS = {"poll_source", "parse_job"}
@@ -504,6 +506,14 @@ def retry(task_id: int) -> None:
     db.ex("UPDATE tasks SET status = 'queued', error = NULL, started_at = NULL, finished_at = NULL WHERE id = ? "
           "AND status IN ('error', 'cancelled')", (task_id,))
     _wake.set()
+
+
+def cancel_queued() -> int:
+    """Drop everything that is waiting to run (what is running finishes). For stopping a big redo midway:
+    cancelled work isn't picked up again at the next start."""
+    n = db.scalar("SELECT COUNT(*) FROM tasks WHERE status = 'queued'") or 0
+    db.ex("UPDATE tasks SET status = 'cancelled', finished_at = ? WHERE status = 'queued'", (db.now(),))
+    return n
 
 
 def cancel(task_id: int) -> None:
