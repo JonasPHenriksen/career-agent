@@ -17,7 +17,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import (companies, config, cvdata, cvrender, db, exporter, ingest, insights, jobs, keychain, knowledge, llm, mailer,
+from .. import (companies, config, cvdata, cvrender, db, exporter, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
                 profile, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
@@ -810,6 +810,7 @@ def profile_page(request: Request, tab: str = "about"):
               "design": settings.get("cv"), "json": json.dumps(main["data"], ensure_ascii=False, indent=2) if main else "",
               "busy": tasks.active(ref="cv-base"), "task_error": tasks.last_error("cv-base")}
     return render(request, "profile.html", tab=tab, n_docs=n_docs, style_busy=style_busy, levels=profile.LEVELS, cv=cv,
+                  job_kinds=jobkinds.KINDS, kinds_wanted=jobkinds.wanted_kinds(),
                   made_style=llm.made_by("style", ("style_guide",)),
                   tidy_busy=any(r["kind"] == "consolidate_facts" for r in active_rows), p=settings.get("profile"), docs=docs, grouped=grouped,
                   kinds=profile.KINDS, kind_labels=profile.KIND_LABELS, outcomes=profile.OUTCOMES,
@@ -845,6 +846,7 @@ async def profile_about(request: Request):
     data = await request.form()
     patch = {k: (data.get(k) or "").strip() for k in PROFILE_FIELDS}
     patch["work_modes"] = [m for m in ("onsite", "hybrid", "remote") if data.get(f"mode_{m}")]
+    patch["job_kinds"] = {k: bool(data.get(f"kind_{k}")) for k, _ in jobkinds.KINDS}
     current = settings.get("profile")
     current.update(patch)
     settings.set("profile", current)
