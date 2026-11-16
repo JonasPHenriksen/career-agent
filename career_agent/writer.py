@@ -154,18 +154,22 @@ def _job_context(job: dict, language: str, instructions: str | None) -> str:
 
 
 def letter_length(language: str | None = None) -> int:
-    """The length you set in Settings, or 0: the writer then picks a length within LETTER_RANGE."""
+    """The length you set in Settings, or 0: the writer then decides, up to LETTER_MAX words."""
     return int(settings.get("writing").get("letter_words") or 0)
 
 
-LETTER_RANGE = (150, 300)
+# A ceiling, never a target. With "150 to 300 words" the strongest models wrote 294-296 every time: they read a
+# range as a length to fill. 400 words is about what fits on a page under the letterhead, and your own letters
+# run from about 320 to 480.
+LETTER_MAX = 400
 
 
 def length_rule(language: str | None = None) -> str:
     words = letter_length(language)
     if words:
         return f"about {words} words (between {round(words * 0.8)} and {round(words * 1.15)})"
-    return f"{LETTER_RANGE[0]} to {LETTER_RANGE[1]} words. Shorter is better than padded"
+    return (f"at most {LETTER_MAX} words. That is a ceiling, not a length to aim for: stop when the case is made. "
+            "Don't fill up to it, and don't cut a point that earns its place to stay well under it")
 
 
 # What a letter is for and how to get there. Deliberately a goal with room to think, not a recipe: a fixed plan

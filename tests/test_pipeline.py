@@ -253,7 +253,7 @@ def test_letter_brief_gives_a_goal_not_a_recipe(fake):
     from career_agent import settings
     job = {"id": 1, "title": "Product Owner", "description": JOB_TEXT}
     task = writer._letter_task(job, "da", None)
-    assert "150 to 300 words" in task and "No paragraph per CV section" in task and "angle" in task
+    assert "at most 400 words" in task and "a ceiling, not a length to aim for" in task and "No paragraph per CV section" in task and "angle" in task
     assert "two to four specific experiences" not in writer.WRITER_SYSTEM, "the old recipe is gone"
     settings.update("writing", {"letter_words": 400})
     assert "about 400 words (between 320 and 460)" in writer._letter_task(job, "da", None), "an explicit setting wins"

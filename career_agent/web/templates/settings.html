@@ -211,7 +211,7 @@
   <h2>Writing</h2>
   <form method="post" action="/settings/writing">
     <div class="fields-3">
-      <div class="field"><label for="lw">Letter length (words) <span class="hint">· 0 = the writer decides ({{ letter_range[0] }}–{{ letter_range[1] }})</span></label><input id="lw" type="number" name="letter_words" value="{{ w.letter_words }}" min="0" max="900"></div>
+      <div class="field"><label for="lw">Letter length (words) <span class="hint">· 0 = as long as it needs, at most {{ letter_max }}</span></label><input id="lw" type="number" name="letter_words" value="{{ w.letter_words }}" min="0" max="900"></div>
       <div class="field"><label for="lang">Language</label><select id="lang" name="language">{% for k, l in [('auto','Same as the job ad'),('da','Always Danish'),('en','Always English'),('sv','Always Swedish'),('no','Always Norwegian'),('de','Always German')] %}<option value="{{ k }}" {{ 'selected' if w.language == k }}>{{ l }}</option>{% endfor %}</select></div>
       <div class="field"><label for="font">PDF font</label><select id="font" name="pdf_font"><option value="sans" {{ 'selected' if w.pdf_font == 'sans' }}>Clean (Arial)</option><option value="serif" {{ 'selected' if w.pdf_font == 'serif' }}>Classic (Georgia)</option></select></div>
       <div class="field"><label for="acc">Accent colour</label><input id="acc" type="color" name="accent_color" value="{{ w.accent_color }}" style="height:2.4rem;padding:.2rem"></div>

@@ -1108,7 +1108,7 @@ def settings_page(request: Request):
                   w=settings.get("writing"), anthropic_models=llm.ANTHROPIC_MODELS,
                   sources=db.q("SELECT * FROM sources ORDER BY id"), source_kinds=sources.KINDS, alert_days=alerts.FIRST_READ_DAYS,
                   data_dir=str(config.DATA_DIR), efforts=["low", "medium", "high", "xhigh", "max"],
-                  search=retrieval.status(), letter_range=writer.LETTER_RANGE,
+                  search=retrieval.status(), letter_max=writer.LETTER_MAX,
                   steps=[{"key": k, "label": label, "tier": {"check": writer.check_tier()}.get(tier, tier),
                           "own": llm.step_settings(k), "usual_effort": STEP_USUAL_EFFORT.get(k, "")} for k, label, tier, _ in llm.STEPS],
                   model_groups=llm.model_choices(),
