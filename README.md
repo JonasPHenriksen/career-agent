@@ -12,8 +12,8 @@ You stay in charge of one thing: nothing is ever sent without you pressing Send.
 ./agent start
 ```
 
-It starts Ollama (the local models) and the app, and opens <http://127.0.0.1:8765>. The first run installs what
-it needs. When you're done:
+It starts the app and opens <http://127.0.0.1:8765>; Ollama (the local models) is started only when a step is
+set to a local model. The first run installs what it needs. When you're done:
 
 ```bash
 ./agent stop
@@ -32,6 +32,11 @@ It starts everything, checks your job sources, reads and scores new jobs, writes
 stops everything when the queue is empty (or after 6 hours: `--max-hours 2` changes that). Review the results the
 next time you start it. Stopping in the middle of work is safe: unfinished tasks go back in the queue and run on the next start.
 While it runs, the Mac is kept from idle-sleeping so long jobs can finish (closing the lid still sleeps it).
+
+To end a long job for good, `./agent cancel` drops everything that is waiting in the queue and stops (the Tasks
+page has the same button). To open the app without it starting any work, switch on **Hold all automatic work**
+under Settings → Automation: no job sources are checked and no model is used until you press Resume in the banner
+at the top. What you start yourself still runs.
 
 The **Today** page walks you through setup:
 
@@ -85,6 +90,13 @@ job sources ──► quick screening ──► read the ad ──► fit score 
   like any other source. Links are only followed where the site's robots.txt allows; Jobindex's tracking
   links are turned into the ad's own page where the link carries its id, and any other forbidden link is kept
   for you to open and paste.
+* **Kinds of job you don't want.** Under Profile → About you, switch off student jobs, internships, part-time,
+  temporary, freelance, research posts or volunteer work. Those are set aside by their title before any model
+  sees them, so they cost no time or tokens. A job you added by hand, chose to keep or have an application for
+  is never set aside.
+* **Ads that turn down AI-written applications.** Some ads say that applications written with AI or ChatGPT
+  are rejected, or ask you to write it yourself. The application page and the job page then show a warning
+  with the ad's own sentence, so you write that letter yourself.
 * **Honesty guardrails.** The writer may only use facts from your career database; it never invents
   employers, titles, dates, numbers or skills. A separate fact check then marks every claim in the
   letter and CV as backed, stretched or unsupported, so you fix problems before an interviewer finds them.
