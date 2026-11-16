@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlparse, urlunparse
+import time
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import feedparser
 from bs4 import BeautifulSoup
 
-from . import db, fetch, jobs, llm, profile
+from . import db, fetch, jobs, llm, profile, tasks
 from .llm import jsonutil as J
 
 KINDS = {"rss": "RSS / Atom feed", "page": "Search results page"}
-MAX_NEW_PER_RUN = 40
+MAX_NEW_PER_RUN = 200  # screened 40 at a time, so one check can take a whole long list
+TRIAGE_BATCH = 40
+MAX_PAGES = 5
+PAGE_PAUSE = 1.5  # seconds between page fetches from the same site
+FILTERED_NOTE = "Filtered out by quick screening. Open it and press Analyse to look anyway."
 
 PAGE_SCHEMA = J.obj(jobs=J.arr(J.obj(
     n=J.i("The [n] number of the link"),
@@ -111,6 +116,45 @@ def _triage(items: list[dict]) -> dict[int, str]:
     return {k["n"]: k["reason"] for k in r.data["keep"] if 0 <= k["n"] < len(items)}
 
 
+def _page_url(url: str, page: int) -> str | None:
+    """The same feed, further back, for the feeds known to take a page number (tried live: jobbank.dk's
+    /job/rss/ gives 100 older listings per page=N). Jobindex and IT-jobbank have the same idea but their robots.txt
+    forbids page=, Teamtailor and HR-Manager list everything in one go, so those return None."""
+    p = urlparse(url)
+    if p.netloc.lower().endswith("jobbank.dk") and p.path.startswith("/job/rss"):
+        q = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if k != "page"] + [("page", str(page))]
+        return urlunparse(p._replace(query=urlencode(q)))
+    return None
+
+
+def _unseen(items: list[dict], seen: set[str]) -> list[dict]:
+    """Listings whose address the app has never stored (and that we haven't already picked up this run)."""
+    fresh = []
+    for it in items:
+        url = fetch.canonical_url(it["url"])
+        if url in seen or db.q1("SELECT 1 FROM jobs WHERE url = ?", (url,)):
+            continue
+        seen.add(url)
+        it["url"] = url
+        fresh.append(it)
+    return fresh
+
+
+def _screen_and_store(batch: list[dict], source_id: int) -> int:
+    """Screen one batch and store it. Stored batch by batch so a model failure keeps the earlier ones."""
+    keep = _triage(batch)
+    for n, it in enumerate(batch):
+        if n in keep:
+            jobs.add_from_url(it["url"], source_id=source_id, title=it["title"], company=it["company"],
+                              text=it["text"] or None)
+        else:
+            jid, _ = jobs.add_from_url(it["url"], source_id=source_id, title=it["title"],
+                                       company=it["company"], text=it["text"] or None,
+                                       status="filtered", queue=False)
+            db.update("jobs", jid, {"notes": FILTERED_NOTE})
+    return len(keep)
+
+
 def poll(source_id: int) -> dict:
     src = db.q1("SELECT * FROM sources WHERE id = ?", (source_id,))
     if not src:
@@ -118,35 +162,69 @@ def poll(source_id: int) -> dict:
     db.update("sources", source_id, {"last_run_at": db.now()})
     try:
         resp = fetch.get(src["url"])
-        if src["kind"] == "rss" or fetch.looks_like_feed(resp):
-            items = _rss_items(resp.content, src["url"])
-        else:
-            items = _page_items(resp.text, str(resp.url))
-        seen, fresh = set(), []
-        for it in items:
-            url = fetch.canonical_url(it["url"])
-            if url in seen or db.q1("SELECT 1 FROM jobs WHERE url = ?", (url,)):
-                continue
-            seen.add(url)
-            it["url"] = url
-            fresh.append(it)
+        is_feed = src["kind"] == "rss" or fetch.looks_like_feed(resp)
+        items = _rss_items(resp.content, src["url"]) if is_feed else _page_items(resp.text, str(resp.url))
+        seen: set[str] = set()
+        fresh = _unseen(items, seen)
+        listings = len(items)
+        # The app is off between runs, so the newest page may not reach back to the last run: keep going back
+        # while each page still holds something new.
+        page = 1
+        while is_feed and fresh and page < MAX_PAGES and len(fresh) < MAX_NEW_PER_RUN:
+            more_url = _page_url(src["url"], page + 1)
+            if not more_url:
+                break
+            time.sleep(PAGE_PAUSE)
+            try:
+                more = _rss_items(fetch.get(more_url).content, more_url)
+            except fetch.FetchError:
+                break
+            page += 1
+            listings += len(more)
+            new = _unseen(more, seen)
+            if not new:
+                break
+            fresh += new
         fresh = fresh[:MAX_NEW_PER_RUN]
-        keep = _triage(fresh) if fresh else {}
         kept = 0
-        for n, it in enumerate(fresh):
-            if n in keep:
-                jobs.add_from_url(it["url"], source_id=source_id, title=it["title"], company=it["company"],
-                                  text=it["text"] or None)
-                kept += 1
-            else:
-                jid, _ = jobs.add_from_url(it["url"], source_id=source_id, title=it["title"],
-                                           company=it["company"], text=it["text"] or None,
-                                           status="filtered", queue=False)
-                db.update("jobs", jid, {"notes": "Filtered out by quick screening. Open it and press Analyse to look anyway."})
-        status = f"{len(items)} listings, {len(fresh)} new, {kept} kept for review"
+        for i in range(0, len(fresh), TRIAGE_BATCH):
+            kept += _screen_and_store(fresh[i:i + TRIAGE_BATCH], source_id)
+        status = f"{listings} listings, {len(fresh)} new, {kept} kept for review"
         db.update("sources", source_id, {"last_status": status, "last_error": None,
                                          "jobs_found": (src["jobs_found"] or 0) + kept})
-        return {"listings": len(items), "new": len(fresh), "kept": kept}
+        return {"listings": listings, "new": len(fresh), "kept": kept}
     except (fetch.FetchError, llm.LLMError) as e:
         db.update("sources", source_id, {"last_status": "error", "last_error": str(e)})
         raise
+
+
+def rescreen(job_ids: list[int] | None = None) -> dict:
+    """Run the quick screening again, with whatever model is set now, over listings that came from a source and
+    haven't been acted on. Never touches jobs with an application or ones you dismissed or shortlisted."""
+    rows = db.q("SELECT * FROM jobs WHERE source_id IS NOT NULL AND status IN ('new', 'filtered') "
+                "AND id NOT IN (SELECT job_id FROM applications) ORDER BY id")
+    if job_ids is not None:
+        wanted = set(job_ids)
+        rows = [r for r in rows if r["id"] in wanted]
+    now_kept = now_dropped = 0
+    for i in range(0, len(rows), TRIAGE_BATCH):
+        batch = rows[i:i + TRIAGE_BATCH]
+        items = [{"title": r["title"] or "", "company": r["company_name"] or "", "location": r["location"] or "",
+                  "text": (r["description"] or "")[:240]} for r in batch]
+        keep = _triage(items)
+        for n, job in enumerate(batch):
+            if n in keep:
+                now_kept += 1
+                if job["status"] == "filtered":
+                    parsed = job["parse_status"] == "parsed"
+                    change = {"status": "new", "notes": None}
+                    if not parsed:
+                        change.update(parse_status="pending", parse_error=None)
+                    db.update("jobs", job["id"], change)
+                    if not parsed:
+                        tasks.enqueue("parse_job", {"job_id": job["id"]}, ref=f"job:{job['id']}")
+            else:
+                now_dropped += 1
+                if job["status"] == "new":
+                    db.update("jobs", job["id"], {"status": "filtered", "notes": FILTERED_NOTE})
+    return {"screened": len(rows), "now_kept": now_kept, "now_dropped": now_dropped}

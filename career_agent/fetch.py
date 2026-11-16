@@ -191,3 +191,76 @@ def looks_like_feed(resp: httpx2.Response) -> bool:
     ctype = resp.headers.get("content-type", "").lower()
     head = resp.content[:400].lstrip().lower()
     return any(t in ctype for t in ("rss", "atom", "xml")) or head.startswith((b"<?xml", b"<rss", b"<feed"))
+
+
+# --- Finding the full ad -------------------------------------------------------------------------------------
+# Job boards (Jobindex, IT-jobbank) show a teaser page and keep the real ad one step further on, on the employer's
+# site or on their own /jobannonce/ page. The feeds link to the teaser, so reading it gives 1-2k characters.
+_WRAPPER_HOSTS = ("jobindex.dk", "it-jobbank.dk")
+_SHORT_PAGE = 2500  # below this many characters of text, a page may just be a pointer to the real ad
+_MAX_HOPS = 2
+_POINTS_TO_AD = re.compile(
+    r"^(se jobbet|se (hele )?(job)?annonce(n)?|se hele jobbet|læs (hele )?(jobbet|annoncen)|"
+    r"view (the )?(full )?(job|ad|advert|vacancy)|see (the )?(full )?(job|ad)|read (the )?full (job|ad)|"
+    r"go to (the )?(job|ad)|gå til (job|annonce)\w*)\s*[»›>→]?$", re.I)
+
+
+def _is_wrapper(url: str) -> bool:
+    p = urlparse(url)
+    return p.netloc.lower().endswith(_WRAPPER_HOSTS) and "/vis-job/" in p.path
+
+
+def _next_hop(html: str, url: str, text_len: int) -> str | None:
+    """The one link that leads on to the full ad, or None when the page is (or may be) the ad itself."""
+    soup = BeautifulSoup(html, "html.parser")
+    if _is_wrapper(url):
+        # "Se jobbet" button first (employer's page), else the headline link (the board's own full-ad page).
+        for sel in ("a.seejobdesktop[href]", "a.seejobmobil[href]", ".job-title a[href]"):
+            a = soup.select_one(sel)
+            if a and a["href"].startswith(("http", "/")):
+                return urljoin(url, a["href"])
+        return None
+    if text_len >= _SHORT_PAGE:
+        return None
+    host = urlparse(url).netloc.lower()
+    targets = set()
+    for a in soup.find_all("a", href=True):
+        href = urljoin(url, a["href"].strip())
+        if (urlparse(href).scheme in ("http", "https") and urlparse(href).netloc.lower() != host
+                and _POINTS_TO_AD.match(" ".join(a.get_text(" ", strip=True).split()))):
+            targets.add(href)
+    # Two different "view job" links means a list of ads, not a pointer to one.
+    return targets.pop() if len(targets) == 1 else None
+
+
+def _is_html(resp: httpx2.Response) -> bool:
+    ctype = resp.headers.get("content-type", "").lower()
+    return not ctype or "html" in ctype
+
+
+def ad_page(url: str) -> httpx2.Response:
+    """Fetch the page that holds the full ad: follows a job board's teaser page on to the real ad (at most two
+    hops). If following fails or gives less text, the page we started from is returned. The caller keeps its own
+    URL; only the text comes from here."""
+    best = cur = get(url)  # a failure on the first page is a real failure and is raised
+    best_len = len(html_to_text(best.text)[1]) if _is_html(best) else 0
+    seen = {url, str(best.url)}
+    for _ in range(_MAX_HOPS):
+        if not _is_html(cur):
+            break
+        cur_len = len(html_to_text(cur.text)[1])
+        nxt = _next_hop(cur.text, str(cur.url), cur_len)
+        if not nxt or nxt in seen:
+            break
+        seen.add(nxt)
+        try:
+            cur = get(nxt)
+        except FetchError:
+            break
+        seen.add(str(cur.url))
+        if not _is_html(cur):
+            break
+        n = len(html_to_text(cur.text)[1])
+        if n > best_len:
+            best, best_len = cur, n
+    return best
