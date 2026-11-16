@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
-from . import db, llm, settings
+from . import db, jobkinds, llm, settings
 from .llm import jsonutil as J
 
 CATEGORIES = [
@@ -512,6 +512,10 @@ def candidate_block() -> str:
         ("Always mention when relevant", p.get("always_mention")), ("Never mention", p.get("never_mention")),
         ("In their own words", p.get("about")),
     ]
+    wanted = jobkinds.wanted_kinds()
+    off = [label for key, label in jobkinds.KINDS if not wanted[key]]
+    if off:
+        rows.append(("Not interested in", ", ".join(off)))
     return "\n".join(f"- {k}: {v}" for k, v in rows if v) or "- (no details given yet)"
 
 

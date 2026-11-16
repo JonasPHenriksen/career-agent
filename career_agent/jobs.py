@@ -5,7 +5,7 @@ import json
 import re
 from datetime import date, datetime, timezone
 
-from . import companies, db, fetch, llm, notify, profile, retrieval, settings, tasks
+from . import companies, db, fetch, jobkinds, llm, notify, profile, retrieval, settings, tasks
 from .llm import jsonutil as J
 
 JOB_STATUSES = [("new", "New"), ("shortlisted", "Shortlisted"), ("dismissed", "Dismissed"), ("filtered", "Filtered out")]
@@ -231,9 +231,58 @@ def parse(job_id: int, use_text: bool = False) -> dict:
         "details": db.jdump(details), "fingerprint": fp, "reposted": reposted,
         "parse_status": "parsed", "updated_at": db.now(),
     })
+    if job["source_id"] is not None:  # jobs the user added by hand are never skipped
+        skip = jobkinds.unwanted(title, None, d["employment_type"], d["seniority"])
+        if skip:
+            _filter_out(job_id, jobkinds.skip_note(skip[1]))
+            return {"title": title, "company": company, "skipped": skip[1]}
+        twin = find_duplicate(job_id, title, description)
+        if twin:
+            _filter_out(job_id, f"The same ad as {twin['title']} at {twin['company_name'] or '?'} (job {twin['id']}).")
+            return {"title": title, "company": company, "skipped": "duplicate"}
     if settings.get("automation").get("auto_score", True):
         tasks.enqueue("score_job", {"job_id": job_id}, ref=f"job:{job_id}")
     return {"title": title, "company": company}
+
+
+def _filter_out(job_id: int, note: str) -> None:
+    db.update("jobs", job_id, {"status": "filtered", "notes": note, "updated_at": db.now()})
+
+
+def _shingles(text: str | None, n: int = 3) -> set[str]:
+    words = re.findall(r"\w+", (text or "").lower())
+    if len(words) < n:
+        return {" ".join(words)} if words else set()
+    return {" ".join(words[i:i + n]) for i in range(len(words) - n + 1)}
+
+
+SHORT_AD_CHARS = 2500  # below this, an ad may be just a teaser or a company intro shared by different jobs
+
+
+def same_ad_text(a: str | None, b: str | None) -> bool:
+    """Near-identical ad texts (word-shingle overlap). A short text must be nearly contained in the other."""
+    sa, sb = _shingles(a), _shingles(b)
+    if not sa or not sb:
+        return False
+    both = len(sa & sb)
+    if both / len(sa | sb) >= 0.8:
+        return True
+    if min(len(a or ""), len(b or "")) < SHORT_AD_CHARS:
+        return both / min(len(sa), len(sb)) >= 0.9 and min(len(sa), len(sb)) >= 20
+    return False
+
+
+def find_duplicate(job_id: int, title: str | None, description: str | None) -> dict | None:
+    """An earlier job (last 30 days, not dismissed) with the same title and almost the same ad text."""
+    key = companies.norm_name(title)
+    if not key:
+        return None
+    for other in db.q("SELECT id, title, company_name, description FROM jobs WHERE id < ? AND status != 'dismissed' "
+                      "AND created_at >= ? AND title IS NOT NULL AND description IS NOT NULL",
+                      (job_id, db.days_ago(30))):
+        if companies.norm_name(other["title"]) == key and same_ad_text(description, other["description"]):
+            return other
+    return None
 
 
 def job_block(job: dict, max_chars: int = 30000) -> str:
@@ -265,6 +314,12 @@ def job_block(job: dict, max_chars: int = 30000) -> str:
 
 def score(job_id: int) -> dict:
     job = get(job_id)
+    if job and job["source_id"] is not None and not db.q1("SELECT id FROM applications WHERE job_id = ?", (job_id,)):
+        # covers jobs read before the setting changed; no model call
+        skip = jobkinds.unwanted(job["title"], None, job["employment_type"], job["seniority"])
+        if skip:
+            _filter_out(job_id, jobkinds.skip_note(skip[1]))
+            return {"skipped": skip[1]}
     if not job or job["parse_status"] != "parsed":
         return {"skipped": "job not parsed"}
     if not profile.has_facts():
@@ -294,25 +349,39 @@ def score(job_id: int) -> dict:
 
 
 def maybe_auto_draft(job_id: int) -> bool:
+    """Draft the best matches, but only once the current batch of reading and scoring is done.
+
+    Drafting as each job finished meant the first five over the threshold won, not the best five.
+    Returns True when this job got an application."""
+    busy = db.scalar("SELECT COUNT(*) FROM tasks WHERE kind IN ('parse_job', 'score_job') "
+                     "AND status IN ('queued', 'running') AND COALESCE(ref, '') != ?", (f"job:{job_id}",))
+    if busy:
+        return False  # the last job to finish will pick the best
+    return job_id in draft_best()
+
+
+def draft_best() -> list[int]:
+    """Create applications for the highest-scoring eligible jobs, up to what is left of today's limit."""
     a = settings.get("automation")
-    job = get(job_id)
-    if not job or not a.get("auto_draft") or job["status"] in ("dismissed", "filtered"):
-        return False
-    if (job["fit_score"] or 0) < int(a.get("auto_draft_threshold") or 80):
-        return False
-    if db.q1("SELECT id FROM applications WHERE job_id = ?", (job_id,)):
-        return False
-    if job["company_id"] and db.scalar("SELECT blocked FROM companies WHERE id = ?", (job["company_id"],)):
-        return False
-    if job["deadline"] and job["deadline"] < date.today().isoformat():
-        return False
-    drafted_today = db.scalar("SELECT COUNT(*) FROM applications WHERE auto_drafted = 1 AND created_at >= ?",
-                              (_utc_midnight(),)) or 0
-    if drafted_today >= int(a.get("auto_draft_daily_cap") or 5):
-        return False
-    create_application(job_id, auto=True)
-    notify.send("Strong match found", f"{job['title']} at {job['company_name'] or '?'} scored {job['fit_score']}. Drafting your application…")
-    return True
+    if not a.get("auto_draft"):
+        return []
+    left = int(a.get("auto_draft_daily_cap") or 5) - (db.scalar(
+        "SELECT COUNT(*) FROM applications WHERE auto_drafted = 1 AND created_at >= ?", (_utc_midnight(),)) or 0)
+    if left <= 0:
+        return []
+    threshold = int(a.get("auto_draft_threshold") or 80)
+    # nearest deadline first on ties; jobs without a deadline go last
+    rows = db.q("SELECT j.id, j.title, j.company_name, j.fit_score FROM jobs j "
+                "WHERE j.status NOT IN ('dismissed', 'filtered') AND j.fit_score >= ? "
+                "AND NOT EXISTS (SELECT 1 FROM applications ap WHERE ap.job_id = j.id) "
+                "AND (j.company_id IS NULL OR NOT COALESCE((SELECT blocked FROM companies c WHERE c.id = j.company_id), 0)) "
+                "AND (j.deadline IS NULL OR j.deadline >= ?) "
+                "ORDER BY j.fit_score DESC, j.deadline IS NULL, j.deadline, j.id DESC LIMIT ?",
+                (threshold, date.today().isoformat(), left))
+    for job in rows:
+        create_application(job["id"], auto=True)
+        notify.send("Strong match found", f"{job['title']} at {job['company_name'] or '?'} scored {job['fit_score']}. Drafting your application…")
+    return [j["id"] for j in rows]
 
 
 def _utc_midnight() -> str:

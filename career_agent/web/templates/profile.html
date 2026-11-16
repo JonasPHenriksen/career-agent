@@ -40,6 +40,8 @@
     </div>
     <div class="field"><label>Work modes</label>
       <div class="row">{% for m, l in [('onsite','On-site'),('hybrid','Hybrid'),('remote','Remote')] %}<label class="check"><input type="checkbox" name="mode_{{ m }}" value="1" {{ 'checked' if m in (p.work_modes or []) }}> <span>{{ l }}</span></label>{% endfor %}</div></div>
+    <div class="field"><label>Kinds of job to look at <span class="hint">· untick the ones you don't want; they are skipped without using the model</span></label>
+      <div class="row">{% for k, l in job_kinds %}<label class="check"><input type="checkbox" name="kind_{{ k }}" value="1" {{ 'checked' if kinds_wanted[k] }}> <span>{{ l|capitalize }}</span></label>{% endfor %}</div></div>
     <div class="field"><label for="deal_breakers">Deal-breakers</label><textarea id="deal_breakers" name="deal_breakers" rows="2" placeholder="e.g. No night shifts. Nothing in gambling or tobacco. Not below senior level.">{{ p.deal_breakers }}</textarea></div>
   </section>
   <section class="card">

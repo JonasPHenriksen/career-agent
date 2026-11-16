@@ -21,6 +21,9 @@ DEFAULTS: dict[str, Any] = {
         "target_industries": "",
         "locations": "",
         "work_modes": ["onsite", "hybrid", "remote"],
+        # kinds of job to look at (False = skip those ads without spending model calls); see jobkinds.py
+        "job_kinds": {"student": True, "internship": True, "part_time": True, "temporary": True,
+                      "freelance": True, "research": True, "volunteer": True},
         "min_salary": "",
         "availability": "",
         "deal_breakers": "",
