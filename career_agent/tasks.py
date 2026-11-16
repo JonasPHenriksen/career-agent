@@ -450,6 +450,19 @@ def queue_state() -> dict:
             "holds": {NEED_LABELS.get(n, n): why for n, why in waiting_for.items()}}
 
 
+def comes_later(row: dict, screening: bool) -> bool:
+    """Work that waits for other work in the queue, so nothing is done twice or on stale input: ads aren't read or
+    scored while listings are being screened again (screening decides which are worth reading), and a draft isn't
+    written while its job ad is being read or scored again."""
+    if row["kind"] in ("parse_job", "score_job"):
+        return screening
+    if row["kind"] in ("draft_application", "check_application") and (row.get("ref") or "").startswith("app:"):
+        return bool(db.q1(
+            "SELECT 1 FROM tasks t JOIN applications a ON t.ref = 'job:' || a.job_id WHERE a.id = ? "
+            "AND t.kind IN ('parse_job', 'score_job') AND t.status IN ('queued', 'running')", (row["ref"][4:],)))
+    return False
+
+
 async def worker_loop(stop: asyncio.Event) -> None:
     running: set[asyncio.Task] = set()
     while not stop.is_set():
@@ -466,11 +479,14 @@ async def worker_loop(stop: asyncio.Event) -> None:
                         memo[key] = needs(row)
                     need[row["id"]] = memo[key]
                 away = await asyncio.to_thread(unavailable, set().union(*need.values()))
+                screening = bool(db.q1("SELECT 1 FROM tasks WHERE kind = 'rescreen_jobs' AND status IN ('queued', 'running')"))
                 for row in rows:
                     if slots <= 0:
                         break
                     if need[row["id"]] & away:
                         continue  # stays queued until what it needs is back
+                    if comes_later(row, screening):
+                        continue
                     db.update("tasks", row["id"], {"status": "running", "started_at": db.now()})
                     t = asyncio.create_task(asyncio.to_thread(run_task, row))
                     running.add(t)

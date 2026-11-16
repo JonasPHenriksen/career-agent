@@ -7,7 +7,7 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
-from career_agent import db, fetch, llm, profile, settings, tasks
+from career_agent import db, fetch, jobs, llm, profile, settings, tasks
 from career_agent.llm.errors import LLMConfigError, LLMError, LLMTransient
 from career_agent.web.app import app
 
@@ -192,6 +192,31 @@ def test_on_hold_nothing_starts_on_its_own(fake):
         db.ex("DELETE FROM tasks")
         db.ex("DELETE FROM sources WHERE id = ?", (sid,))
         db.ex("DELETE FROM jobs WHERE id = ?", (job,))
+
+
+def test_screening_comes_before_reading_and_reading_before_drafting(fake):
+    sid = db.insert("sources", {"name": "Feed", "kind": "rss", "url": "https://example.com/feed2", "created_at": db.now()})
+    job = db.insert("jobs", {"title": "Backend developer", "url": "https://example.com/b", "status": "new",
+                             "parse_status": "parsed", "source_id": sid, "created_at": db.now(), "updated_at": db.now()})
+    app_id = db.insert("applications", {"job_id": job, "status": "draft", "created_at": db.now(), "updated_at": db.now()})
+    other = db.insert("jobs", {"title": "Tester", "url": "https://example.com/c", "status": "filtered",
+                               "parse_status": "parsed", "source_id": sid, "created_at": db.now(), "updated_at": db.now()})
+    try:
+        read = db.q1("SELECT * FROM tasks WHERE id = ?", (_task("parse_job", '{"job_id": %d}' % job, f"job:{job}"),))
+        draft = db.q1("SELECT * FROM tasks WHERE id = ?", (_task("draft_application", "{}", f"app:{app_id}"),))
+        assert tasks.comes_later(read, screening=True) and not tasks.comes_later(read, screening=False)
+        assert tasks.comes_later(draft, screening=False), "its ad is about to be read again"
+        db.update("tasks", read["id"], {"status": "done"})
+        assert not tasks.comes_later(draft, screening=False)
+
+        # A listing that was screened out after its reading was queued isn't fetched or read.
+        calls = len(fake.calls)
+        assert jobs.parse(other) == {"skipped": "set aside"} and len(fake.calls) == calls
+    finally:
+        db.ex("DELETE FROM tasks")
+        db.ex("DELETE FROM applications WHERE id = ?", (app_id,))
+        db.ex("DELETE FROM jobs WHERE id IN (?, ?)", (job, other))
+        db.ex("DELETE FROM sources WHERE id = ?", (sid,))
 
 
 def test_errors_say_which_provider_failed(fake, monkeypatch):

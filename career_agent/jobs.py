@@ -199,6 +199,16 @@ def parse(job_id: int, use_text: bool = False) -> dict:
     job = get(job_id)
     if not job:
         return {"skipped": "job deleted"}
+    # Jobs you added by hand, chose to keep or have an application for are never set aside.
+    may_skip = (job["source_id"] is not None and not job["keep"]
+                and not db.q1("SELECT 1 FROM applications WHERE job_id = ?", (job_id,)))
+    if may_skip:  # before the page is fetched or any model is asked
+        if job["status"] == "filtered":  # screened out after this reading was queued
+            return {"skipped": "set aside"}
+        skip = jobkinds.unwanted(job["title"], None, job["employment_type"], job["seniority"]) if job["title"] else None
+        if skip:
+            _filter_out(job_id, jobkinds.skip_note(skip[1]))
+            return {"title": job["title"], "skipped": skip[1]}
     db.update("jobs", job_id, {"parse_status": "parsing", "parse_error": None})
     page_title, text, jsonld = "", job.get("description") or "", None
     final_url = job["url"]
@@ -273,8 +283,7 @@ def parse(job_id: int, use_text: bool = False) -> dict:
         "details": db.jdump(details), "fingerprint": fp, "reposted": reposted,
         "parse_status": "parsed", "updated_at": db.now(),
     })
-    # Jobs you added by hand, or chose to keep, are never set aside.
-    if job["source_id"] is not None and not job["keep"]:
+    if may_skip:
         skip = jobkinds.unwanted(title, None, d["employment_type"], d["seniority"])
         if skip:
             _filter_out(job_id, jobkinds.skip_note(skip[1]))
