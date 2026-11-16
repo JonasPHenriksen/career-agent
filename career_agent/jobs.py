@@ -164,7 +164,7 @@ def parse(job_id: int, use_text: bool = False) -> dict:
     final_url = job["url"]
     if job["url"] and not use_text:
         try:
-            resp = fetch.get(job["url"])
+            resp = fetch.ad_page(job["url"])
             final_url = str(resp.url)
             html = resp.text
             jp = fetch.jobposting_jsonld(html)
