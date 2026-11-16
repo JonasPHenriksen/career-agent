@@ -309,6 +309,16 @@ class ClaudeCodeProvider:
         return args
 
     def complete(self, system: str, user: str, schema: dict | None, max_tokens: int) -> ProviderReply:
+        try:
+            return self._ask(system, user, schema)
+        except LLMError as e:
+            # Now and then Claude Code gives up on fitting its answer to the schema. A second try nearly always
+            # works, and is cheaper than a failed task you have to start again by hand.
+            if "structured_output_retries" not in str(e):
+                raise
+            return self._ask(system, user, schema)
+
+    def _ask(self, system: str, user: str, schema: dict | None) -> ProviderReply:
         import json
         import os
         import subprocess
@@ -352,8 +362,10 @@ class ClaudeCodeProvider:
         # The model that wrote the answer: when several are listed, the one with the most output.
         by_model = d.get("modelUsage") or {}
         used = max(by_model, key=lambda m: (by_model[m] or {}).get("outputTokens") or 0, default="") or self.model
-        tokens_in = sum(int(usage.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens",
-                                                            "cache_creation_input_tokens"))
+        # Fresh and cached input are kept apart (cached input counts for far less of a plan's usage).
         # "claude-code/…" never matches a price: a subscription isn't billed per call.
-        return ProviderReply(text=text, input_tokens=tokens_in, output_tokens=int(usage.get("output_tokens") or 0),
+        return ProviderReply(text=text, input_tokens=int(usage.get("input_tokens") or 0),
+                             output_tokens=int(usage.get("output_tokens") or 0),
+                             cache_read=int(usage.get("cache_read_input_tokens") or 0),
+                             cache_write=int(usage.get("cache_creation_input_tokens") or 0),
                              model=f"claude-code/{used}")

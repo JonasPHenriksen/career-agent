@@ -69,9 +69,11 @@ def bands(scores: list[int]) -> str:
 
 
 def models(path: Path, since: str, until: str = "9999") -> list[dict]:
-    return rows(path, "SELECT purpose, model, COUNT(*) n, SUM(ok) ok, ROUND(AVG(input_tokens)) tokens_in, ROUND(AVG(output_tokens)) "
+    # Input counts fresh and cached tokens together, so runs logged before and after the two were split compare.
+    tin = "(COALESCE(input_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0))"
+    return rows(path, f"SELECT purpose, model, COUNT(*) n, SUM(ok) ok, ROUND(AVG({tin})) tokens_in, ROUND(AVG(output_tokens)) "
                       "tokens_out, ROUND(AVG(duration_ms) / 1000.0) seconds, ROUND(SUM(duration_ms) / 60000.0) minutes, "
-                      "SUM(input_tokens) total_in, SUM(output_tokens) total_out FROM llm_calls WHERE created_at >= ? AND created_at < ? "
+                      f"SUM({tin}) total_in, SUM(output_tokens) total_out FROM llm_calls WHERE created_at >= ? AND created_at < ? "
                       "GROUP BY purpose, model ORDER BY minutes DESC", (since, until))
 
 
@@ -94,6 +96,17 @@ def main() -> None:
     jb = {r["id"]: r for r in rows(before, f"SELECT {cols} FROM jobs")}
     ja = {r["id"]: r for r in rows(after, f"SELECT {cols} FROM jobs")}
     both = sorted(set(jb) & set(ja))
+
+    # What the second run itself did. A job it screened out before reading still carries the first run's reading
+    # and score in the database; those are not the second run's work and must not be compared as if they were.
+    def done(purpose: str) -> set[int]:
+        return {int(r["ref"].split(":")[1]) for r in rows(after, "SELECT DISTINCT ref FROM llm_calls WHERE purpose = ? AND ok = 1 "
+                                                                 "AND created_at >= ? AND ref LIKE 'job:%'", (purpose, args.after_since))}
+
+    reread, rescored = done("parse_job"), done("fit_score")
+    for i, r in ja.items():
+        if i not in rescored:
+            r["fit_score"] = None
     md = [f"# {A} against {B}, step by step", "",
           f"First run ({A}): {before}. Second run ({B}): {after}. {len(both)} jobs are in both; {len(set(ja) - set(jb))} are new in the second.", ""]
 
@@ -124,7 +137,7 @@ def main() -> None:
         md.append("")
 
     # ---- Reading
-    read = [i for i in both if jb[i]["parse_status"] == "parsed" and ja[i]["parse_status"] == "parsed"]
+    read = [i for i in both if jb[i]["parse_status"] == "parsed" and ja[i]["parse_status"] == "parsed" and i in reread]
     longer = [i for i in read if (ja[i]["ad_chars"] or 0) > 1.5 * (jb[i]["ad_chars"] or 1)]
     md += ["## Reading the ads", "",
            f"{len(read)} ads were read in both runs. In {len(longer)} of them the second run had much more ad text "

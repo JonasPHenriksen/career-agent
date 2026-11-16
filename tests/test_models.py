@@ -57,7 +57,7 @@ def test_claude_code_provider_runs_without_tools_and_without_the_api_key(fake_cl
     seen = json.loads(out.read_text())
     args = seen["args"]
     assert reply.text == "Hello from Claude" and reply.model == "claude-code/claude-sonnet-5-5"
-    assert (reply.input_tokens, reply.output_tokens) == (10, 2)
+    assert (reply.input_tokens, reply.cache_read, reply.output_tokens) == (3, 7, 2), "fresh and cached input kept apart"
     assert seen["system"] == "SYSTEM PROMPT" and seen["user"] == "USER PROMPT"
     assert args[args.index("--tools") + 1] == "" and "--strict-mcp-config" in args and "--no-session-persistence" in args
     assert args[args.index("--setting-sources") + 1] == "" and args[args.index("--model") + 1] == "sonnet"
