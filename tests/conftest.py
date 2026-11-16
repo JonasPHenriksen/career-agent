@@ -166,7 +166,8 @@ class FakeProvider:
                     "contact_phone": "", "salary": "", "summary": "Lead the payments team.",
                     "responsibilities": ["Lede udviklingsteamet"], "requirements": ["Erfaring med Scrum", "Betalinger eller finans"],
                     "nice_to_have": ["SQL"], "benefits": [], "keywords": ["Scrum", "payments", "SQL", "Kubernetes"],
-                    "company_blurb": "FinPay builds payment software.", "red_flags": []}
+                    "company_blurb": "FinPay builds payment software.", "red_flags": [],
+                    "ai_policy": "AI-skrevne ansøgninger læses ikke." if "ChatGPT" in user else ""}
         if schema is jobs.FIT_SCHEMA:
             ids = [int(x) for x in __import__("re").findall(r"\[#(\d+)\]", system)][:2]
             return {"score": 86, "verdict": "strong", "summary": "You lead payments products today.",

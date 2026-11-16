@@ -77,3 +77,33 @@ def test_other_applications_to_the_same_employer_are_shown_and_avoided(fake):
     assert "You have 1 other application for FinPay A/S" in page and f'href="/applications/{a["id"]}"' in page
     assert "Draft 1 of 2 waiting for you" in page or "Draft 2 of 2 waiting for you" in page
     assert tracker.app_with_job(other)["review"]
+
+
+def test_an_ad_that_turns_down_ai_written_applications_raises_a_warning(fake):
+    yes = ["Bemærk: ansøgninger skrevet med ChatGPT eller anden AI bliver sorteret fra.",
+           "Please note that AI-generated applications will not be considered.",
+           "We want to hear from you, so write your cover letter yourself and not with an LLM.",
+           "Skriv ansøgningen med dine egne ord – vi kan godt se, når den er AI-genereret."]
+    no = ["You will build AI applications for our customers and not only maintain them.",
+          "Experience applying generative AI where it genuinely fits, including RAG architectures.",
+          "We use AI tools daily; experience with ChatGPT or Copilot is a plus.",
+          "Send din ansøgning og CV senest 1. december. Vi svarer ikke på henvendelser fra bureauer."]
+    assert all(jobs.ai_policy_in(f"Om jobbet.\n{s}\nVi glæder os.") == s for s in yes)
+    assert not any(jobs.ai_policy_in(s) for s in no)
+
+    # An ad read before the model was asked about it: the rules find the sentence, and the review warns.
+    a = _draft()
+    c = TestClient(app)
+    assert "AI-written applications" not in c.get(f"/applications/{a['id']}").text
+    db.update("jobs", a["job_id"], {"description": JOB_TEXT + "\n" + yes[0]})
+    for url in (f"/applications/{a['id']}", f"/applications/{a['id']}?tab=letter", f"/jobs/{a['job_id']}"):
+        page = c.get(url).text
+        assert "AI-written applications" in page and "bliver sorteret fra" in page, url
+
+    # The model that reads the ad quotes the sentence; a quote for an ad that never mentions AI is dropped.
+    said = jobs.add_from_text(JOB_TEXT + "\nVi vil høre fra dig, ikke fra ChatGPT.")
+    jobs.parse(said, use_text=True)
+    assert jobs.get(said)["ai_notice"] == "AI-skrevne ansøgninger læses ikke."
+    plain = jobs.add_from_text(JOB_TEXT.replace("Product Owner", "Produktejer"))
+    jobs.parse(plain, use_text=True)
+    assert jobs.get(plain)["d"]["ai_policy"] == "" and jobs.get(plain)["ai_notice"] is None

@@ -66,6 +66,13 @@
 {% endif %}
 
 {% if expired and not app %}<div class="flash err">The deadline for this job has passed.</div>{% endif %}
+{% if job.ai_notice %}
+<div class="card warn" role="alert" style="margin-bottom:1rem">
+  <strong>This ad says something about AI-written applications.</strong>
+  <div class="quote" style="margin:.4rem 0">{{ job.ai_notice }}</div>
+  <span class="small">Drafts here are written by a model. If they turn such applications down, write this one yourself.</span>
+</div>
+{% endif %}
 
 <div class="split">
   <div class="stack">

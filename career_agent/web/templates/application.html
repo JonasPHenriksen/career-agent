@@ -20,6 +20,13 @@
   </div>
 </header>
 
+{% if job and job.ai_notice %}
+<div class="card warn" role="alert" style="margin-bottom:1rem">
+  <strong>Check before you send: this ad says something about AI-written applications.</strong>
+  <div class="quote" style="margin:.4rem 0">{{ job.ai_notice }}</div>
+  <span class="small">This draft was written by a model. If they turn such applications down, use it as notes and write the letter yourself, in your own words.</span>
+</div>
+{% endif %}
 {% if busy %}{{ progress(busy, task_labels, '/applications/%d/progress'|format(a.id)) }}{% endif %}
 {% if error and not busy %}
 <div class="card danger" style="margin-bottom:1rem">
