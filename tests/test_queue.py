@@ -169,6 +169,31 @@ def test_a_new_session_picks_up_what_the_last_one_could_not_finish(fake):
     assert tasks.catch_up() == {"jobs_to_read": 0, "jobs_to_score": 0, "documents": 0, "drafts": 0, "sources": 0}
 
 
+def test_on_hold_nothing_starts_on_its_own(fake):
+    job = db.insert("jobs", {"title": "Unread", "url": "https://example.com/a", "status": "new", "parse_status": "pending",
+                             "created_at": db.now(), "updated_at": db.now()})
+    sid = db.insert("sources", {"name": "Feed", "kind": "rss", "url": "https://example.com/feed", "created_at": db.now()})
+    settings.update("automation", {"on_hold": True})
+    try:
+        assert tasks.catch_up() == {"jobs_to_read": 0, "jobs_to_score": 0, "documents": 0, "drafts": 0, "sources": 0}
+        assert tasks.queue_due() == 0
+        assert not tasks.active()
+        page = TestClient(app).get("/jobs")
+        assert "Automatic work is on hold" in page.text
+
+        # Resume (the banner's button): what was waiting is picked up at once.
+        TestClient(app).post("/settings/hold", data={"on": "0"}, follow_redirects=False)
+        assert not tasks.on_hold()
+        queued = {(x["kind"], x["ref"]) for x in tasks.active()}
+        assert queued == {("parse_job", f"job:{job}"), ("poll_source", f"source:{sid}")}
+        assert "Automatic work is on hold" not in TestClient(app).get("/jobs").text
+    finally:
+        settings.update("automation", {"on_hold": False})
+        db.ex("DELETE FROM tasks")
+        db.ex("DELETE FROM sources WHERE id = ?", (sid,))
+        db.ex("DELETE FROM jobs WHERE id = ?", (job,))
+
+
 def test_errors_say_which_provider_failed(fake, monkeypatch):
     monkeypatch.setattr(fake, "complete", _raises(LLMTransient("usage limit reached", retry_after=3600)))
     with pytest.raises(LLMError) as caught:

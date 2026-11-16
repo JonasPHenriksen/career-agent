@@ -177,6 +177,7 @@
 <section class="card" id="automation">
   <h2>Automation</h2>
   <form method="post" action="/settings/automation">
+    <label class="check"><input type="checkbox" name="on_hold" value="1" {{ 'checked' if auto.on_hold }}> <span>Hold all automatic work: don't check job sources or pick up unfinished work when the app starts (what you start yourself still runs)</span></label>
     <label class="check"><input type="checkbox" name="auto_score" value="1" {{ 'checked' if auto.auto_score }}> <span>Score every new job against my profile</span></label>
     <label class="check"><input type="checkbox" name="auto_draft" value="1" {{ 'checked' if auto.auto_draft }}> <span>Write a draft automatically for strong matches (you always review before anything is sent)</span></label>
     <div class="fields-3" style="margin-top:.6rem">

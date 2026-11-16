@@ -45,6 +45,11 @@ uses_local_models() {  # "yes" if any step is set to a model on this Mac, "no" i
 config.configure(None); db.init()
 print("yes" if any(llm.step_provider(k) == "ollama" for k, *_ in llm.STEPS) else "no")' 2>/dev/null || echo yes
 }
+on_hold() {  # "yes" if automatic work is on hold (Settings → Automation): nothing starts on its own
+  "$DIR/.venv/bin/python" -c 'from career_agent import config, db, tasks
+config.configure(None); db.init()
+print("yes" if tasks.on_hold() else "no")' 2>/dev/null || echo no
+}
 autostart_loaded() { launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; }
 
 wait_for() {  # wait_for <seconds> <command...>
@@ -107,6 +112,7 @@ start() {
       exit 1
     fi
   fi
+  [ "$(on_hold)" = "yes" ] && echo "Automatic work is on hold: no job sources are checked and no model is used until you press Resume in the app."
   [ "$browser" = 1 ] && open "$URL"
   echo "Stop everything with: ./agent stop"
 }

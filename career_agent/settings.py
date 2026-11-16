@@ -54,6 +54,7 @@ DEFAULTS: dict[str, Any] = {
         "followup_days": 10,
         "ghost_days": 30,
         "notifications": True,
+        "on_hold": False,  # True = nothing starts on its own (job sources, watched folders, unfinished work)
     },
     "writing": {
         "letter_words": 0,  # 0 = as long as your own past letters

@@ -372,12 +372,36 @@ def _again(kind: str, payload: dict, ref: str) -> bool:
     return True
 
 
+def on_hold() -> bool:
+    """Automatic work is on hold (Settings → Automation): job sources and watched folders aren't checked and
+    unfinished work isn't picked up, so starting the app uses no model. What you start by hand still runs."""
+    return bool(settings.get("automation").get("on_hold"))
+
+
+def queue_due() -> int:
+    """Queue the job sources and watched folders whose time has come. Nothing while automatic work is on hold."""
+    from . import sources, watch
+
+    if on_hold():
+        return 0
+    n = 0
+    for src in sources.due():
+        enqueue("poll_source", {"source_id": src["id"]}, ref=f"source:{src['id']}")
+        n += 1
+    for folder in watch.due():
+        enqueue("scan_folder", {"folder_id": folder["id"]}, ref=f"watch:{folder['id']}")
+        n += 1
+    return n
+
+
 def catch_up() -> dict:
     """At start: pick up what an earlier session couldn't finish because the model wasn't running, the Mac was
     offline or asleep, or a usage limit was reached. The app isn't always on, so this is how work gets done."""
     from . import profile
 
     found = {"jobs_to_read": 0, "jobs_to_score": 0, "documents": 0, "drafts": 0, "sources": 0}
+    if on_hold():
+        return found
     # Failures that a later try of the same work made good are history, not something to look at.
     db.ex("DELETE FROM tasks WHERE status = 'error' AND ref IS NOT NULL AND EXISTS (SELECT 1 FROM tasks t WHERE "
           "t.kind = tasks.kind AND t.ref = tasks.ref AND t.id > tasks.id AND t.status = 'done')")
@@ -465,14 +489,11 @@ async def worker_loop(stop: asyncio.Event) -> None:
 
 async def scheduler_loop(stop: asyncio.Event) -> None:
     """Checks sources when due, marks ghosted applications, sends a morning digest."""
-    from . import sources, tracker, watch
+    from . import tracker
 
     while not stop.is_set():
         try:
-            for src in sources.due():
-                enqueue("poll_source", {"source_id": src["id"]}, ref=f"source:{src['id']}")
-            for folder in watch.due():
-                enqueue("scan_folder", {"folder_id": folder["id"]}, ref=f"watch:{folder['id']}")
+            queue_due()
             state = settings.get("state")
             now_local = datetime.now()
             last_maint = db.parse_ts(state.get("last_maintenance"))

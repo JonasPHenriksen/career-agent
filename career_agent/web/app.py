@@ -98,7 +98,8 @@ def render(request: Request, template: str, **ctx):
     if path.startswith("/documents"):
         active = "/profile"
     ctx.update(request=request, nav=NAV, active=active, msg=request.query_params.get("msg"),
-               err=request.query_params.get("err"), app_name=config.APP_NAME, todo_count=todos.count_now(), static_v=STATIC_V)
+               err=request.query_params.get("err"), app_name=config.APP_NAME, todo_count=todos.count_now(), static_v=STATIC_V,
+               on_hold=tasks.on_hold())
     return templates.TemplateResponse(request, template, ctx)
 
 
@@ -1170,9 +1171,24 @@ async def settings_automation(request: Request):
         "auto_draft_threshold": num("auto_draft_threshold", 80, 0, 100),
         "auto_draft_daily_cap": num("auto_draft_daily_cap", 5, 0, 50),
         "followup_days": num("followup_days", 10, 1, 90), "ghost_days": num("ghost_days", 30, 7, 365),
-        "notifications": bool(f.get("notifications")),
+        "notifications": bool(f.get("notifications")), "on_hold": bool(f.get("on_hold")),
     })
+    if not tasks.on_hold():
+        tasks.catch_up()
     return go("/settings#automation", msg="Automation settings saved.")
+
+
+@app.post("/settings/hold")
+async def settings_hold(request: Request):
+    """Put automatic work on hold, or let it run again (the banner at the top of every page)."""
+    f = await form(request)
+    hold = f.get("on") == "1"
+    settings.update("automation", {"on_hold": hold})
+    if hold:
+        return go(f.get("next") or "/", msg="Automatic work is on hold. Nothing starts on its own until you resume.")
+    tasks.catch_up()
+    tasks.queue_due()
+    return go(f.get("next") or "/", msg="Automatic work is running again.")
 
 
 @app.post("/settings/writing")

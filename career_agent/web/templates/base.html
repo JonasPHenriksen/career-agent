@@ -22,6 +22,10 @@
   <main class="main">
     {% if msg %}<div class="flash ok" role="status">{{ msg }}</div>{% endif %}
     {% if err %}<div class="flash err" role="alert">{{ err }}</div>{% endif %}
+    {% if on_hold %}<form method="post" action="/settings/hold" class="flash hold row" role="status">
+      <span style="flex:1"><strong>Automatic work is on hold.</strong> Job sources aren't checked and nothing is read, scored or drafted on its own. What you start yourself still runs.</span>
+      <input type="hidden" name="next" value="{{ request.url.path }}"><button class="btn" name="on" value="0">Resume</button>
+    </form>{% endif %}
     {% block content %}{% endblock %}
   </main>
 </div>
