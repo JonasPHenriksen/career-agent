@@ -295,6 +295,14 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE sources ADD COLUMN read_until TEXT;
     """,
+    # 7: the same job from several places: which job a repeat belongs to, a job-alert link the app may not open,
+    # and jobs you chose to keep (never set aside automatically again)
+    """
+    ALTER TABLE jobs ADD COLUMN duplicate_of INTEGER REFERENCES jobs(id) ON DELETE SET NULL;
+    ALTER TABLE jobs ADD COLUMN link_locked INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE jobs ADD COLUMN keep INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX IF NOT EXISTS jobs_duplicate_of ON jobs(duplicate_of);
+    """,
 ]
 
 

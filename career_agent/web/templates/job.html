@@ -53,7 +53,12 @@
 </section>
 {% endif %}
 
-{% if job.status == 'filtered' %}
+{% if original %}
+<section class="card warn" style="margin-bottom:1rem">
+  <p style="margin:0">This job is already in your list: <a href="/jobs/{{ original.id }}">{{ original.title or original.url }}{% if original.company_name %} at {{ original.company_name }}{% endif %}</a>. It was set aside so it isn't read, scored or drafted twice.</p>
+  <form method="post" action="/jobs/{{ job.id }}/reparse" style="margin-top:.6rem"><button class="btn small" data-busy="Starting…">Keep it as its own job</button></form>
+</section>
+{% elif job.status == 'filtered' %}
 <section class="card warn" style="margin-bottom:1rem">
   <p style="margin:0">Quick screening filtered this job out, so it wasn't analysed. {% if job.notes %}<span class="text-2">{{ job.notes }}</span>{% endif %}</p>
   <form method="post" action="/jobs/{{ job.id }}/reparse" style="margin-top:.6rem"><button class="btn small" data-busy="Starting…">Analyse it anyway</button></form>
@@ -130,6 +135,10 @@
         {% endfor %}
       </dl>
       {% if job.apply_url %}<p style="margin:.8rem 0 0"><a href="{{ job.apply_url }}" target="_blank" rel="noopener noreferrer">Application page ↗</a></p>{% endif %}
+      {% if repeats %}
+      <p class="small" style="margin:.8rem 0 .2rem"><strong>Also posted at</strong></p>
+      <ul class="bul small">{% for r in repeats %}<li>{% if r.url %}<a href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.source or 'added by hand' }} ↗</a>{% else %}{{ r.source or 'added by hand' }}{% endif %} <span class="muted">· {{ r.created_at|ago }} · <a href="/jobs/{{ r.id }}">job {{ r.id }}</a></span></li>{% endfor %}</ul>
+      {% endif %}
     </section>
 
     {% if job.company_id %}

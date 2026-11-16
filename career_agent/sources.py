@@ -160,34 +160,70 @@ def _unseen(items: list[dict], seen: set[str]) -> list[dict]:
     return fresh
 
 
+def _store(it: dict, source_id: int, status: str = "new", queue: bool = True) -> int:
+    readable = it.get("readable", True)
+    jid, _ = jobs.add_from_url(it["url"], source_id=source_id, title=it["title"], company=it["company"],
+                               text=it["text"] or None, status=status, queue=queue and readable)
+    extra = {}
+    if it.get("location"):
+        extra["location"] = it["location"][:200]
+    if not readable:
+        extra["link_locked"] = 1
+    if extra:
+        db.update("jobs", jid, extra)
+    return jid
+
+
 def _screen_and_store(batch: list[dict], source_id: int) -> int:
     """Screen one batch and store it. Stored batch by batch so a model failure keeps the earlier ones."""
-    # Kinds of job you've switched off (student jobs, internships…) are set aside by their title alone,
-    # before any model sees them: no time or tokens spent on what you don't want.
-    wanted = []
+    # Before any model sees them: kinds of job you've switched off (student jobs, internships…), by their title
+    # alone, and jobs already here from another place (same company and title), so the same job isn't screened,
+    # read, scored and drafted twice. Copies the app can read go first, so they become the copy that stays.
+    batch = sorted(batch, key=lambda it: not it.get("readable", True))
+    wanted: list[dict] = []
+    repeats: list[tuple[dict, dict | int]] = []  # (listing, the job it repeats, or its index in `wanted`)
     for it in batch:
         skip = jobkinds.unwanted(it["title"], it["text"])
         if skip:
-            jid, _ = jobs.add_from_url(it["url"], source_id=source_id, title=it["title"], company=it["company"],
-                                       text=it["text"] or None, status="filtered", queue=False)
+            jid = _store(it, source_id, status="filtered", queue=False)
             db.update("jobs", jid, {"notes": jobkinds.skip_note(skip[1])})
-        else:
-            wanted.append(it)
+            continue
+        readable = it.get("readable", True)
+        same = jobs.find_same_job(it["company"], it["title"], it.get("location"), readable=readable,
+                                  source_id=source_id)
+        if same:
+            repeats.append((it, same))
+            continue
+        # Within one batch everything comes from one place: only job-alert copies (whose links differ from email
+        # to email) can be the same job twice.
+        key = jobs.same_key(it["company"], it["title"])
+        twin = next((n for n, w in enumerate(wanted) if key and not (readable and w.get("readable", True))
+                     and jobs.same_key(w["company"], w["title"]) == key
+                     and jobs.same_place(w.get("location"), it.get("location"))), None)
+        if twin is not None:
+            repeats.append((it, twin))
+            continue
+        wanted.append(it)
     keep = _triage(wanted) if wanted else {}
+    ids = []
     for n, it in enumerate(wanted):
         if n in keep:
-            # A link the site doesn't let robots open (a job alert's tracking link, say) is kept for you to open;
-            # the app doesn't read the ad behind it.
-            readable = it.get("readable", True)
-            jid, _ = jobs.add_from_url(it["url"], source_id=source_id, title=it["title"], company=it["company"],
-                                       text=it["text"] or None, queue=readable)
-            if not readable:
+            jid = _store(it, source_id)
+            if it.get("readable", True):
+                jobs.retire_locked_copies(jid, it["company"], it["title"], it.get("location"))
+            else:
+                # A link the site doesn't let robots open (a job alert's tracking link, say) is kept for you to
+                # open; the app doesn't read the ad behind it.
                 db.update("jobs", jid, {"notes": it.get("note") or UNREADABLE_NOTE})
         else:
-            jid, _ = jobs.add_from_url(it["url"], source_id=source_id, title=it["title"],
-                                       company=it["company"], text=it["text"] or None,
-                                       status="filtered", queue=False)
+            jid = _store(it, source_id, status="filtered", queue=False)
             db.update("jobs", jid, {"notes": FILTERED_NOTE})
+        ids.append(jid)
+    for it, original in repeats:
+        if isinstance(original, int):
+            original = db.q1("SELECT id, source_id FROM jobs WHERE id = ?", (ids[original],))
+        jid = _store(it, source_id, status="filtered", queue=False)
+        jobs.mark_repeat(jid, original)
     return len(keep)
 
 
@@ -244,7 +280,7 @@ def rescreen(job_ids: list[int] | None = None) -> dict:
     """Run the quick screening again, with whatever model is set now, over listings that came from a source and
     haven't been acted on. Never touches jobs with an application or ones you dismissed or shortlisted."""
     rows = db.q("SELECT * FROM jobs WHERE source_id IS NOT NULL AND status IN ('new', 'filtered') "
-                "AND id NOT IN (SELECT job_id FROM applications) ORDER BY id")
+                "AND duplicate_of IS NULL AND keep = 0 AND id NOT IN (SELECT job_id FROM applications) ORDER BY id")
     if job_ids is not None:
         wanted = set(job_ids)
         rows = [r for r in rows if r["id"] in wanted]

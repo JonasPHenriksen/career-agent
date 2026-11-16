@@ -231,15 +231,24 @@ def parse(job_id: int, use_text: bool = False) -> dict:
         "details": db.jdump(details), "fingerprint": fp, "reposted": reposted,
         "parse_status": "parsed", "updated_at": db.now(),
     })
-    if job["source_id"] is not None:  # jobs the user added by hand are never skipped
+    # Jobs you added by hand, or chose to keep, are never set aside.
+    if job["source_id"] is not None and not job["keep"]:
         skip = jobkinds.unwanted(title, None, d["employment_type"], d["seniority"])
         if skip:
             _filter_out(job_id, jobkinds.skip_note(skip[1]))
             return {"title": title, "company": company, "skipped": skip[1]}
+        location = d["location"] or (jsonld or {}).get("location")
+        same = find_same_job(company, title, location, readable=not job["link_locked"], job_id=job_id,
+                             source_id=job["source_id"])
+        if same:
+            mark_repeat(job_id, same)
+            return {"title": title, "company": company, "skipped": "duplicate"}
         twin = find_duplicate(job_id, title, description)
         if twin:
-            _filter_out(job_id, f"The same ad as {twin['title']} at {twin['company_name'] or '?'} (job {twin['id']}).")
+            mark_repeat(job_id, twin, "same title and almost the same ad text")
             return {"title": title, "company": company, "skipped": "duplicate"}
+    if not job["link_locked"]:
+        retire_locked_copies(job_id, company, title, d["location"] or (jsonld or {}).get("location"))
     if settings.get("automation").get("auto_score", True):
         tasks.enqueue("score_job", {"job_id": job_id}, ref=f"job:{job_id}")
     return {"title": title, "company": company}
@@ -270,6 +279,140 @@ def same_ad_text(a: str | None, b: str | None) -> bool:
     if min(len(a or ""), len(b or "")) < SHORT_AD_CHARS:
         return both / min(len(sa), len(sb)) >= 0.9 and min(len(sa), len(sb)) >= 20
     return False
+
+
+# --- The same job from several places ------------------------------------------------------------------------
+# A job is often on Jobindex, Akademikernes Jobbank, the employer's own page and in a job-alert email. The first
+# copy is kept; the others are set aside as repeats of it (duplicate_of), before any model sees them when the
+# listing names the company, otherwise right after the ad is read.
+REPEAT_DAYS = 21  # same company and title within three weeks = the same posting; later = re-posted (see parse)
+_NO_COMPANY = {"", "unknown", "ukendt", "confidential", "fortrolig"}
+_PLACE_NOISE = {"denmark", "danmark", "hybrid", "remote", "region", "kommune", "omegn", "area", "hele", "landet",
+                "landsdaekkende", "landsdækkende", "and", "og", "eller", "the", "office", "kontor"}
+
+
+def title_key(title: str | None) -> str:
+    """A job title without bracketed extras like (m/k) or [Hybrid]."""
+    return companies.norm_name(re.sub(r"[(\[][^)\]]*[)\]]", " ", title or ""))
+
+
+def same_key(company: str | None, title: str | None) -> str | None:
+    c, t = companies.norm_name(company), title_key(title)
+    if c in _NO_COMPANY or not t:
+        return None
+    return f"{c}|{t}"
+
+
+def _places(location: str | None) -> set[str]:
+    return {w for w in companies.norm_name(location).split() if len(w) >= 3 and w not in _PLACE_NOISE}
+
+
+def same_place(a: str | None, b: str | None) -> bool:
+    """True unless both say where and share no place name (København K and København are the same place)."""
+    pa, pb = _places(a), _places(b)
+    return not pa or not pb or bool(pa & pb)
+
+
+def _copies(key: str, exclude_id: int | None = None) -> list[dict]:
+    rows = db.q("SELECT id, title, company_name, location, status, parse_status, source_id, link_locked, keep, "
+                "created_at FROM jobs WHERE duplicate_of IS NULL AND status != 'dismissed' AND created_at >= ? "
+                "AND title IS NOT NULL AND company_name IS NOT NULL ORDER BY id", (db.days_ago(REPEAT_DAYS),))
+    return [r for r in rows if r["id"] != exclude_id and same_key(r["company_name"], r["title"]) == key]
+
+
+def _other_place(a_source: int | None, a_locked: bool, b_source: int | None, b_locked: bool) -> bool:
+    """Copies found in two different places. One site listing two ads with the same title usually means two jobs
+    (the text check after reading catches a real repeat there); job-alert emails are the exception, since their
+    links change from email to email."""
+    return a_source is None or b_source is None or a_source != b_source or a_locked or b_locked
+
+
+def find_same_job(company: str | None, title: str | None, location: str | None = None, readable: bool = True,
+                  job_id: int | None = None, source_id: int | None = None) -> dict | None:
+    """The copy of this job that's already here: same company and title from another source in the last three
+    weeks, in the same place when both say where. A copy whose link the app may not open never stands in for one
+    it can read, and a job you dismissed doesn't hide new copies. For a job being read (`job_id`), only copies
+    already read or found before it count."""
+    key = same_key(company, title)
+    if not key:
+        return None
+    for r in _copies(key, exclude_id=job_id):
+        if not same_place(location, r["location"]) or (r["link_locked"] and readable):
+            continue
+        if not _other_place(source_id, not readable, r["source_id"], bool(r["link_locked"])):
+            continue
+        if job_id is not None and r["parse_status"] != "parsed" and r["id"] > job_id:
+            continue
+        return r
+    return None
+
+
+def _source_name(source_id: int | None) -> str:
+    row = db.q1("SELECT name FROM sources WHERE id = ?", (source_id,)) if source_id else None
+    return row["name"] if row else "added by hand"
+
+
+def mark_repeat(job_id: int, original: dict, why: str = "same company and title") -> None:
+    note = (f"Already in your list as job {original['id']} ({_source_name(original.get('source_id'))}): {why}. "
+            "Press Keep it as its own job if it's a different job.")
+    db.update("jobs", job_id, {"status": "filtered", "duplicate_of": original["id"], "notes": note,
+                               "updated_at": db.now()})
+
+
+def _protected(job: dict) -> bool:
+    return bool(job.get("keep")) or job.get("status") in ("shortlisted", "dismissed") or bool(
+        db.q1("SELECT 1 FROM applications WHERE job_id = ?", (job["id"],)))
+
+
+def retire_locked_copies(job_id: int, company: str | None, title: str | None, location: str | None) -> int:
+    """A copy from a job-alert email whose link the app may not open gives way to a copy it can read."""
+    key = same_key(company, title)
+    if not key:
+        return 0
+    n = 0
+    original = db.q1("SELECT id, source_id FROM jobs WHERE id = ?", (job_id,))
+    for r in _copies(key, exclude_id=job_id):
+        if r["link_locked"] and same_place(location, r["location"]) and not _protected(r):
+            mark_repeat(r["id"], original)
+            n += 1
+    return n
+
+
+def repeats_of(job_id: int) -> list[dict]:
+    return db.q("SELECT j.id, j.url, j.created_at, s.name AS source FROM jobs j LEFT JOIN sources s "
+                "ON s.id = j.source_id WHERE j.duplicate_of = ? ORDER BY j.id", (job_id,))
+
+
+def mark_existing_repeats() -> int:
+    """Set aside the repeats already in the list: per company and title, the best copy stays (one you've acted on,
+    then one that's been read, then the first) and the copies within three weeks of it from other places become
+    repeats (from the same place, only when the ad text is almost the same). Jobs you shortlisted, dismissed, kept
+    or applied to are never touched."""
+    groups: dict[str, list[dict]] = {}
+    for r in db.q("SELECT id, title, company_name, location, status, parse_status, source_id, link_locked, keep, "
+                  "description, created_at FROM jobs WHERE duplicate_of IS NULL AND status != 'dismissed' "
+                  "AND title IS NOT NULL AND company_name IS NOT NULL"):
+        key = same_key(r["company_name"], r["title"])
+        if key:
+            groups.setdefault(key, []).append(r)
+    n = 0
+    for rows in groups.values():
+        if len(rows) < 2:
+            continue
+        rows.sort(key=lambda r: (not _protected(r), r["status"] == "filtered", r["parse_status"] != "parsed",
+                                 r["link_locked"], r["id"]))
+        root = rows[0]
+        root_at = db.parse_ts(root["created_at"])
+        for r in rows[1:]:
+            far = abs((db.parse_ts(r["created_at"]) - root_at).days) > REPEAT_DAYS
+            if _protected(r) or far or not same_place(root["location"], r["location"]):
+                continue
+            if not _other_place(root["source_id"], bool(root["link_locked"]), r["source_id"], bool(r["link_locked"])) \
+                    and not same_ad_text(root["description"], r["description"]):
+                continue
+            mark_repeat(r["id"], root)
+            n += 1
+    return n
 
 
 def find_duplicate(job_id: int, title: str | None, description: str | None) -> dict | None:

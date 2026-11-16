@@ -244,7 +244,7 @@ def test_the_same_ad_under_a_sister_company_is_filtered_and_not_scored(fake):
     jobs.parse(second, use_text=True)
     job = jobs.get(second)
     assert job["status"] == "filtered"
-    assert job["notes"] == f"The same ad as Full stack developer at Nic. Christiansen Gruppen (job {first})."
+    assert job["duplicate_of"] == first and "same title and almost the same ad text" in job["notes"]
     assert db.scalar("SELECT COUNT(*) FROM tasks WHERE kind = 'score_job'") == 1, "only the first ad is scored"
     # a dismissed original no longer hides new copies
     third = _source_job("TITLE=Full stack developer. " + LONG_AD, 3)

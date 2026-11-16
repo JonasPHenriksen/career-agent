@@ -37,7 +37,7 @@ def candidates(only_model: str | None = None) -> dict[str, list[str]]:
         # Listings that came from a job source and that you haven't acted on: screened again in one task.
         "screen": [f"job:{r['id']}" for r in db.q(
             "SELECT id FROM jobs WHERE source_id IS NOT NULL AND status IN ('new', 'filtered') "
-            "AND id NOT IN (SELECT job_id FROM applications) ORDER BY id")],
+            "AND duplicate_of IS NULL AND keep = 0 AND id NOT IN (SELECT job_id FROM applications) ORDER BY id")],
         "ads": [f"job:{r['id']}" for r in db.q("SELECT id FROM jobs WHERE parse_status = 'parsed' "
                                                "AND status IN ('new', 'shortlisted') ORDER BY id")],
         "documents": [f"doc:{r['id']}" for r in db.q("SELECT id FROM documents WHERE status = 'analyzed' ORDER BY id")

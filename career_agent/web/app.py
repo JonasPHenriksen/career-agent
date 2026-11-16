@@ -314,7 +314,9 @@ def job_detail(request: Request, job_id: int):
     return render(request, "job.html", job=job, app=app_row, company=company, facts=facts, made=made,
                   badge=companies.badge(job["company_id"]), busy=tasks.active(ref=f"job:{job_id}"),
                   error=tasks.last_error(f"job:{job_id}"), expired=jobs.is_expired(job), task_labels=tasks.TASK_LABELS,
-                  source=db.q1("SELECT name FROM sources WHERE id = ?", (job["source_id"],)) if job["source_id"] else None)
+                  source=db.q1("SELECT name FROM sources WHERE id = ?", (job["source_id"],)) if job["source_id"] else None,
+                  repeats=jobs.repeats_of(job_id),
+                  original=jobs.get(job["duplicate_of"]) if job["duplicate_of"] else None)
 
 
 @app.get("/jobs/{job_id}/progress")
@@ -344,8 +346,10 @@ async def job_rescore(request: Request, job_id: int):
 async def job_reparse(request: Request, job_id: int):
     f = await form(request)
     job = need(jobs.get(job_id))
-    db.update("jobs", job_id, {"parse_status": "pending", "parse_error": None,
-                               "status": "new" if job["status"] == "filtered" else job["status"]})
+    change = {"parse_status": "pending", "parse_error": None}
+    if job["status"] == "filtered":  # you looked and want it: never set aside automatically again
+        change.update(status="new", keep=1, duplicate_of=None)
+    db.update("jobs", job_id, change)
     tasks.enqueue("parse_job", {"job_id": job_id, "use_text": not job["url"], **chosen_model(f)}, ref=f"job:{job_id}")
     return go(f"/jobs/{job_id}", msg=with_model_msg(f, "Reading the ad again") + "…")
 
