@@ -52,12 +52,13 @@ UNPAID = re.compile(r"\bunpaid\b|\bulønnet\b", re.I)
 EMPLOYMENT_RULES: dict[str, re.Pattern] = {
     "part_time": _rx(r"\bpart[- ]?time\b", r"\bdeltid\w*"),
     "temporary": _rx(r"\btemporary\b", r"\btemp\b", r"\bfixed[- ]term\b", r"\btidsbegrænset\w*", r"\bmidlertidig\w*",
-                     r"\bvikar\w*", r"\bseasonal\b", r"\binterim\b"),
+                     r"\w*vikar\w*", r"\bseasonal\b", r"\binterim\b"),
     "freelance": _rx(r"\bfreelanc\w*", r"\bcontractor\b", r"\bself[- ]employed\b", r"\bselvstændig\w*"),
     "internship": _rx(r"\binternships?\b", r"\bpraktik\w*"),
     "student": _rx(r"\bstudent\b", r"\bstudenter\w*", r"\bstudiejob\b"),
     "volunteer": _rx(r"\bvolunteer\b", r"\bfrivillig\w*", r"\bunpaid\b", r"\bulønnet\b"),
 }
+PERMANENT = re.compile(r"\bpermanent\b|\bfast\b|\bfastans\w*|\btidsubegrænset", re.I)
 FULL_TIME = re.compile(r"\bfull[- ]?time\b|\bfuldtid\w*|\bfuld-|\bpermanent\b|\bfast\b|\bfastansat|\btidsubegrænset", re.I)
 
 # Body text: only phrases that can't be about something else in the ad.
@@ -81,7 +82,10 @@ def kinds_of(title: str | None, text: str | None = None, employment_type: str | 
     emp = (employment_type or "").strip()
     if emp:
         # "permanent" or "full-time" only cancels the soft kinds; an explicit student or internship label still counts
-        keys = ("internship", "student") if FULL_TIME.search(emp) else tuple(EMPLOYMENT_RULES)
+        # "Full-time" says how many hours, not for how long: a full-time maternity cover is still temporary,
+        # unless the ad also calls the job permanent.
+        keys = tuple(EMPLOYMENT_RULES) if not FULL_TIME.search(emp) else (
+            ("internship", "student") if PERMANENT.search(emp) else ("internship", "student", "temporary"))
         found.update(k for k in keys if EMPLOYMENT_RULES[k].search(emp))
     if (seniority or "").strip().lower() == "student":
         found.add("student")
