@@ -104,7 +104,7 @@ def _handlers() -> dict:
         "embed_index": lambda p: retrieval.embed_pending(),
         "pull_model": lambda p: _pull_model(p["model"]),
         "build_cv_base": lambda p: cvdata.build_base(p["doc_id"]),
-        "rescreen_jobs": lambda p: sources.rescreen(),
+        "rescreen_jobs": lambda p: sources.rescreen(p.get("job_ids")),
     }
 
 
