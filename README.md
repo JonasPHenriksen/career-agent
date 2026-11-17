@@ -115,12 +115,18 @@ The CV for a job is your own CV with small changes, not a new one. Under Profile
 
 * **Pick the base.** Choose one of your imported CVs. It is read once into data, word for word, and you can correct
   the result. Switch to another CV at any time; new applications start from the one in use.
+* **One base per language.** With a base in Danish and one in English, an application starts from the base in its
+  own language, so nothing is translated and the wording is the one you approved. For any other language the one
+  in use is translated. Click a base in the list to show, check and correct it.
 * **Small changes per job.** The most relevant points and skills first, a point left out, the headline and profile
   turned towards the job, translated if the ad is in another language. Employers, titles, dates and numbers never
   change, and every change is listed in the draft's notes.
 * **Typeset in the app.** The CV is laid out on this Mac in two columns with a coloured sidebar. Colour, font, text
   size, sidebar width and the order of the sections are settings on the same page. The application page shows the
   pages, and gives you the PDF and a JSON Resume file that tools like rxresu.me can import.
+* **The page is filled.** The lines and the gaps between sections open up as far as they can without adding a page,
+  so a CV doesn't end in a blank band, and a CV with more points gets tighter lines instead of a second page. Your
+  name is kept on one line, whatever the font.
 * **Your photo.** Add a picture under Profile → Your CV and it is printed at the top of every CV, cropped to a
   square. When a job ad asks for applications without a photo, or says they are read anonymously, that job's CV is
   made without it and the list of changes says so. The picture never goes to a model.

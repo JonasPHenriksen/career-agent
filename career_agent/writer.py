@@ -281,7 +281,7 @@ def _cv_pages(data: dict, language: str | None = None) -> int:
 def tailor_cv(job: dict, language: str, instructions: str | None, system: str, purpose: str = "write_cv",
               current: dict | None = None, effort: str | None = None) -> tuple[dict, list[str]] | None:
     """The CV for this job as data, made from your base CV, with the list of changes. None if you have no base CV."""
-    base = cvdata.ensure_base()
+    base = cvdata.base_for(language)  # your base CV in this language if you have one, so nothing needs translating
     if not base:
         return None
     task = _cv_tailor_task(job, language, instructions, base["data"], current)

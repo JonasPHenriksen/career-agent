@@ -444,7 +444,7 @@ def application(request: Request, app_id: int, tab: str = ""):
             "SELECT a.id FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.status IN ('draft', 'ready') AND a.letter IS NOT NULL "
             "ORDER BY CASE WHEN j.deadline IS NULL THEN 1 ELSE 0 END, j.deadline, a.updated_at DESC")]
         at = waiting.index(app_id) if app_id in waiting else -1
-        look = {"base_open": len(review.base_questions(cvdata.base())), "questions": review.questions(a), "letter_html": review.marked(a["letter"], a),
+        look = {"base_open": len(review.base_questions(cvdata.base_for(a["language"]))), "questions": review.questions(a), "letter_html": review.marked(a["letter"], a),
                 "decided": db.jload(a.get("review"), {}) or {},
                 "siblings": db.q("SELECT a.id, j.title, a.status FROM applications a JOIN jobs j ON j.id = a.job_id "
                                  "WHERE j.company_id = ? AND a.id != ? ORDER BY a.id DESC", (a["company_id"], app_id)) if a["company_id"] else [],
@@ -467,7 +467,7 @@ def application(request: Request, app_id: int, tab: str = ""):
             cv_error = str(e)[:300]
     return render(request, "application.html", a=a, job=job, tab=tab, tabs=APP_TABS, claims=claims, facts=facts, made=made,
                   cv_data=cv_data, cv_json=json.dumps(cv_data, ensure_ascii=False, indent=2) if cv_data else "",
-                  cv_pages=cv_pages, cv_error=cv_error, cv_base=cvdata.base(), look=look,
+                  cv_pages=cv_pages, cv_error=cv_error, cv_base=cvdata.base_for(a["language"]), look=look,
                   prompt=prompt, prompt_words=len(prompt.split()),
                   v=db.jload(a["voice"], {}) or {}, notes=db.jload(a["writer_notes"], []) or [],
                   busy=tasks.active(ref=f"app:{app_id}"), error=tasks.last_error(f"app:{app_id}"),
@@ -631,16 +631,16 @@ async def cv_base_save(request: Request, base_id: int):
         data = cvdata.clean(json.loads(f.get("data") or ""))
         cvrender.render(data)
     except Exception as e:  # noqa: BLE001
-        return go("/profile?tab=cv", err=f"That isn't a CV I can use, so nothing was saved: {str(e)[:160]}")
+        return go(f"/profile?tab=cv&base={base_id}", err=f"That isn't a CV I can use, so nothing was saved: {str(e)[:160]}")
     cvdata.save_base(base_id, data)
-    return go("/profile?tab=cv", msg="Base CV saved.")
+    return go(f"/profile?tab=cv&base={base_id}", msg="Base CV saved.")
 
 
 @app.post("/cv/base/{base_id}/check")
 def cv_base_check(base_id: int):
     need(db.q1("SELECT id FROM cv_bases WHERE id = ?", (base_id,)))
     tasks.enqueue("check_cv_base", {"base_id": base_id}, ref="cv-base-check")
-    return go("/profile?tab=cv", msg="Checking your base CV against your career database…")
+    return go(f"/profile?tab=cv&base={base_id}", msg="Checking your base CV against your career database…")
 
 
 @app.post("/cv/base/{base_id}/answers")
@@ -652,7 +652,7 @@ async def cv_base_answers(request: Request, base_id: int):
                for q in review.base_questions(base)}
     result = review.apply_base_answers(base, answers)
     if not (result["facts"] or result["changed"] or result["missed"]):
-        return go("/profile?tab=cv#cv-check", err="Answer at least one question first.")
+        return go(f"/profile?tab=cv&base={base_id}#cv-check", err="Answer at least one question first.")
     said = []
     if result["facts"]:
         said.append(f"{result['facts']} saved as fact{'s' if result['facts'] != 1 else ''}")
@@ -661,7 +661,7 @@ async def cv_base_answers(request: Request, base_id: int):
     msg = (", ".join(said).capitalize() + ". Checking again…") if said else None
     err = ("Couldn't find this in the CV data, so change it by hand under Correct the base CV: "
            + "; ".join(t[:80] for t in result["missed"])) if result["missed"] else None
-    return go("/profile?tab=cv#cv-check", msg=msg, err=err)
+    return go(f"/profile?tab=cv&base={base_id}#cv-check", msg=msg, err=err)
 
 
 @app.post("/cv/base/redo-drafts")
@@ -907,14 +907,21 @@ def profile_page(request: Request, tab: str = "about"):
     busy = len(active_rows)
     cv = {}
     if tab == "cv":
-        main = cvdata.base()
+        in_use = cvdata.base()
+        shown = (request.query_params.get("base") or "").strip()
+        main = (cvdata.base(int(shown)) if shown.isdigit() else None) or in_use  # the base shown, checked and edited on the page
+        others = {}  # language → the base used for applications in it, where that isn't the one in use
+        for b in cvdata.bases():
+            if in_use and (b["language"] or "")[:2] != (in_use["language"] or "")[:2]:
+                others.setdefault((b["language"] or "")[:2], b["id"])
         pages, cv_error = 0, ""
         if main:
             try:
                 pages = cvrender.pages(main["data"], main["language"])
             except Exception as e:  # noqa: BLE001
                 cv_error = str(e)[:300]
-        cv = {"main": main, "bases": cvdata.bases(), "docs": cvdata.cv_documents(), "pages": pages, "error": cv_error,
+        cv = {"main": main, "in_use": in_use["id"] if in_use else None, "other_languages": {v: k for k, v in others.items()},
+              "bases": cvdata.bases(), "docs": cvdata.cv_documents(), "pages": pages, "error": cv_error,
               "design": settings.get("cv"), "photo": bool(cvrender.photo_path()), "json": json.dumps(main["data"], ensure_ascii=False, indent=2) if main else "",
               "busy": tasks.active(ref="cv-base"), "task_error": tasks.last_error("cv-base"),
               "questions": review.base_questions(main), "checked": db.jload((main or {}).get("claims"), None),

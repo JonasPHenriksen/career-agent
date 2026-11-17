@@ -181,7 +181,7 @@
     <h2>Questions for you</h2>
     {% if look.questions %}
     <p class="small text-2">Only you know these. Your answers are saved as facts in your career database, so later drafts know them too, and this draft is revised to match.</p>
-    {% if look.base_open and look.questions|selectattr('where', 'equalto', 'cv')|list %}<p class="small"><span class="pill warn">CV</span> {{ look.base_open }} line{{ 's' if look.base_open != 1 }} in your base CV disagree with your career database, so they come back in every application. <a href="/profile?tab=cv#cv-check">Settle them once under Profile → Your CV</a>.</p>{% endif %}
+    {% if look.base_open and look.questions|selectattr('where', 'equalto', 'cv')|list %}<p class="small"><span class="pill warn">CV</span> {{ look.base_open }} line{{ 's' if look.base_open != 1 }} in your base CV disagree with your career database, so they come back in every application. <a href="/profile?tab=cv{% if cv_base %}&base={{ cv_base.id }}{% endif %}#cv-check">Settle them once under Profile → Your CV</a>.</p>{% endif %}
     <form method="post" action="/applications/{{ a.id }}/answers">
       {% for q in look.questions %}
       <fieldset class="question">
@@ -226,7 +226,7 @@
 <div class="grid-2">
   <section class="card">
     {% if cv_data %}
-    <p class="small text-2">This is your own CV{% if cv_base %} (<a href="/profile?tab=cv">{{ cv_base.title }}</a>){% endif %} with small changes for this job. What changed is listed under Letter → Notes from the writer.</p>
+    <p class="small text-2">This is your own CV{% if cv_base %} (<a href="/profile?tab=cv&base={{ cv_base.id }}">{{ cv_base.title }}</a>){% endif %} with small changes for this job. What changed is listed under Letter → Notes from the writer.</p>
     <form method="post" action="/applications/{{ a.id }}/revise">
       <input type="hidden" name="part" value="cv">
       <label for="cvinstr">Ask for changes</label>

@@ -133,6 +133,35 @@ def model(data: dict, language: str | None = None, profile: dict | None = None, 
             "sidebar": [s for s in sidebar if s["items"]], "main": [s for s in main if s["entries"]]}
 
 
+SPACINGS = [round(1 + 0.03 * n, 2) for n in range(21)]  # from the tightest (1.0) to very open (1.6)
+
+
+def _page_count(folder: Path, m: dict, spacing: float) -> int:
+    import typst
+    from pypdf import PdfReader
+
+    m["design"]["spacing"] = spacing
+    (folder / "data.json").write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")
+    return len(PdfReader(io.BytesIO(typst.compile(str(folder / "main.typ"), root=str(folder), format="pdf"))).pages)
+
+
+def fit_spacing(folder: Path, m: dict) -> float:
+    """The most open line spacing that keeps the CV on as few pages as the tightest one does, so the last page is
+    filled instead of ending in a blank band. Leaves `m` and data.json set to it."""
+    least = _page_count(folder, m, SPACINGS[0])
+    if _page_count(folder, m, SPACINGS[-1]) == least:  # a short CV: as open as the layout goes
+        return SPACINGS[-1]
+    lo, hi = 0, len(SPACINGS) - 2
+    while lo < hi:  # more open never takes fewer pages, so search for the last value that still fits
+        mid = (lo + hi + 1) // 2
+        if _page_count(folder, m, SPACINGS[mid]) == least:
+            lo = mid
+        else:
+            hi = mid - 1
+    _page_count(folder, m, SPACINGS[lo])
+    return SPACINGS[lo]
+
+
 def render(data: dict, language: str | None = None) -> Path:
     """The folder with cv.pdf and page-1.png, page-2.png… for this CV; made once and kept until anything changes."""
     import typst
@@ -144,10 +173,10 @@ def render(data: dict, language: str | None = None) -> Path:
     if (folder / "cv.pdf").exists() and (folder / "page-1.png").exists():
         return folder
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / "data.json").write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")
     shutil.copyfile(TEMPLATE, folder / "main.typ")
     if m["photo"]:
         shutil.copyfile(photo_path(), folder / m["photo"])
+    fit_spacing(folder, m)
     typst.compile(str(folder / "main.typ"), output=str(folder / "cv.pdf"), root=str(folder))
     typst.compile(str(folder / "main.typ"), output=str(folder / "page-{p}.png"), root=str(folder), format="png", ppi=130.0)
     return folder

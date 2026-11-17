@@ -1,6 +1,7 @@
 """The CV as data.
 
-A *base CV* is one of your own CVs, transcribed once into structured data, word for word. The CV for a job is
+A *base CV* is one of your own CVs, transcribed once into structured data, word for word. You can have one per
+language: an application starts from the base in its own language when there is one. The CV for a job is
 that base with small changes: the most relevant points first, a point left out, the headline and profile turned
 towards the job, translated if the ad is in another language. So a tailored CV is your CV, not a new one.
 
@@ -188,6 +189,24 @@ def ensure_base() -> dict | None:
         return None
     build_base(docs[0]["id"])
     return base()
+
+
+def base_for(language: str | None) -> dict | None:
+    """The base CV an application in `language` starts from: your base in that language when you have one (the one
+    in use if it is in that language, else the newest), otherwise the one in use, which is then translated."""
+    main = ensure_base()
+    lang = (language or "")[:2].lower()
+    if not main or not lang or (main.get("language") or "")[:2].lower() == lang:
+        return main
+    return next((b for b in bases() if (b.get("language") or "")[:2].lower() == lang), main)
+
+
+def add_base(data: dict, title: str, language: str, made_by: str = "") -> int:
+    """A base CV that wasn't read from a document, such as your own translation of your CV."""
+    data = clean(data)
+    data["language"] = J.lang_code(language) or language
+    return db.insert("cv_bases", {"document_id": None, "title": title, "language": data["language"], "data": db.jdump(data),
+                                  "model": made_by or None, "created_at": db.now()})
 
 
 def save_base(base_id: int, data: dict) -> None:

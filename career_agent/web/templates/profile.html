@@ -201,9 +201,10 @@
       {% else %}<p class="empty">Import a CV under Documents first.</p>{% endif %}
       {% if cv.bases %}
       <ul class="list" style="margin-top:.8rem">{% for b in cv.bases %}
-        <li><div class="grow"><span class="title">{{ b.title }}</span><div class="small text-2">{{ b.filename or 'document removed' }} · {{ b.language }} · read by {{ b.model or '?' }}</div></div>
-          {% if cv.main and b.id == cv.main.id %}<span class="pill good">in use</span>{% else %}<form method="post" action="/cv/base/{{ b.id }}/use" class="inline"><button class="btn small">Use this one</button></form>{% endif %}</li>
+        <li><div class="grow"><a class="title" href="/profile?tab=cv&base={{ b.id }}">{{ b.title }}</a><div class="small text-2">{{ b.filename or 'not from a document' }} · {{ b.language }} · {{ 'read' if b.filename else 'made' }} by {{ b.model or '?' }}{% if cv.main and b.id == cv.main.id and cv.bases|length > 1 %} · shown on this page{% endif %}</div></div>
+          {% if b.id == cv.in_use %}<span class="pill good">in use</span>{% else %}{% if b.id in cv.other_languages %}<span class="pill good">used for {{ cv.other_languages[b.id] }} applications</span>{% endif %}<form method="post" action="/cv/base/{{ b.id }}/use" class="inline"><button class="btn small">Use this one</button></form>{% endif %}</li>
       {% endfor %}</ul>
+      {% if cv.bases|length > 1 %}<p class="small text-2">An application starts from your base in its own language when you have one, so nothing is translated. For any other language, the one in use is translated. Click a base to show, check and correct it below.</p>{% endif %}
       {% endif %}
     </section>
     {% if cv.main %}

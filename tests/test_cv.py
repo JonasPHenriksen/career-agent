@@ -208,3 +208,58 @@ def test_your_photo_is_on_the_cv_unless_the_ad_asks_for_none(fake):
 
     c.post("/cv/photo/remove", follow_redirects=False)
     assert cvrender.photo_path() is None and cvrender.model(data, "da")["photo"] == ""
+
+
+def test_an_application_starts_from_your_base_in_its_own_language(fake):
+    a = _draft()  # the base read from the Danish CV is the one in use
+    danish = cvdata.base()
+    assert danish["language"] == "da" and cvdata.base_for("da")["id"] == danish["id"]
+    assert cvdata.base_for("en")["id"] == danish["id"], "no English base yet: the one in use is translated"
+
+    english = cvdata.clean({**danish["data"], "label": "Project manager and product owner",
+                            "titles": {"work": "Experience", "education": "Education", "skills": "Skills"}})
+    english["work"][0]["highlights"] = ["Responsible for the mobile bank's payment features with 2 million users.",
+                                        "Cut support requests about payments by 30% in a year."]
+    en_id = cvdata.add_base(english, "My CV in English", "en", made_by="you")
+    assert cvdata.base()["id"] == danish["id"], "adding a base in another language doesn't replace the one in use"
+    assert cvdata.base_for("en")["id"] == en_id and cvdata.base_for("da")["id"] == danish["id"] and cvdata.base_for("sv")["id"] == danish["id"]
+
+    # an English application is made from the English base, word for word, not from a translation
+    settings.update("writing", {"language": "en"})
+    writer.draft(a["id"])
+    made = db.jload(tracker.app_with_job(a["id"])["cv_data"])
+    assert made["label"] == "Project manager and product owner" and "Cut support requests" in " ".join(made["work"][0]["highlights"])
+
+    c = TestClient(app)
+    page = c.get("/profile?tab=cv").text
+    assert "used for en applications" in page and f"/cv/base/{danish['id']}/save" in page
+    shown = c.get(f"/profile?tab=cv&base={en_id}").text
+    assert f"/cv/base/{en_id}/save" in shown and f"/cv/base/{en_id}/check" in shown and "shown on this page" in shown
+    r = c.post(f"/cv/base/{en_id}/save", data={"data": json.dumps(english)}, follow_redirects=False)
+    assert f"base={en_id}" in r.headers["location"]
+    assert f"/profile?tab=cv&amp;base={en_id}" in c.get(f"/applications/{a['id']}?tab=cv").text or \
+           f"/profile?tab=cv&base={en_id}" in c.get(f"/applications/{a['id']}?tab=cv").text
+
+
+def test_the_cv_fills_its_page_and_never_grows_to_do_so(fake):
+    a = _draft()
+    data = db.jload(a["cv_data"])
+    folder = cvrender.render(data, "da")
+    used = json.loads((folder / "data.json").read_text(encoding="utf-8"))["design"]["spacing"]
+    assert cvrender.pages(data, "da") == 1 and used == cvrender.SPACINGS[-1], "a short CV is set as open as the layout allows"
+
+    # add points until the page is full enough that the lines have to close up
+    tight = used
+    for points in range(4, 40, 2):
+        long = cvdata.clean(data)
+        long["work"][0]["highlights"] = [f"Punkt {n}: ansvar for betalinger i mobilbanken." for n in range(points)]
+        folder = cvrender.render(long, "da")
+        tight = json.loads((folder / "data.json").read_text(encoding="utf-8"))["design"]["spacing"]
+        if tight < used:
+            break
+    assert tight < used, "a fuller CV gets tighter lines"
+    m = cvrender.model(long, "da")
+    least = cvrender._page_count(folder, m, cvrender.SPACINGS[0])
+    assert cvrender.pages(long, "da") == least, "opening the lines never adds a page"
+    nxt = cvrender.SPACINGS[cvrender.SPACINGS.index(tight) + 1]
+    assert cvrender._page_count(folder, m, nxt) > least, "and it is the most open spacing that still fits"
