@@ -44,6 +44,8 @@ TAILOR_SCHEMA = J.obj(
     changes=J.arr(J.s(), "Each change you made to the base CV and why, one short line in English. Empty if none"),
     used_fact_ids=J.arr(J.i(), "ids of the database facts behind anything you added"),
     notes=J.arr(J.s(), "0-3 short notes to the candidate, in English"),
+    leave_out_photo=J.b("True only if the job ad asks for applications without a photo, or says applications are read "
+                        "anonymously. Otherwise false"),
 )
 SECTIONS = ("work", "education", "projects", "skills", "languages", "interests", "certificates")
 
@@ -63,12 +65,15 @@ TAILOR_RULES = """The base CV below is the candidate's own CV and stays the base
 - Length: the base fills {pages} page(s) and the result must not run longer. If you add a point, leave another out. A translation often runs longer: then leave out the points that matter least for this job.
 - Write everything, headings included, in {language}. Translate only if the base is in another language, and then translate faithfully.
 - No name or contact details: they are added automatically.
+- Photo: the candidate's photo is printed on the CV. Set leave_out_photo to true only if the ad asks applicants not to send a photo ("uden billede", "undlad venligst billede", "no photo") or says applications are read anonymously, and say so in changes. Otherwise leave it false.
 Return the whole CV in the same structure, and list every change in changes. If the base already fits, return it unchanged with no changes."""
 
 
 def clean(data: dict | None) -> dict:
     """Coerce to the schema's shape and drop empty entries, so anything stored can be rendered."""
     d = J.coerce(data or {}, CV_SCHEMA)
+    if (data or {}).get("photo") is False:  # this CV goes out without your photo (the ad asked for that)
+        d["photo"] = False
     d["personal"] = [x for x in d["personal"] if x]
     d["interests"] = [x for x in d["interests"] if x]
     d["work"] = [e for e in d["work"] if e["name"] or e["position"]]

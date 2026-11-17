@@ -135,11 +135,13 @@ class FakeProvider:
                     "interests": [], "certificates": []}
         if schema is cvdata.TAILOR_SCHEMA:  # the base with one small change: the second point of the first job goes first
             cv = json.loads(user.split("<cv>\n", 1)[1].split("\n</cv>", 1)[0])
+            no_photo = "vedlægge foto" in user.lower()  # the ad (not the rules above it) asks for applications without a photo
             if "Shorter" in user or "Shorten it" in user:
                 cv["work"][0]["highlights"] = cv["work"][0]["highlights"][:1]
-                return {"cv": cv, "changes": ["Kept one point per job."], "used_fact_ids": [], "notes": []}
+                return {"cv": cv, "changes": ["Kept one point per job."], "used_fact_ids": [], "notes": [], "leave_out_photo": no_photo}
             cv["work"][0]["highlights"].reverse()
-            return {"cv": cv, "changes": ["Put the support result first: the ad is about payments."], "used_fact_ids": [1], "notes": []}
+            return {"cv": cv, "changes": ["Put the support result first: the ad is about payments."], "used_fact_ids": [1], "notes": [],
+                    "leave_out_photo": no_photo}
         if schema is profile.CONSOLIDATE_SCHEMA:
             import re
             ids = {m.group(2): int(m.group(1)) for m in re.finditer(r"\[#(\d+)\] (\w+) \| ", user)}

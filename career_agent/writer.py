@@ -306,6 +306,11 @@ def tailor_cv(job: dict, language: str, instructions: str | None, system: str, p
             changes += [f"CV: {c.strip()}" for c in again["changes"][:5] if c.strip()]
         if _cv_pages(data, language) > limit:
             notes.append(f"The CV still fills more than {limit} page(s). Ask for “Fit it on one page” or trim it under CV.")
+    data.pop("photo", None)
+    if d.get("leave_out_photo"):  # the ad asks for applications without a photo
+        data["photo"] = False
+        if not any("photo" in c.lower() for c in changes):
+            changes.append("CV: your photo is left out, because the ad asks for applications without one.")
     return data, changes + cvdata.keep_base_facts(base["data"], data) + notes
 
 

@@ -691,6 +691,33 @@ async def cv_design(request: Request):
     return go("/profile?tab=cv", msg="CV design saved. Every CV uses it from now on.")
 
 
+@app.post("/cv/photo")
+async def cv_photo(request: Request):
+    data = await request.form()
+    up = data.get("photo")
+    if not getattr(up, "filename", None):
+        return go("/profile?tab=cv#cv-photo", err="Choose a picture first.")
+    try:
+        cvrender.save_photo(await up.read())
+    except ValueError as e:
+        return go("/profile?tab=cv#cv-photo", err=str(e))
+    return go("/profile?tab=cv#cv-photo", msg="Photo saved. It is on every CV, unless a job ad asks for applications without one.")
+
+
+@app.post("/cv/photo/remove")
+def cv_photo_remove():
+    cvrender.remove_photo()
+    return go("/profile?tab=cv#cv-photo", msg="Photo removed from your CVs.")
+
+
+@app.get("/cv/photo.jpg")
+def cv_photo_file():
+    path = cvrender.photo_path()
+    if not path:
+        raise HTTPException(404)
+    return Response(path.read_bytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/cv/base/{base_id}/page/{page}.png")
 def cv_base_page(base_id: int, page: int):
     b = need(cvdata.base(base_id))
@@ -888,7 +915,7 @@ def profile_page(request: Request, tab: str = "about"):
             except Exception as e:  # noqa: BLE001
                 cv_error = str(e)[:300]
         cv = {"main": main, "bases": cvdata.bases(), "docs": cvdata.cv_documents(), "pages": pages, "error": cv_error,
-              "design": settings.get("cv"), "json": json.dumps(main["data"], ensure_ascii=False, indent=2) if main else "",
+              "design": settings.get("cv"), "photo": bool(cvrender.photo_path()), "json": json.dumps(main["data"], ensure_ascii=False, indent=2) if main else "",
               "busy": tasks.active(ref="cv-base"), "task_error": tasks.last_error("cv-base"),
               "questions": review.base_questions(main), "checked": db.jload((main or {}).get("claims"), None),
               "checking": tasks.active(ref="cv-base-check"), "check_error": tasks.last_error("cv-base-check"),

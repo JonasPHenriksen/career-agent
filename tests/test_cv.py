@@ -159,3 +159,52 @@ def test_a_cv_that_runs_longer_than_yours_is_cut_once(fake, monkeypatch):
     assert len(data["work"][0]["highlights"]) == 1, "the second call left a point out"
     assert any(n == "CV: Kept one point per job." for n in notes) and not any("still fills" in n for n in notes)
     assert "Shorten it to fit 1 page(s)" in fake.calls[-1][1]
+
+
+def _picture(width: int = 900, height: int = 700) -> bytes:
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.new("RGB", (width, height), (120, 130, 140)).save(out, "JPEG")
+    return out.getvalue()
+
+
+def test_your_photo_is_on_the_cv_unless_the_ad_asks_for_none(fake):
+    from PIL import Image
+
+    a = _draft()
+    data = db.jload(a["cv_data"])
+    assert cvrender.model(data, "da")["photo"] == "" and "photo" not in data, "no photo until you add one"
+    plain = cvrender.render(data, "da")
+
+    c = TestClient(app)
+    r = c.post("/cv/photo", files={"photo": ("me.txt", b"not a picture", "text/plain")}, follow_redirects=False)
+    assert "picture+I+can+read" in r.headers["location"] and cvrender.photo_path() is None
+    r = c.post("/cv/photo", files={"photo": ("me.jpg", _picture(), "image/jpeg")}, follow_redirects=False)
+    assert "Photo+saved" in r.headers["location"]
+    with Image.open(cvrender.photo_path()) as img:
+        assert img.size == (cvrender.PHOTO_SIDE, cvrender.PHOTO_SIDE), "cropped to a square and made smaller"
+    assert c.get("/cv/photo.jpg").headers["content-type"] == "image/jpeg" and "Replace photo" in c.get("/profile?tab=cv").text
+
+    m = cvrender.model(data, "da")
+    folder = cvrender.render(data, "da")
+    assert m["photo"] == "photo.jpg" and folder != plain and (folder / "photo.jpg").exists()
+    assert (folder / "cv.pdf").stat().st_size > (plain / "cv.pdf").stat().st_size, "the picture is in the PDF"
+
+    # an ad that asks for applications without a photo: that job's CV leaves it out, and says so
+    job_id = jobs.add_from_text(JOB_TEXT + "\nVi behandler ansøgninger uden billede: undlad venligst at vedlægge foto.")
+    jobs.parse(job_id, use_text=True)
+    app_id = jobs.create_application(job_id, draft=False)
+    writer.draft(app_id)
+    b = tracker.app_with_job(app_id)
+    without = db.jload(b["cv_data"])
+    assert without["photo"] is False and cvrender.model(without, "da")["photo"] == ""
+    assert cvdata.clean(without)["photo"] is False, "saving the CV again keeps it without the photo"
+    assert not (cvrender.render(without, "da") / "photo.jpg").exists()
+    writer.draft(a["id"])
+    assert "photo" not in db.jload(tracker.app_with_job(a["id"])["cv_data"]), "any other job's CV has the photo"
+
+    c.post("/cv/photo/remove", follow_redirects=False)
+    assert cvrender.photo_path() is None and cvrender.model(data, "da")["photo"] == ""

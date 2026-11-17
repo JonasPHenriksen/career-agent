@@ -121,6 +121,9 @@ The CV for a job is your own CV with small changes, not a new one. Under Profile
 * **Typeset in the app.** The CV is laid out on this Mac in two columns with a coloured sidebar. Colour, font, text
   size, sidebar width and the order of the sections are settings on the same page. The application page shows the
   pages, and gives you the PDF and a JSON Resume file that tools like rxresu.me can import.
+* **Your photo.** Add a picture under Profile → Your CV and it is printed at the top of every CV, cropped to a
+  square. When a job ad asks for applications without a photo, or says they are read anonymously, that job's CV is
+  made without it and the list of changes says so. The picture never goes to a model.
 * **Your contact details stay here.** Name, email, phone and links come from About you when the CV is typeset; they
   are taken out of a CV's text before a model reads it.
 

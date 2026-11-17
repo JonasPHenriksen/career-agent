@@ -251,6 +251,15 @@
         <div class="row end"><button class="btn primary">Save design</button></div>
       </form>
     </section>
+    <section class="card" id="cv-photo" style="margin-bottom:1rem">
+      <h2>Your photo</h2>
+      <p class="small text-2">Shown at the top of every CV. When a job ad asks for applications without a photo, that job's CV is made without it and the list of changes says so. The picture is cropped to a square around its centre.</p>
+      <div class="row">
+        {% if cv.photo %}<img src="/cv/photo.jpg?v={{ range(100000)|random }}" alt="Your CV photo" style="width:72px;height:72px;border-radius:50%;object-fit:cover">{% endif %}
+        <form method="post" action="/cv/photo" enctype="multipart/form-data" class="row"><input type="file" name="photo" accept="image/jpeg,image/png" aria-label="Photo" required><button class="btn">{{ 'Replace photo' if cv.photo else 'Add photo' }}</button></form>
+        {% if cv.photo %}<form method="post" action="/cv/photo/remove" class="inline"><button class="btn ghost">Remove</button></form>{% endif %}
+      </div>
+    </section>
     {% if cv.main %}
     <section class="card">
       <h2>Correct the base CV</h2>

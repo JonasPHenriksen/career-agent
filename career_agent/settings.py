@@ -66,6 +66,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "cv": {
         "base_id": None,  # which base CV (table cv_bases) tailored CVs start from
+        "photo": "",  # your photo on the CV: a file name in the files folder; "" = no photo
         "primary": "#2254bf",  # the sidebar's colour; the light background is derived from it
         "font": "IBM Plex Serif",  # falls back to Charter or Georgia when it isn't installed
         "size": 9.6,  # body text size in points

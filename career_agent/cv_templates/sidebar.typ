@@ -34,6 +34,10 @@
     #block(fill: primary, width: 100%, inset: (x: 16pt, top: 24pt, bottom: 18pt))[
       #set text(fill: white)
       #set par(leading: 0.75em)
+      #if d.photo != "" {
+        align(center, box(clip: true, radius: 50%, width: 56%, stroke: 1.5pt + white, image(d.photo, width: 100%)))
+        v(8pt)
+      }
       #text(size: base * 2.2, weight: 600, d.header.name)
       #if d.header.label != "" { linebreak(); d.header.label }
       #for l in d.header.lines {

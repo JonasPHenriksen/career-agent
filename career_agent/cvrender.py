@@ -7,6 +7,7 @@ never go to a model.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import re
 import shutil
@@ -36,6 +37,39 @@ def design() -> dict:
             "fonts": [f for f in dict.fromkeys([(d.get("font") or "").strip(), *FALLBACK_FONTS]) if f],
             "sidebar_order": [s for s in (d.get("sidebar_order") or SIDEBAR_SECTIONS) if s in SIDEBAR_SECTIONS],
             "main_order": [s for s in (d.get("main_order") or MAIN_SECTIONS) if s in MAIN_SECTIONS]}
+
+
+PHOTO_FILE = "cv-photo.jpg"
+PHOTO_SIDE = 600  # pixels: sharp in print at the size it's shown, without making every PDF heavy
+
+
+def photo_path() -> Path | None:
+    """Your photo for the CV, if you've added one."""
+    name = (settings.get("cv").get("photo") or "").strip()
+    path = config.FILES_DIR / name if name else None
+    return path if path and path.is_file() else None
+
+
+def save_photo(raw: bytes) -> None:
+    """Keep a picture as your CV photo: turned upright, cropped to a square around its centre and made smaller."""
+    from PIL import Image, ImageOps
+
+    try:
+        img = ImageOps.exif_transpose(Image.open(io.BytesIO(raw))).convert("RGB")
+    except Exception as e:  # noqa: BLE001 - whatever Pillow can't read isn't a photo we can use
+        raise ValueError("That file isn't a picture I can read. Use a JPEG or PNG.") from e
+    side = min(img.size)
+    left, top = (img.width - side) // 2, (img.height - side) // 2
+    img = img.crop((left, top, left + side, top + side))
+    if side > PHOTO_SIDE:
+        img = img.resize((PHOTO_SIDE, PHOTO_SIDE), Image.LANCZOS)
+    config.ensure_dirs()
+    img.save(config.FILES_DIR / PHOTO_FILE, "JPEG", quality=90)
+    settings.update("cv", {"photo": PHOTO_FILE})
+
+
+def remove_photo() -> None:
+    settings.update("cv", {"photo": ""})  # the file stays, so undoing this in History brings the photo back
 
 
 def _dates(e: dict) -> str:
@@ -88,9 +122,12 @@ def model(data: dict, language: str | None = None, profile: dict | None = None, 
                     for c in data.get("certificates") or []]
         return [{"name": x, "text": ""} for x in data.get("interests") or [] if x.strip()]
 
+    # The photo is on every CV unless this one says no (the job ad asked for applications without a photo).
+    photo = photo_path() if data.get("photo") is not False else None
     sidebar = [{"title": _title(data, k, lang), "items": items(k)} for k in look["sidebar_order"]]
     main = [{"title": _title(data, k, lang), "entries": entries(k)} for k in look["main_order"]]
     return {"lang": lang, "design": look,
+            "photo": "photo.jpg" if photo else "", "photo_hash": hashlib.sha1(photo.read_bytes()).hexdigest()[:12] if photo else "",
             "header": {"name": p.get("name") or "", "label": (data.get("label") or "").strip(), "lines": lines},
             "profile": {"title": _title(data, "summary", lang), "text": (data.get("summary") or "").strip()},
             "sidebar": [s for s in sidebar if s["items"]], "main": [s for s in main if s["entries"]]}
@@ -109,6 +146,8 @@ def render(data: dict, language: str | None = None) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "data.json").write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")
     shutil.copyfile(TEMPLATE, folder / "main.typ")
+    if m["photo"]:
+        shutil.copyfile(photo_path(), folder / m["photo"])
     typst.compile(str(folder / "main.typ"), output=str(folder / "cv.pdf"), root=str(folder))
     typst.compile(str(folder / "main.typ"), output=str(folder / "page-{p}.png"), root=str(folder), format="png", ppi=130.0)
     return folder
