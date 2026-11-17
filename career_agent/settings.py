@@ -77,6 +77,13 @@ DEFAULTS: dict[str, Any] = {
         "folder": "",  # the agent folder, e.g. ~/Nextcloud/Agents; "" = use <Nextcloud>/Agents if it exists
         "use": True,  # put its profile, summaries and style guides into the writing prompts
     },
+    "backup": {  # see backup.py
+        "enabled": True,  # back up automatically (once a folder is chosen)
+        "folder": "",  # where the zips go, e.g. ~/Nextcloud/Backups/Career Agent; "" = no automatic backup yet
+        "every_days": 7,
+        "mode": "accumulate",  # accumulate = a new dated zip each time | overwrite = replace the one zip
+        "keep": 0,  # with accumulate: how many of the newest to keep; 0 = all
+    },
     "dismissed_facts": [],  # titles of facts you removed for good: reading a document again doesn't bring them back
     "style_guide": "",
     "style_stats": {},

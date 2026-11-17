@@ -2,12 +2,9 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import json
 import logging
-import sqlite3
 import tempfile
-import zipfile
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
@@ -18,7 +15,7 @@ from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import (alerts, companies, config, cvdata, cvrender, db, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
+from .. import (alerts, backup, companies, config, cvdata, cvrender, db, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
                 profile, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
@@ -1146,6 +1143,10 @@ STEP_USUAL_EFFORT = {"screen": "low", "read_ad": "low", "score": "medium", "read
 @app.get("/settings")
 def settings_page(request: Request):
     st = llm.status()
+    bk = backup.status()
+    bk_error = tasks.last_error("backup")  # an automatic backup that failed, unless one has worked since
+    if bk_error and (bk_error["finished_at"] or "") <= bk["last_at"]:
+        bk_error = None
     return render(request, "settings.html", st=st, cfg=settings.get("llm"), auto=settings.get("automation"),
                   w=settings.get("writing"), anthropic_models=llm.ANTHROPIC_MODELS,
                   sources=db.q("SELECT * FROM sources ORDER BY id"), source_kinds=sources.KINDS, alert_days=alerts.FIRST_READ_DAYS,
@@ -1155,7 +1156,7 @@ def settings_page(request: Request):
                           "own": llm.step_settings(k), "usual_effort": STEP_USUAL_EFFORT.get(k, "")} for k, label, tier, _ in llm.STEPS],
                   model_groups=llm.model_choices(),
                   claude_code_models=llm.CLAUDE_CODE_MODELS, redo_kinds=redo.KINDS, redo_counts={k: len(v) for k, v in redo.candidates().items()},
-                  models_used=redo.models_used())
+                  models_used=redo.models_used(), backup=bk, backup_busy=tasks.active(ref="backup"), backup_error=bk_error)
 
 
 def _save_models(f: dict) -> None:
@@ -1453,20 +1454,60 @@ def sources_delete(request: Request, source_id: int):
 
 @app.get("/settings/backup")
 def settings_backup(request: Request):
-    buf = io.BytesIO()
     with tempfile.TemporaryDirectory() as tmp:
-        snap = Path(tmp) / "career.db"
-        dst = sqlite3.connect(snap)
-        db.connect().backup(dst)
-        dst.close()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            z.write(snap, "career.db")
-            for p in config.FILES_DIR.rglob("*"):
-                if p.is_file():
-                    z.write(p, f"files/{p.relative_to(config.FILES_DIR)}")
+        target = Path(tmp) / "backup.zip"
+        backup.write_zip(target)
+        data = target.read_bytes()
     name = f"career-agent-backup-{datetime.now().strftime('%Y-%m-%d')}.zip"
-    return Response(buf.getvalue(), media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _save_backup(f: dict) -> tuple[bool, str]:
+    """Save the backup settings from the form. Returns (whether the folder changed, a problem or "")."""
+    folder = (f.get("folder") or "").strip()
+    if folder:
+        try:
+            folder = str(backup.check_folder(folder))
+        except backup.BackupError as e:
+            return False, str(e)
+
+    def num(key: str, default: int, lo: int, hi: int) -> int:
+        try:
+            return max(lo, min(hi, int(f.get(key) or default)))
+        except ValueError:
+            return default
+
+    before = settings.get("backup")
+    settings.update("backup", {"enabled": bool(f.get("enabled")), "folder": folder, "every_days": num("every_days", 7, 1, 365),
+                               "mode": f.get("mode") if f.get("mode") in backup.MODES else "accumulate",
+                               "keep": num("keep", 0, 0, 1000)})
+    return folder != (before.get("folder") or ""), ""
+
+
+@app.post("/settings/backup/save")
+async def settings_backup_save(request: Request):
+    changed, problem = _save_backup(await form(request))
+    if problem:
+        return go("/settings#backup", err=f"Not saved: {problem}")
+    cfg = settings.get("backup")
+    if changed and cfg["folder"] and cfg["enabled"]:
+        tasks.enqueue("backup", {}, ref="backup")
+        return go("/settings#backup", msg="Saved. Making the first backup in that folder now…")
+    return go("/settings#backup", msg="Backup settings saved.")
+
+
+@app.post("/settings/backup/run")
+async def settings_backup_run(request: Request):
+    """Save what's in the form, then back up right away (not behind a long model task in the queue)."""
+    _, problem = _save_backup(await form(request))
+    if problem:
+        return go("/settings#backup", err=f"Not backed up: {problem}")
+    try:
+        result = await asyncio.to_thread(backup.run)
+    except backup.BackupError as e:
+        return go("/settings#backup", err=str(e))
+    gone = f" Removed {len(result['removed'])} older backup{'s' if len(result['removed']) != 1 else ''}." if result["removed"] else ""
+    return go("/settings#backup", msg=f"Backed up to {result['file']} ({result['size']}).{gone}")
 
 
 @app.get("/tasks")

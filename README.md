@@ -317,6 +317,25 @@ exported PDFs. Settings → Your data → *Download a backup* gives you a zip. T
 `127.0.0.1`, refuses requests addressed to other hosts, and blocks cross-site form posts, so websites
 you visit can't talk to it.
 
+### Automatic backup
+
+Settings → Your data → **Automatic backup** copies a zip with your database, your files and exported PDFs to a
+folder you choose, once a week unless you pick another interval (every day to every month). A folder in Nextcloud,
+such as `~/Nextcloud/Backups/Career Agent`, puts it on your server as well; the field suggests that one when it
+finds your Nextcloud folder.
+
+* **Keep every backup, or replace it.** *Adds a dated file* puts a new zip next to the earlier ones each time
+  (`career-agent-backup-2026-11-17_1305.zip`) and, if you set *Keep the newest*, removes the oldest beyond that
+  number. *Replaces the last one* keeps one file, `career-agent-backup.zip` (Nextcloud keeps its older versions
+  under the file's Versions). Other files in the folder are never touched.
+* **When the app is off.** A backup that came due while the app wasn't running is made within a minute of the next
+  start, also while automatic work is on hold (it uses no model). A failed backup (Nextcloud folder gone, disk full)
+  shows on the Settings page and as a notification, and is tried again after 6 hours.
+* **Back up now** saves the settings and makes one right away.
+* **Restoring.** Each zip has a `README.txt`: stop the app, move `career.db`, `career.db-wal` and `career.db-shm`
+  aside in the data folder, put the backup's `career.db` there, copy `files/` and `exports/` back, and start again.
+  Passwords and API keys live in the macOS Keychain and are never in a backup.
+
 ### Undo anything
 
 Every change to your data is recorded before it happens, so nothing is lost by a click:
@@ -383,5 +402,6 @@ uv run python -m career_agent --port 8765 --data ./data --no-browser
 | `career_agent/redo.py` | Redoing work with another model, one item or in bulk |
 | `career_agent/todos.py` | Your to-do list and dated reminders |
 | `career_agent/history.py` | Recording every change, undo and restore, the daily database copy |
+| `career_agent/backup.py` | Automatic backups to a folder you choose (e.g. Nextcloud), dated or replaced |
 | `career_agent/web/` | FastAPI app, templates, CSS, a little JS |
 | `scripts/eval/letters.py` | A small benchmark: the same letters from several models, fact-checked by one checker, laid out blind for you to rank (results in `data/eval/`) |

@@ -224,6 +224,37 @@
 <section class="card" id="data">
   <h2>Your data</h2>
   <p class="small text-2">Everything is stored in <code>{{ data_dir }}</code> on this Mac: the database, your uploaded files, and exported PDFs.</p>
+
+  <h3 id="backup" style="margin-top:1.2rem">Automatic backup</h3>
+  <p class="small text-2">A zip with your database, your files and exported PDFs, copied to a folder you choose. A folder in Nextcloud puts it on your server as well. Passwords and API keys stay in the Keychain and are never in a backup. The app isn't always running, so a backup that came due while it was off is made within a minute of the next start, also while automatic work is on hold.</p>
+  {% set b = backup %}
+  <p class="small">
+    {% if backup_busy %}<span class="pill">backing up…</span>{% endif %}
+    {% if b.last_at %}Last backup {{ b.last_at|ago }} ({{ b.last_at|local_dt }}): <code>{{ b.last_file }}</code>, {{ b.last_size }}.{% else %}No backup made yet.{% endif %}
+    {% if not b.cfg.folder %} Choose a folder to start.{% elif not b.cfg.enabled %} Automatic backups are off.{% elif b.next_at == 'now' %} The next one is due now.{% elif b.next_at %} Next: {{ b.next_at|local_dt }}.{% endif %}
+    {% if b.count %}<br>{{ b.count }} backup{{ 's' if b.count != 1 }} in the folder, {{ b.total }} in all.{% endif %}
+  </p>
+  {% if b.problem %}<p class="small" style="color:var(--bad)">{{ b.problem }}</p>{% endif %}
+  {% if backup_error %}<p class="small" style="color:var(--bad)">The last automatic backup failed ({{ backup_error.finished_at|ago }}): {{ backup_error.error }}</p>{% endif %}
+  <form method="post" action="/settings/backup/save">
+    <label class="check"><input type="checkbox" name="enabled" value="1" {{ 'checked' if b.cfg.enabled }}> <span>Back up automatically</span></label>
+    <div class="field"><label for="bfolder">Folder <span class="hint">· made if it doesn't exist yet</span></label>
+      <input id="bfolder" type="text" name="folder" value="{{ b.cfg.folder }}" list="backup-folders" placeholder="{{ b.suggested or '~/Nextcloud/Backups/Career Agent' }}">
+      <datalist id="backup-folders">{% if b.suggested %}<option value="{{ b.suggested }}">{% endif %}</datalist></div>
+    <div class="fields-3">
+      <div class="field"><label for="bevery">How often</label><select id="bevery" name="every_days">
+        {% for n, label in b.every %}<option value="{{ n }}" {{ 'selected' if b.cfg.every_days == n }}>{{ label }}</option>{% endfor %}
+        {% if b.cfg.every_days not in b.every|map(attribute=0)|list %}<option value="{{ b.cfg.every_days }}" selected>Every {{ b.cfg.every_days }} days</option>{% endif %}
+      </select></div>
+      <div class="field"><label for="bmode">Each new backup <span class="hint">· keep them all, or one file</span></label><select id="bmode" name="mode">
+        {% for k, label in b.modes.items() %}<option value="{{ k }}" {{ 'selected' if b.cfg.mode == k }}>{{ label }}</option>{% endfor %}
+      </select></div>
+      <div class="field"><label for="bkeep">Keep the newest <span class="hint">· with dated files; 0 = all</span></label><input id="bkeep" type="number" name="keep" value="{{ b.cfg.keep }}" min="0" max="1000"></div>
+    </div>
+    <div class="row" style="margin-top:.6rem"><button class="btn primary">Save</button>
+      <button class="btn" formaction="/settings/backup/run" data-busy="Backing up…">Save and back up now</button></div>
+  </form>
+  <hr>
   <div class="row"><a class="btn" href="/settings/backup">Download a backup (.zip)</a><a class="btn ghost" href="/tasks">Background tasks</a></div>
 </section>
 </div>

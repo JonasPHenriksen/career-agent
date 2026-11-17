@@ -15,7 +15,7 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 
-from . import db, history, settings
+from . import backup, db, history, settings
 
 log = logging.getLogger("career_agent.tasks")
 
@@ -39,6 +39,7 @@ TASK_LABELS = {
     "build_cv_base": "Reading your CV as the base for tailored CVs",
     "rescreen_jobs": "Screening job listings again",
     "check_cv_base": "Checking your base CV against your career database",
+    "backup": "Backing up your data",
 }
 
 _wake = threading.Event()
@@ -107,7 +108,18 @@ def _handlers() -> dict:
         "build_cv_base": lambda p: _then_check_base(cvdata.build_base(p["doc_id"])),
         "check_cv_base": lambda p: review.check_base(p.get("base_id")),
         "rescreen_jobs": lambda p: sources.rescreen(p.get("job_ids")),
+        "backup": lambda p: _backup(),
     }
+
+
+def _backup() -> dict:
+    from . import notify
+
+    try:
+        return backup.run()
+    except Exception as e:
+        notify.send("Backup failed", str(e))
+        raise
 
 
 def _then_check_base(result: dict) -> dict:
@@ -516,13 +528,16 @@ def _in_history(context: str, fn, *args):
 
 
 async def scheduler_loop(stop: asyncio.Event) -> None:
-    """Checks sources when due, marks ghosted applications, sends a morning digest."""
+    """Checks sources when due, marks ghosted applications, sends a morning digest, makes the weekly backup."""
     from . import tracker
 
     while not stop.is_set():
         try:
             with history.op("Checking what's due"):
                 queue_due()
+            if backup.due():  # also while automatic work is on hold: it uses no model
+                backup.mark_tried()
+                enqueue("backup", {}, ref="backup")
             state = settings.get("state")
             now_local = datetime.now()
             last_maint = db.parse_ts(state.get("last_maintenance"))
