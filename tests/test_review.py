@@ -48,8 +48,8 @@ def test_your_answers_become_facts_and_the_draft_is_revised(fake):
     assert "2+answers+saved" in r.headers["location"] and "Revising" in r.headers["location"]
     new = db.q("SELECT category, title, detail, verified, source, evidence FROM facts ORDER BY id DESC LIMIT ?",
                (db.scalar("SELECT COUNT(*) FROM facts") - before,))
-    assert [(f["category"], f["title"]) for f in new] == [("achievement", "Teamet var på 8 udviklere."),
-                                                         ("value", "You want to work with payments again.")]
+    assert [(f["category"], f["title"]) for f in new] == [("project", "Teamet var på 8 udviklere."),
+                                                         ("about", "You want to work with payments again.")]
     assert new[1]["detail"].startswith("Betalinger er det") and all(f["verified"] and f["source"] == "manual" for f in new)
     task = json.loads(db.q1("SELECT payload FROM tasks WHERE kind = 'revise_application' ORDER BY id DESC")["payload"])
     assert task["part"] == "letter" and task["model"] == "||high"

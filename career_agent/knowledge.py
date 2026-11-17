@@ -313,7 +313,7 @@ def import_facts() -> dict:
     by_doc: dict[int | None, list[dict]] = {}
     for f in facts:
         cat = (f.get("category") or "").strip()
-        if not (f.get("title") or "").strip() or cat not in profile.CATEGORY_LABELS:
+        if not (f.get("title") or "").strip() or not profile.category_of(cat):
             report["skipped"] += 1
             continue
         rel = str(f.get("source") or "").strip("/")

@@ -280,10 +280,11 @@
       {% if cat == 'skill' %}
       {% for place, period, group in sections %}
       {% if place %}<h3 class="place-head">{{ place }}{% if period %} <span class="period">{{ period }}</span>{% endif %}</h3>{% endif %}
-      <div class="skills-cloud">{% for f in group %}<a id="fact-{{ f.id }}" class="pill {{ 'good' if f.verified }}{{ ' ' if f.hidden }}" style="{{ 'opacity:.45' if f.hidden }}" href="#edit-{{ f.id }}" title="{{ f.detail or '' }}" data-toggle="#edit-{{ f.id }}">{{ f.title }}</a>{% endfor %}</div>
+      <div class="skills-cloud">{% for f in group %}<a id="fact-{{ f.id }}" class="pill {{ 'good' if f.verified }}{{ ' ' if f.hidden }}" style="{{ 'opacity:.45' if f.hidden or f.depth == 'insight' }}" href="#edit-{{ f.id }}" title="{{ (depth_labels[f.depth]|capitalize ~ '. ') if f.depth in depth_labels }}{{ f.detail or '' }}" data-toggle="#edit-{{ f.id }}">{{ f.title }}</a>{% endfor %}</div>
       {% endfor %}
       {% for f in items %}<form id="edit-{{ f.id }}" hidden method="post" action="/facts/{{ f.id }}" class="card flat" style="margin-top:.6rem">
         <div class="fields-2"><div class="field"><label>Skill</label><input type="text" name="title" value="{{ f.title }}"></div><div class="field"><label>Where you used it</label><input type="text" name="detail" value="{{ f.detail or '' }}"></div></div>
+        <div class="fields-2"><div class="field"><label>Area</label><select name="area"><option value="">Other</option>{% for a in areas %}<option value="{{ a }}" {{ 'selected' if a == f.area }}>{{ a }}</option>{% endfor %}</select></div><div class="field"><label>How well you know it</label><select name="depth"><option value="">Not said</option>{% for d, l in depths %}<option value="{{ d }}" {{ 'selected' if d == f.depth }}>{{ l|capitalize }}</option>{% endfor %}</select></div></div>
         <div class="row"><button class="btn small primary">Save</button>
           <button class="btn small" formaction="/facts/{{ f.id }}/toggle/hidden">{{ 'Show' if f.hidden else 'Hide' }}</button>
           <button class="btn small ghost danger" formaction="/facts/{{ f.id }}/delete">Delete</button></div></form>{% endfor %}

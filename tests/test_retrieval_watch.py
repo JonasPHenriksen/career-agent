@@ -76,12 +76,12 @@ def test_chunking_and_keyword_search_without_embeddings(fake):
 
 def test_hybrid_ranking_and_job_relevant_digest(ollama):
     for k in range(40):
-        db.insert("facts", {"category": "achievement", "title": f"Bagte kage til {k} kollegaer", "detail": "kage bage",
+        db.insert("facts", {"category": "project", "title": f"Bagte kage til {k} kollegaer", "detail": "kage bage",
                             "created_at": db.now()})
-    db.insert("facts", {"category": "achievement", "title": "Scrum team for payments", "detail": "SQL og betaling i Danske Bank",
+    db.insert("facts", {"category": "project", "title": "Scrum team for payments", "detail": "SQL og betaling i Danske Bank",
                         "created_at": db.now()})
     db.insert("facts", {"category": "experience", "title": "Product Owner", "organization": "Danske Bank", "created_at": db.now()})
-    facts = db.q("SELECT * FROM facts WHERE category = 'achievement'")
+    facts = db.q("SELECT * FROM facts WHERE category = 'project'")
     order = retrieval.rank_facts("Erfaring med Scrum, SQL og betalinger", facts)
     best = db.q1("SELECT id FROM facts WHERE title = 'Scrum team for payments'")["id"]
     assert order[0] == best

@@ -873,7 +873,7 @@ def profile_page(request: Request, tab: str = "about"):
     grouped = []
     for c, label in profile.CATEGORIES:
         items = [f for f in facts if f["category"] == c]
-        sections = profile.by_place(items, index)
+        sections = profile.by_area(items) if c == "skill" else profile.by_place(items, index)
         grouped.append((c, label, items, sections if len(sections) > 1 else [("", "", items)]))
     deleted = history.recently_deleted("facts", 20) if tab == "facts" else []
     active_rows = db.q("SELECT kind FROM tasks WHERE kind IN ('analyze_document', 'build_style', 'consolidate_facts') "
@@ -901,7 +901,8 @@ def profile_page(request: Request, tab: str = "about"):
                   made_style=llm.made_by("style", ("style_guide",)),
                   tidy_busy=any(r["kind"] == "consolidate_facts" for r in active_rows), p=settings.get("profile"), docs=docs, grouped=grouped, deleted=deleted,
                   kinds=profile.KINDS, kind_labels=profile.KIND_LABELS, outcomes=profile.OUTCOMES,
-                  categories=profile.CATEGORIES, style_guide=settings.get("style_guide"),
+                  categories=profile.CATEGORIES, areas=profile.AREAS, depths=profile.DEPTHS, depth_labels=profile.DEPTH_LABELS,
+                  style_guide=settings.get("style_guide"),
                   baseline=settings.get("style_stats") or {}, exemplars=voice.exemplars(None, 99999),
                   style_locked=settings.get("state").get("style_locked"), busy=busy, metrics=voice.METRICS,
                   style_error=tasks.last_error("style"), outcome_labels=profile.OUTCOME_LABELS,
@@ -1062,7 +1063,8 @@ async def document_delete(request: Request, doc_id: int):
     return go("/profile?tab=documents", msg="Document deleted.")
 
 
-FACT_FIELDS = ["category", "title", "organization", "location", "start_date", "end_date", "detail", "evidence", "tags"]
+FACT_FIELDS = ["category", "title", "organization", "location", "start_date", "end_date", "detail", "evidence", "tags",
+               "area", "depth"]
 
 
 @app.post("/facts/add")

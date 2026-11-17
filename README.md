@@ -133,7 +133,7 @@ multilingual embedding model, `bge-m3` in Ollama, so Danish and English match). 
 
 * **Pick the facts that matter for each job.** When your whole career database doesn't fit the model's
   budget (mostly with local models), every role, degree, certification and language is always kept, and
-  the achievements, skills and values most relevant to the ad fill the rest.
+  the projects, skills and things you say about yourself most relevant to the ad fill the rest.
 * **Choose example letters** that worked and are closest to the job.
 * **Double-check the fact check.** Before a claim is called unsupported, your original documents are
   searched. If a passage backs it, you see where, and can add it to your career database in one click.
@@ -335,8 +335,16 @@ queue. Changes made outside the app, such as with the `sqlite3` command, can't b
 also makes a full copy of the database when it starts, once a day, in `data/snapshots/` (the newest 7 are kept).
 A Nextcloud folder you stop watching comes back without its password, since that lives in the Keychain.
 
-The career database tab groups each kind of fact by where it happened, newest first: your job or education there
-names the place and gives its years, and spellings such as "Nordvik" and "Nordvik P/S" count as one place.
+The career database has eight kinds of fact: experience, education, projects, smaller programs and utilities,
+skills, certifications, languages and about me. A result is never a fact of its own: it is written into the
+project, job or education it came from, so each project reads as what it was, your part and the result. The tab
+groups each kind by where it happened, newest first: your job or education there names the place and gives its
+years, and spellings such as "Nordvik" and "Nordvik P/S" count as one place. Skills are grouped by area instead,
+and each says how well you know it (used at work, used in a larger project, coursework, insight only), which the
+writer sees, so insight is never written up as experience.
+
+A fact remembers the titles of the facts that were merged into it. Reading a document again, or importing the
+agent folder again, doesn't bring those back as facts of their own.
 
 ## Troubleshooting
 

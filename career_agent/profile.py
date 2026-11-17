@@ -9,17 +9,33 @@ from .llm import jsonutil as J
 
 CATEGORIES = [
     ("experience", "Experience"),
-    ("achievement", "Achievements"),
-    ("project", "Projects"),
-    ("skill", "Skills"),
     ("education", "Education"),
+    ("project", "Projects"),
+    ("utility", "Smaller programs and utilities"),
+    ("skill", "Skills"),
     ("certification", "Certifications"),
     ("language", "Languages"),
-    ("volunteering", "Volunteering & other roles"),
-    ("value", "Motivation & values"),
-    ("personal", "Personal"),
+    ("about", "About me"),
 ]
 CATEGORY_LABELS = dict(CATEGORIES)
+
+# Kinds from before the database was reorganised. A result ("achievement") is no longer a fact of its own: it is
+# written into the job, education or project it came from. Facts that still arrive with an old kind (an older
+# facts.jsonl, a model that ignores the list) are filed under the new one.
+LEGACY_CATEGORIES = {"achievement": "project", "value": "about", "personal": "about", "volunteering": "about"}
+
+# Skills are grouped by area, and say how well you know them, so "insight only" is never written up as experience.
+AREAS = ["Languages", "Backend and data", "Web", "AI", "ERP (Dynamics 365)", "DevOps and infrastructure",
+         "Embedded and XR", "Ways of working"]
+DEPTHS = [("work", "used at work"), ("project", "used in a larger project"), ("coursework", "coursework"),
+          ("insight", "insight only")]
+DEPTH_LABELS = dict(DEPTHS)
+
+
+def category_of(name: str | None) -> str | None:
+    """The kind a fact is filed under, or None when `name` isn't a kind at all."""
+    name = (name or "").strip()
+    return name if name in CATEGORY_LABELS else LEGACY_CATEGORIES.get(name)
 
 KINDS = [
     ("cv", "CV / résumé"),
@@ -75,16 +91,16 @@ First classify the document:
 - written_by_candidate: true if the candidate wrote the text alone (their CV, applications, emails, solo reports). False for group work written with others, references, certificates, job ads, course material and other people's texts.
 
 Then extract facts about the candidate, one item per fact:
-- experience: one per position. title = job title, organization = employer, plus dates and location. detail = scope and responsibilities in 1-3 sentences.
-- achievement: a concrete result or accomplishment stated in one line, e.g. "Cut onboarding time from 3 weeks to 1 week". Keep numbers exactly as written. organization = where it happened.
-- project: a named or clearly described project, product or initiative the candidate worked on.
+- experience: one per position. title = job title, organization = employer, plus dates and location. detail = scope and responsibilities, then what the job as a whole led to (feedback, a reference).
+- education: one per degree or programme. title = degree, organization = institution. detail = subjects and awards. Leave grades and pass marks out.
+- project: one per named or clearly described project, product or initiative the candidate worked on. organization = where it happened. detail = what it was, then the candidate's own part, then the result.
+- utility: a small program, script or exercise (hours or a few days of work) that isn't worth a project entry.
 - skill: one per distinct skill, tool, method or domain the candidate demonstrably has. title = the skill name only. detail = where or how it was used.
-- education: one per degree or programme. title = degree, organization = institution.
 - certification: certificates, licences, courses with a certificate.
 - language: spoken languages. title = language name in English, detail = level as stated.
-- volunteering: board work, volunteering, associations, side activities.
-- value: what motivates the candidate or how they like to work, only when they say it themselves.
-- personal: other relevant personal facts they share (driving licence, interests, availability).
+- about: what motivates the candidate, how they like to work, and other personal facts they share (driving licence, interests, side activities), only when they say it themselves.
+
+A result or accomplishment ("Cut onboarding time from 3 weeks to 1 week") is never a fact of its own: put it in the detail of the project, job or education it came from, with its numbers exactly as written.
 
 Rules:
 - Only extract what the document states. Never infer, generalise or improve. If a number, title or date is not in the text, leave it out.
@@ -288,12 +304,27 @@ def _is_duplicate(cat: str, e: dict, f: dict, same_org_count: int = 0) -> bool:
         if se and sf:  # the same employer in overlapping years is the same role, described differently
             return (se[0] < sf[1] and sf[0] < se[1]) or se[0] == sf[0]
         return cat == "experience" and same_org_count == 1
-    if cat == "achievement" and _same_org(e.get("organization"), f.get("organization")):
-        shared = _numbers(f"{e['title']} {e.get('detail') or ''}") & _numbers(f"{f['title']} {f.get('detail') or ''}")
-        if shared:
-            return True
     return _similar(f"{e['title']} {e.get('detail') or ''}", f"{f['title']} {f.get('detail') or ''}") >= 0.55 \
         or _norm(e["title"]) == _norm(f["title"])
+
+
+def _same_result(e: dict, f: dict) -> bool:
+    """A result (`f`) that the entry `e` already states: the same place and a number in common."""
+    if not _same_org(e.get("organization"), f.get("organization")):
+        return False
+    return bool(_numbers(f"{e['title']} {e.get('detail') or ''}") & _numbers(f"{f['title']} {f.get('detail') or ''}"))
+
+
+def remember_absorbed(keep_id: int, titles: list[str]) -> None:
+    """Note on a fact which other facts were merged into it, so reading a document or importing the agent folder
+    again doesn't bring them back as facts of their own."""
+    row = db.q1("SELECT absorbed FROM facts WHERE id = ?", (keep_id,))
+    if not row:
+        return
+    known = db.jload(row["absorbed"], []) or []
+    new = [t for t in dict.fromkeys(_norm(t) for t in titles) if t and t not in known]
+    if new:
+        db.update("facts", keep_id, {"absorbed": db.jdump(known + new)})
 
 
 def _recency(doc_date: str | None, mtime: float | None) -> str:
@@ -314,13 +345,23 @@ def save_facts(doc_id: int | None, facts: list[dict], authoritative: bool = Fals
     this = db.q1("SELECT doc_date, source_mtime FROM documents WHERE id = ?", (doc_id,)) if doc_id else None
     this_when = _recency(this["doc_date"], this["source_mtime"]) if this else ""
     existing: dict[str, list[dict]] = {}
+    gone = set(settings.get("dismissed_facts") or [])  # titles you removed on purpose, and titles merged into another fact
     for row in db.q("SELECT f.*, d.kind AS doc_kind, d.doc_date AS src_date, d.source_mtime AS src_mtime "
                     "FROM facts f LEFT JOIN documents d ON d.id = f.document_id"):
         existing.setdefault(row["category"], []).append(row)
+        gone.update(db.jload(row.get("absorbed"), []) or [])
     for f in facts:
         title = (f.get("title") or "").strip()
-        cat = f.get("category") or "personal"
-        if not title or cat not in CATEGORY_LABELS:
+        said = (f.get("category") or "about").strip()
+        cat = category_of(said)
+        if not title or not cat:
+            continue
+        if _norm(title) in gone:  # already part of another fact, or removed by you: it doesn't come back
+            merged += 1
+            continue
+        if said == "achievement" and any(_same_result(e, f) for c in ("project", "experience", "education")
+                                         for e in existing.get(c, [])):
+            merged += 1  # the job, education or project it belongs to already states this result
             continue
         tags = ", ".join(t.strip() for t in (f.get("tags") or []) if t and t.strip())[:300]
         same_org_count = sum(1 for e in existing.get(cat, []) if _same_org(e.get("organization"), f.get("organization")))
@@ -436,6 +477,16 @@ def by_place(items: list[dict], index: dict[str, dict]) -> list[tuple[str, str, 
              sorted(groups[k], key=lambda f: (f.get("start_date") or "", -f["id"]), reverse=True)) for k in order]
 
 
+def by_area(items: list[dict]) -> list[tuple[str, str, list[dict]]]:
+    """Skills in sections per area, in the fixed order; skills with no area come last."""
+    groups: dict[str, list[dict]] = {}
+    for f in items:
+        groups.setdefault(f.get("area") if f.get("area") in AREAS else "", []).append(f)
+    rank = {d: n for n, (d, _) in enumerate(DEPTHS)}
+    return [(a or "Other", "", sorted(groups[a], key=lambda f: (rank.get(f.get("depth"), 9), f["title"].lower())))
+            for a in [*AREAS, ""] if a in groups]
+
+
 def visible_facts() -> list[dict]:
     order = {c: n for n, (c, _) in enumerate(CATEGORIES)}
     rows = db.q("SELECT * FROM facts WHERE hidden = 0")
@@ -443,14 +494,14 @@ def visible_facts() -> list[dict]:
     return rows
 
 
-# When space is tight, the career skeleton is always kept whole; then results and projects;
-# skills, values and personal details give way first.
+# When space is tight, the career skeleton is always kept whole; then projects (each with its result);
+# smaller programs, skills and what you say about yourself give way first.
 CORE_CATEGORIES = ("experience", "education", "certification", "language")
-MAIN_CATEGORIES = ("achievement", "project")
-MINOR_CATEGORIES = ("value", "skill", "volunteering", "personal")  # values feed the "why this job" part
-_DETAIL_PLANS = [  # detail characters per group, from generous to tight
-    {"core": 320, "main": 320, "minor": 200},
-    {"core": 220, "main": 220, "minor": 0},
+MAIN_CATEGORIES = ("project",)
+MINOR_CATEGORIES = ("about", "utility", "skill")  # about me feeds the "why this job" part
+_DETAIL_PLANS = [  # detail characters per group (or per kind, where one is named), from generous to tight
+    {"core": 1000, "main": 1000, "about": 800, "utility": 400, "minor": 200},  # a whole entry: what, your part, result
+    {"core": 320, "main": 320, "about": 200, "minor": 0},
     {"core": 160, "main": 140, "minor": 0},
     {"core": 120, "main": 90, "minor": 0},
 ]
@@ -464,6 +515,8 @@ def _fact_line(f: dict, detail_cap: int, with_evidence: bool) -> str:
     if meta:
         bits.append(f"({meta})")
     line = " ".join(bits)
+    if f.get("depth") in DEPTH_LABELS:
+        line += f" [{DEPTH_LABELS[f['depth']]}]"
     if detail_cap and f.get("detail"):
         line += f": {f['detail'][:detail_cap]}"
     if with_evidence and f.get("evidence"):
@@ -479,19 +532,19 @@ def _group(category: str) -> str:
 
 def _render_digest(rows: list[dict], plan: dict, max_chars: int, with_evidence: bool,
                    rank: dict[int, int] | None = None) -> tuple[str, dict]:
-    lines = {f["id"]: _fact_line(f, plan[_group(f["category"])], with_evidence) for f in rows}
+    lines = {f["id"]: _fact_line(f, plan.get(f["category"], plan[_group(f["category"])]), with_evidence) for f in rows}
     headers = sum(len(label) + 5 for _, label in CATEGORIES)
     note_reserve = 320
     chosen = {f["id"] for f in rows if f["category"] in CORE_CATEGORIES}
     used = headers + note_reserve + sum(len(lines[i]) + 1 for i in chosen)
-    # Results and projects get most of what's left, but skills and values keep a share:
+    # Projects get most of what's left, but skills and what you say about yourself keep a share:
     # they're short, and fit scoring and CV skills sections depend on them.
     remaining = max(0, max_chars - used)
     shares = {"main": int(remaining * 0.65), "minor": remaining - int(remaining * 0.65)}
-    if rank:  # most relevant first within each group; stated values stay ahead of skills
+    if rank:  # most relevant first within each group; what you say about yourself stays ahead of skills
         main = sorted((f for f in rows if f["category"] in MAIN_CATEGORIES), key=lambda f: rank.get(f["id"], 10**6))
-        values = sorted((f for f in rows if f["category"] == "value"), key=lambda f: rank.get(f["id"], 10**6))
-        rest = sorted((f for f in rows if f["category"] in MINOR_CATEGORIES and f["category"] != "value"),
+        values = sorted((f for f in rows if f["category"] == "about"), key=lambda f: rank.get(f["id"], 10**6))
+        rest = sorted((f for f in rows if f["category"] in MINOR_CATEGORIES and f["category"] != "about"),
                       key=lambda f: rank.get(f["id"], 10**6))
         ordered = main + values + rest
     else:
@@ -615,7 +668,7 @@ CONSOLIDATE_SCHEMA = J.obj(groups=J.arr(J.obj(
     keep=J.i("id of the entry to keep"),
     duplicates=J.arr(J.i(), "ids of entries that describe the same thing as keep"),
 )))
-CONSOLIDATE_SYSTEM = """You clean up a career database that was extracted automatically from several documents, some in Danish and some in English. Find entries that describe the same thing: the same job, degree, achievement, project, skill or value, even when worded differently or written in another language.
+CONSOLIDATE_SYSTEM = """You clean up a career database that was extracted automatically from several documents, some in Danish and some in English. Find entries that describe the same thing: the same job, degree, project, skill or statement about the candidate, even when worded differently or written in another language.
 
 For each group of duplicates, choose the entry to keep: prefer verified entries, then entries from the CV, then the most precise one (exact dates, exact numbers, clearest wording). Only group entries of the same type that clearly describe the same thing. Two different roles at the same employer are not duplicates. A broader skill can absorb a narrower duplicate (e.g. keep "Scrum og SAFe", merge "Scrum").
 Return only groups that contain duplicates; return an empty list if there are none."""
@@ -651,6 +704,7 @@ def consolidate() -> dict:
                 patch["updated_at"] = db.now()
                 db.update("facts", keep["id"], patch)
                 keep.update(patch)
+            remember_absorbed(keep["id"], [d["title"], *(db.jload(d.get("absorbed"), []) or [])])
             db.ex("DELETE FROM facts WHERE id = ?", (d["id"],))
             by_id.pop(d["id"], None)
             merged += 1

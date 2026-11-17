@@ -82,7 +82,7 @@ def apply_answers(app: dict, answers: dict[str, dict], model: dict | None = None
                                     + ". Say so in one plain sentence next to the closest real experience, if the letter doesn't already.")
             parts.add("letter")
             continue
-        category = "value" if q["kind"] == "assumed" else "achievement"
+        category = "about" if q["kind"] == "assumed" else "project"  # move it into the entry it belongs to when you tidy
         if verdict == "no":
             if text:  # what is true instead is worth keeping
                 _fact(category, text, "", job_title)
@@ -204,7 +204,7 @@ def apply_base_answers(base: dict, answers: dict[str, dict]) -> dict:
         if not q or verdict not in ("yes", "no"):
             continue
         if verdict == "yes":
-            _fact("achievement", q["text"], text, "", about="your base CV")
+            _fact("project", q["text"], text, "", about="your base CV")
             facts += 1
         elif replace_in_cv(data, q["text"], text):
             changed += 1

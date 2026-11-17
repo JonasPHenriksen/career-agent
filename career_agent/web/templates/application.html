@@ -300,7 +300,7 @@
             <form method="post" action="/facts/add" class="row" style="margin-top:.3rem">
               <input type="hidden" name="title" value="{{ c.text }}"><input type="hidden" name="evidence" value="{{ c.source.quote }}">
               <input type="hidden" name="document_id" value="{{ c.source.document_id }}"><input type="hidden" name="next" value="/applications/{{ a.id }}?tab=check">
-              <select name="category" aria-label="Type of fact" style="width:auto">{% for key, label in [('achievement','Achievement'),('experience','Experience'),('skill','Skill'),('project','Project'),('education','Education'),('certification','Certification'),('value','Motivation & values')] %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+              <select name="category" aria-label="Type of fact" style="width:auto">{% for key, label in [('project','Project'),('experience','Experience'),('skill','Skill'),('utility','Smaller program'),('education','Education'),('certification','Certification'),('about','About me')] %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
               <button class="btn small">Add to career database</button>
             </form>
             {% endif %}

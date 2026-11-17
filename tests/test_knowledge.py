@@ -143,7 +143,7 @@ def test_import_facts_brings_documents_and_facts(folder):
     po = db.q1("SELECT * FROM facts WHERE category = 'experience'")
     assert po["evidence"] == "Product Owner, Danske Bank, København, 2022 – nu" and po["document_id"] == cv["id"]
     assert (po["start_date"], po["end_date"]) == ("2022", "present") and not po["verified"]
-    assert "confidential" in db.q1("SELECT tags FROM facts WHERE category = 'achievement'")["tags"]
+    assert "confidential" in db.q1("SELECT tags FROM facts WHERE title LIKE 'Payment features%' AND category = 'project'")["tags"]
     assert db.q1("SELECT document_id FROM facts WHERE title = 'Climbing'")["document_id"] is None
 
     again = knowledge.import_facts()

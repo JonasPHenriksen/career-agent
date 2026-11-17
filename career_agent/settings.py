@@ -77,6 +77,7 @@ DEFAULTS: dict[str, Any] = {
         "folder": "",  # the agent folder, e.g. ~/Nextcloud/Agents; "" = use <Nextcloud>/Agents if it exists
         "use": True,  # put its profile, summaries and style guides into the writing prompts
     },
+    "dismissed_facts": [],  # titles of facts you removed for good: reading a document again doesn't bring them back
     "style_guide": "",
     "style_stats": {},
     "state": {"llm_bootstrapped": False, "last_maintenance": "", "last_digest": ""},

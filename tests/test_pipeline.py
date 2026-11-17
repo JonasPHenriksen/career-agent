@@ -62,7 +62,7 @@ def test_documents_become_facts_with_merging(fake):
     experiences = [f for f in facts if f["category"] == "experience"]
     assert len(experiences) == 2, "the Danske Bank role from the application should merge into the CV's"
     assert len([f for f in facts if f["category"] == "skill" and f["title"].lower() == "scrum"]) == 1
-    assert any(f["category"] == "value" for f in facts)
+    assert any(f["category"] == "about" for f in facts), "what you say about yourself is filed under About me"
     doc = db.q1("SELECT * FROM documents WHERE id = ?", (app_id,))
     assert doc["kind"] == "application" and doc["authored"] == 1 and doc["status"] == "analyzed"
     digest = profile.facts_digest(5000)
@@ -209,10 +209,11 @@ def test_fact_hygiene(fake):
                        authoritative=True)
     rows = db.q("SELECT * FROM facts WHERE category = 'experience'")
     assert len(rows) == 1 and rows[0]["title"] == "Projektleder" and rows[0]["start_date"] == "2018-08"
-    # same achievement in two languages, same employer and number: merged
+    # the same result in two languages, same employer and number: it is stated once, in an entry of that employer
     profile.save_facts(None, [{"category": "achievement", "title": "Reducerede supporthenvendelser med 30 %", "organization": "Danske Bank"}])
     profile.save_facts(None, [{"category": "achievement", "title": "Cut support requests by 30%", "organization": "Danske Bank"}])
-    assert db.scalar("SELECT COUNT(*) FROM facts WHERE category = 'achievement'") == 1
+    assert db.scalar("SELECT COUNT(*) FROM facts WHERE title LIKE '%30%'") == 1
+    assert not db.scalar("SELECT COUNT(*) FROM facts WHERE category NOT IN (%s)" % ", ".join(f"'{c}'" for c in profile.CATEGORY_LABELS))
     assert profile.consolidate() == {"merged": 0}
 
 
@@ -229,8 +230,8 @@ def test_large_profile_keeps_core_facts_within_local_budget(fake):
     import re
 
     random.seed(1)
-    plan = {"experience": 9, "achievement": 90, "project": 20, "skill": 120, "education": 3, "certification": 6,
-            "language": 3, "volunteering": 5, "value": 20, "personal": 6}
+    plan = {"experience": 9, "project": 110, "skill": 120, "education": 3, "certification": 6,
+            "language": 3, "utility": 5, "about": 26}
     for cat, n in plan.items():
         for k in range(n):
             db.insert("facts", {"category": cat, "title": f"{cat} {k} " + "lorem ipsum " * random.randint(1, 5),
@@ -244,8 +245,8 @@ def test_large_profile_keeps_core_facts_within_local_budget(fake):
         assert ids <= shown, f"every {cat} fact must survive a tight budget"
     assert len(digest) <= budget
     assert "Not shown" in digest
-    achievements = {r["id"] for r in db.q("SELECT id FROM facts WHERE category = 'achievement'")}
-    assert len(achievements & shown) >= 60, "results are kept before skills and values"
+    projects = {r["id"] for r in db.q("SELECT id FROM facts WHERE category = 'project'")}
+    assert len(projects & shown) >= 60, "projects are kept before skills and what you say about yourself"
     assert len(profile.facts_digest(10**9)) > len(digest) and "Not shown" not in profile.facts_digest(10**9)
 
 

@@ -332,6 +332,13 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS changes_op ON changes(op_id);
     CREATE INDEX IF NOT EXISTS changes_row ON changes(tbl, row_key);
     """,
+    # 10: the career database reorganised: a skill's area and how well you know it, and the titles of the facts
+    # that were merged into a fact (so reading a document again doesn't bring them back)
+    """
+    ALTER TABLE facts ADD COLUMN area TEXT;
+    ALTER TABLE facts ADD COLUMN depth TEXT;
+    ALTER TABLE facts ADD COLUMN absorbed TEXT;
+    """,
 ]
 
 
