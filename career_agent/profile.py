@@ -377,6 +377,65 @@ def _period(f: dict) -> str:
     return s or e
 
 
+# Words that don't tell two places apart: company forms, and "the"/"of"/"university" before the actual name.
+_PLACE_NOISE = {"aps", "a/s", "p/s", "i/s", "k/s", "ivs", "as", "ps", "the", "of", "university", "universitet"}
+
+
+def place_key(org: str | None) -> str:
+    """The first word that names an organisation, so spellings of one place group together: "Nordvik" and
+    "Nordvik P/S", or "Brinkholm HTX" and "Brinkholm Horsens, Teknisk Gymnasium HTX". "" when there's none."""
+    words = [w for w in re.findall(r"[\w/&]+", (org or "").lower())
+             if w not in _PLACE_NOISE and any(ch.isalnum() for ch in w)]
+    return words[0] if words else ""
+
+
+def _years(starts: list[str], ends: list[str]) -> str:
+    s = min(starts) if starts else ""
+    e = "present" if "present" in ends else max(ends) if ends else ""
+    if s and e:
+        return s if s == e else f"{s} – {e}"
+    return f"from {s}" if s else f"until {e}" if e else ""
+
+
+def places(facts: list[dict]) -> dict[str, dict]:
+    """The places your facts happened at, with a name and the years they span. A place is named after your job or
+    education there when there is one, else after its most used spelling; its years come from that job or
+    education, else from all its facts. Newest first; at the same time, a place you worked or studied at first."""
+    out: dict[str, dict] = {}
+    for f in facts:
+        key = place_key(f.get("organization"))
+        p = out.setdefault(key, {"key": key, "names": {}, "anchor": [], "facts": []})
+        p["facts"].append(f)
+        org = (f.get("organization") or "").strip()
+        if org:
+            p["names"][org] = p["names"].get(org, 0) + 1
+            if f["category"] in ("experience", "education"):
+                p["anchor"].append(f)
+    for p in out.values():
+        names = {}
+        for f in p["anchor"]:
+            names[f["organization"].strip()] = names.get(f["organization"].strip(), 0) + 1
+        names = names or p["names"]  # the most used spelling, the shortest when they're tied
+        named = min(names.items(), key=lambda kv: (-kv[1], len(kv[0])))[0] if names else ""
+        p["label"] = named or "No place given"
+        dated = p["anchor"] or p["facts"]
+        ends = ["present" if (f.get("end_date") or "").lower() == "present" else _year(f.get("end_date")) for f in dated]
+        p["period"] = _years([y for f in dated if (y := _year(f.get("start_date")))], [e for e in ends if e]) if p["key"] else ""
+        p["sort"] = (bool(p["key"]), 9999 if "present" in ends else int(max([e for e in ends if e] or ["0"])),
+                     bool(p["anchor"]), max([_year(f.get("start_date")) or "0" for f in dated]))
+    return out
+
+
+def by_place(items: list[dict], index: dict[str, dict]) -> list[tuple[str, str, list[dict]]]:
+    """`items` (one category) in sections per place, newest place first and newest fact first within it."""
+    groups: dict[str, list[dict]] = {}
+    for f in items:
+        groups.setdefault(place_key(f.get("organization")), []).append(f)
+    order = sorted(groups, key=lambda k: index[k]["sort"] if k in index else (False, 0, False, "0"), reverse=True)
+    return [(index[k]["label"] if k in index else "No place given", index[k]["period"] if k in index else "",
+             sorted(groups[k], key=lambda f: (f.get("start_date") or "", -f["id"]), reverse=True)) for k in order]
+
+
 def visible_facts() -> list[dict]:
     order = {c: n for n, (c, _) in enumerate(CATEGORIES)}
     rows = db.q("SELECT * FROM facts WHERE hidden = 0")

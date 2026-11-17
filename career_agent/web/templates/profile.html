@@ -274,18 +274,23 @@
 {% elif tab == 'facts' %}
 <div class="split">
   <div class="stack">
-    {% for cat, label, items in grouped %}{% if items %}
+    {% for cat, label, items, sections in grouped %}{% if items %}
     <section class="card" id="cat-{{ cat }}">
       <div class="card-head"><h2>{{ label }} <span class="muted small">{{ items|length }}</span></h2></div>
       {% if cat == 'skill' %}
-      <div class="skills-cloud">{% for f in items %}<a id="fact-{{ f.id }}" class="pill {{ 'good' if f.verified }}{{ ' ' if f.hidden }}" style="{{ 'opacity:.45' if f.hidden }}" href="#edit-{{ f.id }}" title="{{ f.detail or '' }}" data-toggle="#edit-{{ f.id }}">{{ f.title }}</a>{% endfor %}</div>
+      {% for place, period, group in sections %}
+      {% if place %}<h3 class="place-head">{{ place }}{% if period %} <span class="period">{{ period }}</span>{% endif %}</h3>{% endif %}
+      <div class="skills-cloud">{% for f in group %}<a id="fact-{{ f.id }}" class="pill {{ 'good' if f.verified }}{{ ' ' if f.hidden }}" style="{{ 'opacity:.45' if f.hidden }}" href="#edit-{{ f.id }}" title="{{ f.detail or '' }}" data-toggle="#edit-{{ f.id }}">{{ f.title }}</a>{% endfor %}</div>
+      {% endfor %}
       {% for f in items %}<form id="edit-{{ f.id }}" hidden method="post" action="/facts/{{ f.id }}" class="card flat" style="margin-top:.6rem">
         <div class="fields-2"><div class="field"><label>Skill</label><input type="text" name="title" value="{{ f.title }}"></div><div class="field"><label>Where you used it</label><input type="text" name="detail" value="{{ f.detail or '' }}"></div></div>
         <div class="row"><button class="btn small primary">Save</button>
           <button class="btn small" formaction="/facts/{{ f.id }}/toggle/hidden">{{ 'Show' if f.hidden else 'Hide' }}</button>
           <button class="btn small ghost danger" formaction="/facts/{{ f.id }}/delete">Delete</button></div></form>{% endfor %}
       {% else %}
-      {% for f in items %}
+      {% for place, period, group in sections %}
+      {% if place %}<h3 class="place-head">{{ place }}{% if period %} <span class="period">{{ period }}</span>{% endif %}</h3>{% endif %}
+      {% for f in group %}
       <div class="fact {{ 'hidden-fact' if f.hidden }}" id="fact-{{ f.id }}">
         <div class="ft">{{ f.title }}{% if f.verified %} <span class="verified-mark" title="Checked by you">✓</span>{% endif %}{% if f.hidden %} <span class="pill">hidden</span>{% endif %}</div>
         <div class="fm">{{ f.organization or '' }}{% if f.start_date or f.end_date %} · {{ f.start_date or '?' }} – {{ f.end_date or '' }}{% endif %}{% if f.location %} · {{ f.location }}{% endif %} · <span class="muted">#{{ f.id }}</span></div>
@@ -295,7 +300,7 @@
           {% if not f.verified %}<form method="post" action="/facts/{{ f.id }}/toggle/verified" class="inline"><button class="btn small" title="Mark as correct">✓ Correct</button></form>{% endif %}
           <button type="button" class="btn small ghost" data-toggle="#edit-{{ f.id }}">Edit</button>
           <form method="post" action="/facts/{{ f.id }}/toggle/hidden" class="inline"><button class="btn small ghost" title="Hidden facts are never used">{{ 'Show' if f.hidden else 'Hide' }}</button></form>
-          <form method="post" action="/facts/{{ f.id }}/delete" class="inline" data-confirm="Delete this fact?"><button class="btn small ghost danger">Delete</button></form>
+          <form method="post" action="/facts/{{ f.id }}/delete" class="inline"><button class="btn small ghost danger" title="You can restore it from Recently deleted or History">Delete</button></form>
         </div>
         <form id="edit-{{ f.id }}" hidden method="post" action="/facts/{{ f.id }}" class="card flat" style="margin-top:.5rem">
           <div class="field"><label>Title</label><input type="text" name="title" value="{{ f.title }}"></div>
@@ -310,6 +315,7 @@
         </form>
       </div>
       {% endfor %}
+      {% endfor %}
       {% endif %}
     </section>
     {% endif %}{% else %}{% endfor %}
@@ -320,6 +326,18 @@
       <h2>How this works</h2>
       <p class="small text-2">Every fact comes from your own documents, with a quote as evidence. Applications may only use these facts, so check them: mark correct ones with ✓, fix mistakes, and hide anything you don't want used.</p>
       <form method="post" action="/facts/tidy" class="row">{{ model_picker() }}<button class="btn small" data-busy="Starting…">Merge duplicates</button></form>
+    </section>
+    <section class="card deleted-list" id="deleted">
+      <div class="card-head"><h2>Recently deleted</h2><a class="small" href="/history?show=deleted">All deletions</a></div>
+      {% if deleted %}
+      {% for d in deleted %}
+      <div class="fact">
+        <div class="ft">{{ d.row.title }}</div>
+        <div class="fm">{{ d.row.organization or '' }}{% if d.row.organization %} · {% endif %}deleted {{ d.at|local_dt }} · <span class="muted">#{{ d.row_key }}</span></div>
+        <form method="post" action="/history/change/{{ d.id }}/restore" class="acts"><input type="hidden" name="next" value="/profile?tab=facts#fact-{{ d.row_key }}"><button class="btn small">Restore</button></form>
+      </div>
+      {% endfor %}
+      {% else %}<p class="small muted">Nothing deleted. Facts you delete, or that a tidy-up merges away, show up here so you can bring them back.</p>{% endif %}
     </section>
     <section class="card">
       <h2>Add a fact</h2>

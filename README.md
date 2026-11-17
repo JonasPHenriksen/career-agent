@@ -317,6 +317,27 @@ exported PDFs. Settings → Your data → *Download a backup* gives you a zip. T
 `127.0.0.1`, refuses requests addressed to other hosts, and blocks cross-site form posts, so websites
 you visit can't talk to it.
 
+### Undo anything
+
+Every change to your data is recorded before it happens, so nothing is lost by a click:
+
+* **Undo** appears in the message after anything you change: a deleted fact, an edited letter, a removed job.
+* **History** (in the menu) lists every change, newest first: yours and the agent's (reading documents, tidy-ups,
+  scoring). Open an entry to see each field before and after, and undo it. Undo puts every row back exactly as it
+  was, with the same id; a deleted application comes back with its saved drafts and timeline, a deleted document
+  with its facts and search passages. If something was changed again since, it says what and asks before undoing.
+  An undo can itself be undone.
+* **Recently deleted** on the career database tab brings back a single fact, including facts a tidy-up merged away.
+
+Your own changes and every deletion are kept for good; the agent's own edits (mostly jobs scored again) are kept
+for 90 days. Not recorded: search passages and embeddings (rebuilt when needed), the model-call log and the task
+queue. Changes made outside the app, such as with the `sqlite3` command, can't be seen by the history, so the app
+also makes a full copy of the database when it starts, once a day, in `data/snapshots/` (the newest 7 are kept).
+A Nextcloud folder you stop watching comes back without its password, since that lives in the Keychain.
+
+The career database tab groups each kind of fact by where it happened, newest first: your job or education there
+names the place and gives its years, and spellings such as "Nordvik" and "Nordvik P/S" count as one place.
+
 ## Troubleshooting
 
 | Problem | Fix |
@@ -353,5 +374,6 @@ uv run python -m career_agent --port 8765 --data ./data --no-browser
 | `career_agent/tasks.py` | Background queue, worker and scheduler, retries after passing errors |
 | `career_agent/redo.py` | Redoing work with another model, one item or in bulk |
 | `career_agent/todos.py` | Your to-do list and dated reminders |
+| `career_agent/history.py` | Recording every change, undo and restore, the daily database copy |
 | `career_agent/web/` | FastAPI app, templates, CSS, a little JS |
 | `scripts/eval/letters.py` | A small benchmark: the same letters from several models, fact-checked by one checker, laid out blind for you to rank (results in `data/eval/`) |

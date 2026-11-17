@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 import sqlite3
 import tempfile
 import zipfile
@@ -17,11 +18,12 @@ from fastapi.responses import PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import (alerts, companies, config, cvdata, cvrender, db, exporter, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
+from .. import (alerts, companies, config, cvdata, cvrender, db, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
                 profile, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
 HERE = Path(__file__).parent
+log = logging.getLogger(__name__)
 templates = Jinja2Templates(directory=str(HERE / "templates"))
 helpers.install(templates.env)
 templates.env.globals["model_choices"] = llm.model_choices  # for the "with which model" picker on redo buttons
@@ -45,13 +47,19 @@ def with_model_msg(f: dict, text: str) -> str:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     db.init()
-    llm.bootstrap()
-    tasks.recover()
-    tasks.catch_up()
-    llm.backfill_refs()
-    retrieval.backfill_chunks()
-    if retrieval.embeddings_available():
-        tasks.enqueue("embed_index", {}, ref="index")
+    try:
+        history.daily_copy()
+        history.prune()
+    except Exception:  # noqa: BLE001 - a full disk mustn't stop the app from starting
+        log.exception("daily copy or history pruning failed")
+    with history.op("Starting the app"):
+        llm.bootstrap()
+        tasks.recover()
+        tasks.catch_up()
+        llm.backfill_refs()
+        retrieval.backfill_chunks()
+        if retrieval.embeddings_available():
+            tasks.enqueue("embed_index", {}, ref="index")
     stop = asyncio.Event()
     background = [asyncio.create_task(tasks.worker_loop(stop)), asyncio.create_task(tasks.scheduler_loop(stop))]
     yield
@@ -82,12 +90,28 @@ async def local_guard(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def record_changes(request: Request, call_next):
+    """Everything one click changes is one entry in History. After a change you made, the page you're sent to
+    offers to undo it."""
+    if request.url.path.startswith("/static"):
+        return await call_next(request)
+    mine = request.method not in ("GET", "HEAD", "OPTIONS")
+    with history.op(f"{request.method} {request.url.path}", source="you" if mine else "automatic") as o:
+        response = await call_next(request)
+    loc = response.headers.get("location")
+    if mine and o.touched and loc and response.status_code in (302, 303) and history.get_op(o.id):
+        base, hash_, fragment = loc.partition("#")
+        response.headers["location"] = base + ("&" if "?" in base else "?") + f"undo={o.id}" + hash_ + fragment
+    return response
+
+
 # ---------------------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------------------
 
 NAV = [("/", "Today"), ("/jobs", "Jobs"), ("/tracker", "Applications"), ("/companies", "Companies"),
-       ("/profile", "Profile"), ("/insights", "Insights"), ("/settings", "Settings")]
+       ("/profile", "Profile"), ("/insights", "Insights"), ("/history", "History"), ("/settings", "Settings")]
 
 
 def render(request: Request, template: str, **ctx):
@@ -97,10 +121,21 @@ def render(request: Request, template: str, **ctx):
         active = "/tracker"
     if path.startswith("/documents"):
         active = "/profile"
+    undo_id = request.query_params.get("undo", "")
+    undo_op = history.get_op(int(undo_id)) if undo_id.isdigit() else None
+    here = request.url.path + ("?" + urlencode([(k, v) for k, v in request.query_params.multi_items()
+                                                if k not in ("msg", "err", "undo")]) if request.url.query else "")
     ctx.update(request=request, nav=NAV, active=active, msg=request.query_params.get("msg"),
                err=request.query_params.get("err"), app_name=config.APP_NAME, todo_count=todos.count_now(), static_v=STATIC_V,
-               on_hold=tasks.on_hold())
+               on_hold=tasks.on_hold(), undo_op=undo_op if undo_op and not undo_op["undone_by"] else None,
+               here=here.rstrip("?"))
     return templates.TemplateResponse(request, template, ctx)
+
+
+def local_path(value: str | None, fallback: str) -> str:
+    """A path on this app to send you back to, never another site."""
+    v = (value or "").strip()
+    return v if v.startswith("/") and not v.startswith("//") and "\\" not in v else fallback
 
 
 def go(url: str, msg: str | None = None, err: str | None = None) -> RedirectResponse:
@@ -834,7 +869,13 @@ def profile_page(request: Request, tab: str = "about"):
     docs = db.q("SELECT d.*, (SELECT COUNT(*) FROM facts f WHERE f.document_id = d.id) AS n_facts FROM documents d "
                 "ORDER BY COALESCE(d.doc_date, '') DESC, d.id DESC")
     facts = profile.visible_facts() + db.q("SELECT * FROM facts WHERE hidden = 1 ORDER BY category, id")
-    grouped = [(c, label, [f for f in facts if f["category"] == c]) for c, label in profile.CATEGORIES]
+    index = profile.places(facts)
+    grouped = []
+    for c, label in profile.CATEGORIES:
+        items = [f for f in facts if f["category"] == c]
+        sections = profile.by_place(items, index)
+        grouped.append((c, label, items, sections if len(sections) > 1 else [("", "", items)]))
+    deleted = history.recently_deleted("facts", 20) if tab == "facts" else []
     active_rows = db.q("SELECT kind FROM tasks WHERE kind IN ('analyze_document', 'build_style', 'consolidate_facts') "
                        "AND status IN ('queued', 'running')")
     n_docs = sum(1 for r in active_rows if r["kind"] == "analyze_document")
@@ -858,7 +899,7 @@ def profile_page(request: Request, tab: str = "about"):
     return render(request, "profile.html", tab=tab, n_docs=n_docs, style_busy=style_busy, levels=profile.LEVELS, cv=cv,
                   job_kinds=jobkinds.KINDS, kinds_wanted=jobkinds.wanted_kinds(),
                   made_style=llm.made_by("style", ("style_guide",)),
-                  tidy_busy=any(r["kind"] == "consolidate_facts" for r in active_rows), p=settings.get("profile"), docs=docs, grouped=grouped,
+                  tidy_busy=any(r["kind"] == "consolidate_facts" for r in active_rows), p=settings.get("profile"), docs=docs, grouped=grouped, deleted=deleted,
                   kinds=profile.KINDS, kind_labels=profile.KIND_LABELS, outcomes=profile.OUTCOMES,
                   categories=profile.CATEGORIES, style_guide=settings.get("style_guide"),
                   baseline=settings.get("style_stats") or {}, exemplars=voice.exemplars(None, 99999),
@@ -1016,8 +1057,7 @@ async def document_delete(request: Request, doc_id: int):
         if f.get("with_facts"):
             db.ex("DELETE FROM facts WHERE document_id = ? AND verified = 0", (doc_id,))
         db.ex("DELETE FROM documents WHERE id = ?", (doc_id,))
-        if d["stored_path"] and str(config.FILES_DIR) in d["stored_path"]:
-            Path(d["stored_path"]).unlink(missing_ok=True)
+        # The stored copy of the file stays, so the document can be restored from History.
         voice.compute_baseline()
     return go("/profile?tab=documents", msg="Document deleted.")
 
@@ -1470,6 +1510,50 @@ def tasks_cancel_queued(request: Request):
 def tasks_clear(request: Request):
     db.ex("DELETE FROM tasks WHERE status IN ('done', 'cancelled') OR (status = 'error' AND finished_at < ?)", (db.days_ago(1),))
     return go("/tasks", msg="Cleared finished tasks.")
+
+
+# ---------------------------------------------------------------------------------------
+# History: undo anything
+# ---------------------------------------------------------------------------------------
+
+HISTORY_SHOW = [("all", "Everything"), ("you", "Your changes"), ("automatic", "Automatic"), ("deleted", "Deletions")]
+HISTORY_PAGE = 50
+
+
+@app.get("/history")
+def history_page(request: Request, show: str = "all", before: int | None = None, conflict: int | None = None, force_ok: int = 0):
+    show = show if show in dict(HISTORY_SHOW) else "all"
+    entries = history.ops(show, before=before, limit=HISTORY_PAGE)
+    for e in entries:
+        e["details"] = [history.describe_change(c) for c in e["changes"][:40]]
+        e["more"] = max(0, len(e["changes"]) - 40)
+        undoer = history.get_op(e["undone_by"]) if e["undone_by"] else None
+        e["undone"] = bool(undoer and not undoer["undone_by"])  # undoing the undo puts it back in force
+    return render(request, "history.html", entries=entries, show=show, shows=HISTORY_SHOW, conflict=conflict,
+                  force_ok=force_ok, next_before=entries[-1]["id"] if len(entries) == HISTORY_PAGE else None)
+
+
+@app.post("/history/{op_id}/undo")
+async def history_undo(request: Request, op_id: int):
+    f = await form(request)
+    nxt = local_path(f.get("next"), "/history")
+    try:
+        await asyncio.to_thread(history.undo, op_id, bool(f.get("force")))
+    except history.Conflict as e:
+        return go(f"/history?conflict={op_id}&force_ok={int(e.forceable)}#op-{op_id}",
+                  err="Not undone: " + "; ".join(e.problems) + "." + (" Undo anyway puts it back regardless." if e.forceable else ""))
+    return go(nxt, msg="Undone.")
+
+
+@app.post("/history/change/{change_id}/restore")
+async def history_restore(request: Request, change_id: int):
+    f = await form(request)
+    nxt = local_path(f.get("next"), "/history?show=deleted")
+    try:
+        await asyncio.to_thread(history.restore, change_id)
+    except history.Conflict as e:
+        return go(nxt, err="Not restored: " + "; ".join(e.problems) + ".")
+    return go(nxt, msg="Restored.")
 
 
 @app.get("/health")

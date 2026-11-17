@@ -15,7 +15,7 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 
-from . import db, settings
+from . import db, history, settings
 
 log = logging.getLogger("career_agent.tasks")
 
@@ -310,7 +310,7 @@ def run_task(task: dict) -> None:
         if fn is None:
             raise RuntimeError(f"Unknown task type {task['kind']}")
         payload = json.loads(task["payload"] or "{}")
-        with llm.using(ref=task.get("ref"), model=payload.get("model")):
+        with history.op(TASK_LABELS.get(task["kind"], task["kind"])), llm.using(ref=task.get("ref"), model=payload.get("model")):
             result = fn(payload)
         db.update("tasks", task["id"], {"status": "done", "finished_at": db.now(),
                                         "progress": json.dumps(result, ensure_ascii=False)[:2000] if result else None})
@@ -510,13 +510,19 @@ async def worker_loop(stop: asyncio.Event) -> None:
         t.cancel()
 
 
+def _in_history(context: str, fn, *args):
+    with history.op(context):
+        return fn(*args)
+
+
 async def scheduler_loop(stop: asyncio.Event) -> None:
     """Checks sources when due, marks ghosted applications, sends a morning digest."""
     from . import tracker
 
     while not stop.is_set():
         try:
-            queue_due()
+            with history.op("Checking what's due"):
+                queue_due()
             state = settings.get("state")
             now_local = datetime.now()
             last_maint = db.parse_ts(state.get("last_maintenance"))
@@ -526,7 +532,7 @@ async def scheduler_loop(stop: asyncio.Event) -> None:
             today = now_local.date().isoformat()
             if now_local.hour >= 8 and state.get("last_digest") != today:
                 settings.update("state", {"last_digest": today})
-                await asyncio.to_thread(tracker.daily_digest)
+                await asyncio.to_thread(_in_history, "Morning digest", tracker.daily_digest)
         except Exception:  # noqa: BLE001
             log.exception("scheduler error")
         try:

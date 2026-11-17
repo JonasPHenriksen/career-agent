@@ -388,3 +388,22 @@ fieldset.question legend { font-weight: 600; font-size: .9rem; padding: 0 .3rem;
 fieldset.question blockquote { margin: .3rem 0 .4rem; padding-left: .7rem; border-left: 3px solid var(--border); }
 fieldset.question .row { gap: 1rem; margin: .3rem 0 .5rem; font-size: .9rem; }
 @media (max-width: 1200px) { .review { grid-template-columns: 1fr; } .review .pane { max-height: none; } }
+
+/* History: undo anything */
+.flash.row { align-items: center; gap: .8rem; }
+.history-op { padding: .75rem 0; border-top: 1px solid var(--border); scroll-margin-top: 1rem; }
+.history-op:first-child { border-top: 0; padding-top: 0; }
+.history-op.is-undone .ft { color: var(--muted); }
+.history-head { align-items: flex-start; gap: .8rem; }
+.history-details { margin-top: .35rem; }
+.history-change { padding: .4rem 0 .4rem .8rem; border-left: 2px solid var(--border); margin: .3rem 0; }
+.history-fields { margin-top: .3rem; font-size: .84rem; }
+.history-fields dd { overflow-wrap: anywhere; }
+.history-fields .was { color: var(--muted); text-decoration: line-through; }
+.deleted-list .fact { opacity: .85; }
+
+/* Facts grouped by where and when */
+.place-head { display: flex; align-items: baseline; gap: .5rem; margin: 1.1rem 0 .1rem; font-size: .9rem; color: var(--text-2); }
+.place-head:first-of-type { margin-top: .5rem; }
+.place-head .period { color: var(--muted); font-weight: 500; font-size: .84rem; }
+.skills-cloud + .place-head { margin-top: .9rem; }

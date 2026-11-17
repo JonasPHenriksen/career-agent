@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}History{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>History</h1><p class="sub">Everything that changed your data, newest first. Undo puts it back exactly as it was. Your own changes and every deletion are kept for good; automatic edits are kept for 90 days.</p></div>
+</header>
+<nav class="tabs" aria-label="Show">
+  {% for key, label in shows %}<a href="/history?show={{ key }}" class="{{ 'active' if show == key }}">{{ label }}</a>{% endfor %}
+</nav>
+<section class="card">
+  {% if entries %}
+  {% for e in entries %}
+  <div class="history-op {{ 'is-undone' if e.undone }}" id="op-{{ e.id }}">
+    <div class="row history-head">
+      <div style="flex:1">
+        <div class="ft">{{ e.summary }}{% if e.undone %} <span class="pill">undone</span>{% endif %}</div>
+        <div class="small muted">{{ e.at|local_dt }} · {% if e.source == 'you' %}You{% else %}Automatic{% endif %}{% if e.context and not e.context.startswith(('POST ', 'GET ', 'PUT ', 'DELETE ')) %} · {{ e.context }}{% endif %}</div>
+      </div>
+      {% if not e.undone %}
+      <form method="post" action="/history/{{ e.id }}/undo" class="inline">
+        <input type="hidden" name="next" value="/history?show={{ show }}#op-{{ e.id }}">
+        {% if conflict == e.id and force_ok %}<input type="hidden" name="force" value="1"><button class="btn small danger">Undo anyway</button>
+        {% else %}<button class="btn small">Undo</button>{% endif %}
+      </form>
+      {% endif %}
+    </div>
+    <details class="history-details">
+      <summary class="small">What changed</summary>
+      {% for c in e.details %}
+      <div class="history-change">
+        <div class="small"><strong>{{ {'insert': 'Added', 'update': 'Edited', 'delete': 'Deleted'}[c.action] }} {{ c.noun }}</strong> {% if c.name %}“{{ c.name }}”{% else %}#{{ c.row_key }}{% endif %}
+          {% if c.action == 'delete' and c.tbl in ('facts', 'documents', 'jobs', 'applications', 'todos', 'companies', 'sources', 'events', 'app_versions', 'cv_bases', 'watched_folders') %}
+          <form method="post" action="/history/change/{{ c.id }}/restore" class="inline"><input type="hidden" name="next" value="/history?show={{ show }}#op-{{ e.id }}"><button class="btn small ghost">Restore just this</button></form>{% endif %}</div>
+        {% if c.fields %}
+        <dl class="kv history-fields">
+          {% for k, old, new in c.fields[:14] %}<dt>{{ k }}</dt><dd>{% if c.action == 'update' %}<span class="was">{{ (old if old is not none else '—')|string|truncate(300) }}</span> → <span class="now">{{ (new if new is not none else '—')|string|truncate(300) }}</span>{% else %}{{ (old if c.action == 'delete' else new)|string|truncate(300) }}{% endif %}</dd>{% endfor %}
+        </dl>
+        {% endif %}
+      </div>
+      {% endfor %}
+      {% if e.more %}<p class="small muted">…and {{ e.more }} more.</p>{% endif %}
+    </details>
+  </div>
+  {% endfor %}
+  {% if next_before %}<p><a class="btn small ghost" href="/history?show={{ show }}&before={{ next_before }}">Older</a></p>{% endif %}
+  {% else %}<p class="empty">Nothing here yet. Changes show up as soon as you or the agent change something.</p>{% endif %}
+</section>
+{% endblock %}

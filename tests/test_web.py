@@ -28,7 +28,7 @@ def test_every_page_renders(fake):
     c = TestClient(app)
     pages = ["/", "/jobs", "/jobs?view=all&sort=deadline", "/jobs?view=filtered", f"/jobs/{job_id}",
              "/tracker", "/companies", "/companies?show=all", f"/companies/{company_id}", "/insights", "/settings",
-             "/tasks", "/tasks/indicator", f"/documents/{doc_id}"]
+             "/tasks", "/tasks/indicator", f"/documents/{doc_id}", "/history", "/history?show=deleted"]
     pages += [f"/profile?tab={t}" for t in ("about", "documents", "facts", "style")]
     pages += [f"/applications/{app_id}?tab={t}" for t in ("letter", "cv", "check", "voice", "send", "timeline", "interview", "history")]
     for url in pages:

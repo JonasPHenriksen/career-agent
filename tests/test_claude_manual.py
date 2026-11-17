@@ -78,7 +78,7 @@ def test_pages_and_import(fake):
     db.ex("DELETE FROM applications")
     c = TestClient(app)
     r = c.post(f"/jobs/{job_id}/write", data={"mode": "claude"}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"].endswith("?tab=claude")
+    assert r.status_code == 303 and "?tab=claude" in r.headers["location"]  # followed by the undo link
     app_id = int(r.headers["location"].split("/applications/")[1].split("?")[0])
     page = c.get(f"/applications/{app_id}?tab=claude").text
     assert "Copy prompt" in page and "===SUBJECT===" in page and "claude.ai/new" in page

@@ -308,6 +308,30 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE cv_bases ADD COLUMN claims TEXT;
     """,
+    # 9: history, so every change can be undone (see history.py)
+    """
+    CREATE TABLE IF NOT EXISTS change_ops (
+      id         INTEGER PRIMARY KEY,
+      at         TEXT NOT NULL,
+      source     TEXT NOT NULL,
+      context    TEXT,
+      undoes     INTEGER,
+      undone_by  INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS change_ops_at ON change_ops(at);
+    CREATE TABLE IF NOT EXISTS changes (
+      id       INTEGER PRIMARY KEY,
+      op_id    INTEGER,
+      at       TEXT NOT NULL,
+      tbl      TEXT NOT NULL,
+      row_key  TEXT NOT NULL,
+      action   TEXT NOT NULL,
+      before   TEXT,
+      after    TEXT
+    );
+    CREATE INDEX IF NOT EXISTS changes_op ON changes(op_id);
+    CREATE INDEX IF NOT EXISTS changes_row ON changes(tbl, row_key);
+    """,
 ]
 
 
@@ -322,18 +346,24 @@ def connect() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA synchronous=NORMAL")
+    from . import history  # late import: history uses this module
+
+    history.attach(conn)  # record every change this connection makes, so it can be undone
     _local.conn = conn
     _local.path = str(config.DB_PATH)
     return conn
 
 
 def init() -> None:
+    from . import history
+
     conn = connect()
     conn.executescript(SCHEMA)
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     for n, script in enumerate(MIGRATIONS, start=1):
         if version < n:
             conn.executescript(f"BEGIN;\n{script}\nPRAGMA user_version = {n};\nCOMMIT;")
+    history.attach(conn)  # again, now that every table and column exists
 
 
 def now() -> str:
