@@ -47,11 +47,18 @@
         let w = measure(big).width
         if w > size.width { text(size: base * 2.2 * (size.width / w) * 0.99, weight: 600, d.header.name) } else { big }
       }))
+      // One contact detail per line. A line that is too wide (a long web address) is set smaller, down to
+      // three quarters of the size, before it is allowed to wrap.
       #{
         let lines = ()
         if d.header.label != "" { lines.push(d.header.label) }
         for l in d.header.lines { lines.push(if l.url != "" { link(l.url, l.text) } else { l.text }) }
-        lines.join(linebreak())
+        for l in lines {
+          block(above: 0.75em, below: 0pt, layout(size => {
+            let w = measure(l).width
+            if w > size.width { text(size: 1em * calc.max(size.width / w * 0.99, 0.75), l) } else { l }
+          }))
+        }
       }
     ]
     #block(width: 100%, inset: (x: 16pt, top: 6pt, bottom: 14pt))[

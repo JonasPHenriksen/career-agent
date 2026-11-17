@@ -90,10 +90,11 @@ def model(data: dict, language: str | None = None, profile: dict | None = None, 
         lines.append({"text": p["email"], "url": f"mailto:{p['email']}"})
     if p.get("phone"):
         lines.append({"text": p["phone"], "url": ""})
-    if p.get("city"):
-        lines.append({"text": p["city"], "url": ""})
-    if p.get("linkedin"):
-        lines.append({"text": "LinkedIn", "url": p["linkedin"]})
+    place = (data.get("location") or "").strip() or p.get("city")  # as your CV writes it ("Horsens, Denmark"), else your city
+    if place:
+        lines.append({"text": place, "url": ""})
+    if p.get("linkedin"):  # the address itself, so it can be read on paper too
+        lines.append({"text": re.sub(r"^https?://(www\.)?", "", p["linkedin"]).rstrip("/"), "url": p["linkedin"]})
     if p.get("website"):
         lines.append({"text": re.sub(r"^https?://(www\.)?", "", p["website"]).rstrip("/"), "url": p["website"]})
     lines += [{"text": x, "url": ""} for x in (data.get("personal") or []) if x.strip()]

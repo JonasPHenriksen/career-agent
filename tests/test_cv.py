@@ -263,3 +263,20 @@ def test_the_cv_fills_its_page_and_never_grows_to_do_so(fake):
     assert cvrender.pages(long, "da") == least, "opening the lines never adds a page"
     nxt = cvrender.SPACINGS[cvrender.SPACINGS.index(tight) + 1]
     assert cvrender._page_count(folder, m, nxt) > least, "and it is the most open spacing that still fits"
+
+
+def test_the_cv_prints_its_own_place_line_and_the_linkedin_address(fake):
+    settings.update("profile", {"linkedin": "https://www.linkedin.com/in/sara-lund-123456789/"})
+    a = _draft()
+    data = db.jload(a["cv_data"])
+    lines = [x["text"] for x in cvrender.model(data, "da")["header"]["lines"]]
+    assert "København" in lines, "without a place of its own, the CV prints your city"
+    assert "linkedin.com/in/sara-lund-123456789" in lines and "LinkedIn" not in lines
+    link = next(x for x in cvrender.model(data, "da")["header"]["lines"] if x["text"].startswith("linkedin.com"))
+    assert link["url"] == "https://www.linkedin.com/in/sara-lund-123456789/"
+
+    data["location"] = "København, Danmark"
+    lines = [x["text"] for x in cvrender.model(cvdata.clean(data), "da")["header"]["lines"]]
+    assert "København, Danmark" in lines and "København" not in lines
+    assert settings.get("profile")["city"] == "København", "your city, used for distances and letter dates, is untouched"
+    assert cvrender.pages(cvdata.clean(data), "da") == 1
