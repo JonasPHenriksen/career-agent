@@ -10,14 +10,14 @@
 #let s = d.design.at("spacing", default: 1.0)
 
 #set document(title: d.header.name + " – CV", author: d.header.name)
-#set page(paper: "a4", margin: (x: 0pt, top: 0pt, bottom: 12pt),
+#set page(paper: "a4", margin: (x: 0pt, top: 0pt, bottom: 8pt),
   background: place(top + left, rect(width: side, height: 100%, fill: tint)))
 #set text(font: d.design.fonts, size: base, lang: d.lang, fill: rgb("#161616"))
 #set par(leading: 0.58em * s, spacing: 0.58em * s)
 #set list(indent: 5pt, body-indent: 4pt, spacing: 0.8em * s, marker: [•])
 #show link: it => underline(offset: 2pt, it)
 
-#let title(t) = block(above: 14pt * s, below: 8pt * s, sticky: true,
+#let title(t) = block(above: 11pt * s, below: 7pt * s, sticky: true,
   stack(spacing: 3.5pt, text(fill: primary, weight: 600, size: base * 1.3, t), line(length: 100%, stroke: 0.7pt + primary)))
 #let row(a, b, bold: false) = grid(columns: (1fr, auto), column-gutter: 8pt,
   if bold { text(weight: 600, a) } else { a }, align(right, b))
@@ -34,7 +34,7 @@
 
 #grid(columns: (side, 1fr),
   [
-    #block(fill: primary, width: 100%, inset: (x: 16pt, top: 24pt, bottom: 18pt))[
+    #block(fill: primary, width: 100%, inset: (x: 16pt, top: 20pt, bottom: 14pt))[
       #set text(fill: white)
       #set par(leading: 0.75em)
       #if d.photo != "" {
@@ -61,7 +61,7 @@
         }
       }
     ]
-    #block(width: 100%, inset: (x: 16pt, top: 6pt, bottom: 14pt))[
+    #block(width: 100%, inset: (x: 16pt, top: 2pt, bottom: 8pt))[
       #for s in d.sidebar {
         title(s.title)
         for i in s.items { side-item(i) }
@@ -70,12 +70,12 @@
   ],
   [
     #if d.profile.text != "" {
-      block(fill: tint, width: 100%, inset: (x: 16pt, top: 16pt, bottom: 16pt))[
+      block(fill: tint, width: 100%, inset: (x: 16pt, top: 12pt, bottom: 12pt))[
         #title(d.profile.title)
         #d.profile.text
       ]
     }
-    #block(width: 100%, inset: (x: 16pt, top: 2pt, bottom: 12pt))[
+    #block(width: 100%, inset: (x: 16pt, top: 0pt, bottom: 6pt))[
       #for s in d.main {
         title(s.title)
         for e in s.entries { entry(e) }
