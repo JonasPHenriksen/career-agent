@@ -15,6 +15,10 @@ import pytest  # noqa: E402
 from career_agent import config, cvdata, db, jobs, llm, profile, settings, sources, tracker, writer  # noqa: E402
 from career_agent.llm.providers import ProviderReply  # noqa: E402
 
+from career_agent import fetch as _fetch  # noqa: E402
+
+_fetch.SITE_GAP = 0  # tests ask their pretend sites as fast as they like
+
 CV_TEXT = """Sara Lund
 Projektleder og product owner
 

@@ -114,3 +114,42 @@ def test_a_page_source_follows_its_pages_while_they_show_new_jobs(fake, monkeypa
 
     fetched.clear()
     assert sources.poll(sid)["new"] == 0 and fetched == [VESTAS], "nothing new on page 1: the later pages wait"
+
+
+class _Status:
+    def __init__(self, status: int, headers: dict | None = None):
+        self.status_code, self.headers, self.text = status, headers or {}, "ok"
+
+
+def test_one_site_is_asked_at_its_own_pace_and_a_slow_down_is_obeyed(monkeypatch):
+    naps: list[float] = []
+    answers = [_Status(429, {"retry-after": "3"}), _Status(429), _Status(200)]
+    monkeypatch.setattr(fetch, "SITE_GAP", 1.5)
+    monkeypatch.setattr(fetch.time, "sleep", naps.append)
+    monkeypatch.setattr(fetch.httpx2, "get", lambda *a, **k: answers.pop(0))
+    fetch._next_free.clear()
+    assert fetch.get("https://jobs.example.com/a").status_code == 200
+    assert 3.0 in naps and 30 in naps, "waits as long as the site says, else 10 then 30 seconds"
+    assert any(0 < n <= fetch.SITE_GAP for n in naps), "and never asks the same site faster than its gap"
+
+    # Still told to slow down after two waits: a failure that is tried again later, not a blocked page.
+    monkeypatch.setattr(fetch.httpx2, "get", lambda *a, **k: _Status(429))
+    with pytest.raises(fetch.FetchError, match="slow down") as caught:
+        fetch.get("https://jobs.example.com/b")
+    from career_agent import tasks
+    assert caught.value.later and tasks.is_transient(caught.value) and tasks.is_passing(str(caught.value))
+    monkeypatch.setattr(fetch.httpx2, "get", lambda *a, **k: _Status(403))
+    with pytest.raises(fetch.FetchError, match="blocked") as caught:
+        fetch.get("https://jobs.example.com/c")
+    assert not tasks.is_transient(caught.value)
+
+
+def test_a_source_its_site_forbids_is_switched_off_once(monkeypatch):
+    sid = db.insert("sources", {"name": "Closed", "kind": "rss", "url": "https://closed.example.com/jobs.rss", "created_at": db.now()})
+    monkeypatch.setattr(robots, "rules_for", lambda url: robots.parse("User-agent: *\nDisallow: /"))
+    monkeypatch.setattr(fetch, "get", lambda *a, **k: pytest.fail("a forbidden address must not be fetched"))
+    assert "switched off" in sources.poll(sid)["skipped"]
+    row = db.q1("SELECT enabled, last_status, last_error FROM sources WHERE id = ?", (sid,))
+    assert row["enabled"] == 0 and row["last_status"] == "error" and "Switched off" in row["last_error"]
+    assert sid not in [s["id"] for s in sources.due()], "and isn't checked again"
+    db.ex("DELETE FROM sources WHERE id = ?", (sid,))

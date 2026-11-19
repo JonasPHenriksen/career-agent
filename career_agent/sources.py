@@ -343,7 +343,11 @@ def poll(source_id: int) -> dict:
     try:
         problem = robots.check(src["url"])
         if problem:
-            raise fetch.FetchError(problem)
+            # The site's rules won't change by asking again every few hours: the source is switched off, and says
+            # why. Collect that site with the bookmark instead, or switch it on again if its rules change.
+            db.update("sources", source_id, {"enabled": 0, "last_status": "error",
+                                             "last_error": f"{problem} Switched off, so it isn't tried again."[:1000]})
+            return {"skipped": "switched off: the site doesn't let robots read it"}
         resp = None
         if src["kind"] == "workday":
             is_feed, items = False, _workday_items(src["url"], src["name"])

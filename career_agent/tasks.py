@@ -176,7 +176,7 @@ RETRY_MINUTES = (2, 10, 30)  # a passing model problem is tried again after thes
 # Failures that pass by themselves. Also used at start to find work an earlier session couldn't finish.
 _TRANSIENT = re.compile(r"isn't running|disconnected|timed out|timeout|took too long to answer|couldn't load the page|"
                         r"connection (refused|reset|error|aborted)|couldn't (reach|connect)|temporarily|overloaded|"
-                        r"rate.?limit|usage limit|\b(502|503|504|529)\b", re.I)
+                        r"rate.?limit|usage limit|slow down|\b(429|502|503|504|529)\b", re.I)
 
 
 def is_passing(message: str | None) -> bool:
@@ -190,7 +190,7 @@ def is_transient(e: Exception) -> bool:
     if isinstance(e, LLMTransient):
         return True
     if isinstance(e, FetchError):  # the site didn't answer: worth another try; a missing or blocked page isn't
-        return bool(getattr(e, "connection", False))
+        return bool(getattr(e, "connection", False) or getattr(e, "later", False))
     if isinstance(e, LLMConfigError):  # "Ollama isn't running" is passing; a missing key isn't
         return "isn't running" in str(e)
     return isinstance(e, LLMError) and is_passing(str(e))

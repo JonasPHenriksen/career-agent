@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
@@ -20,25 +21,60 @@ HEADERS = {
 
 class FetchError(Exception):
     """Fetching failed; message is for the user. `connection` is True when the site couldn't be reached at all
-    (no answer, no network): worth trying again later, unlike a page that's gone or blocked."""
+    (no answer, no network), and `later` when it asked robots to slow down: both are worth trying again later,
+    unlike a page that's gone or blocked."""
 
-    def __init__(self, message: str, connection: bool = False):
+    def __init__(self, message: str, connection: bool = False, later: bool = False):
         super().__init__(message)
         self.connection = connection
+        self.later = later
+
+
+# One site is never asked faster than this, however many tasks run at once: three workers reading ads from the
+# same career site at full speed got "too many requests" (HTTP 429) and lost those ads.
+SITE_GAP = 1.5  # seconds between two requests to the same site
+SLOW_DOWN_WAITS = (10, 30)  # after a 429 without its own Retry-After: wait, try again, wait longer, try again
+_pace_lock = threading.Lock()
+_next_free: dict[str, float] = {}
+
+
+def _pace(url: str) -> None:
+    """Wait for this site's turn."""
+    host = urlparse(url).netloc.lower()
+    with _pace_lock:
+        now = time.monotonic()
+        at = max(now, _next_free.get(host, 0.0))
+        _next_free[host] = at + SITE_GAP
+    if at > now:
+        time.sleep(at - now)
+
+
+def _retry_after(r: httpx2.Response, default: float) -> float:
+    try:
+        return min(60.0, max(1.0, float(r.headers.get("retry-after") or default)))
+    except ValueError:
+        return default
 
 
 def get(url: str, timeout: float = 25) -> httpx2.Response:
     if urlparse(url).scheme not in ("http", "https"):
         raise FetchError("Only http(s) links can be fetched.")
-    try:
-        r = httpx2.get(url, headers=HEADERS, follow_redirects=True, timeout=timeout)
-    except httpx2.TimeoutException as e:
-        raise FetchError("The site took too long to answer.", connection=True) from e
-    except httpx2.TransportError as e:
-        raise FetchError(f"Couldn't load the page ({e.__class__.__name__}).", connection=True) from e
-    except httpx2.HTTPError as e:
-        raise FetchError(f"Couldn't load the page ({e.__class__.__name__}).") from e
-    if r.status_code in (401, 403, 429, 999):
+    for wait in (*SLOW_DOWN_WAITS, None):
+        _pace(url)
+        try:
+            r = httpx2.get(url, headers=HEADERS, follow_redirects=True, timeout=timeout)
+        except httpx2.TimeoutException as e:
+            raise FetchError("The site took too long to answer.", connection=True) from e
+        except httpx2.TransportError as e:
+            raise FetchError(f"Couldn't load the page ({e.__class__.__name__}).", connection=True) from e
+        except httpx2.HTTPError as e:
+            raise FetchError(f"Couldn't load the page ({e.__class__.__name__}).") from e
+        if r.status_code != 429:
+            break
+        if wait is None:
+            raise FetchError("The site asked robots to slow down (HTTP 429). It will be tried again later.", later=True)
+        time.sleep(_retry_after(r, wait))
+    if r.status_code in (401, 403, 999):
         raise FetchError(f"The site blocked automatic access (HTTP {r.status_code}). "
                          "Open the ad in your browser and paste its text instead.")
     if r.status_code in (404, 410):
@@ -53,6 +89,7 @@ def post_json(url: str, payload: dict, timeout: float = 25) -> httpx2.Response:
     if urlparse(url).scheme not in ("http", "https"):
         raise FetchError("Only http(s) links can be fetched.")
     headers = {**HEADERS, "Accept": "application/json", "Content-Type": "application/json"}
+    _pace(url)
     try:
         r = httpx2.post(url, json=payload, headers=headers, follow_redirects=True, timeout=timeout)
     except httpx2.TimeoutException as e:

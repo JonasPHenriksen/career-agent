@@ -368,3 +368,37 @@ def test_reading_an_ad_keeps_the_dates_its_results_page_gave_when_the_ad_states_
     job = jobs.get(job_id)
     assert job["posted_at"] == "2026-11-16", "a date the ad doesn't state is kept"
     assert job["deadline"] == "2030-12-01", "a date the ad states wins"
+
+
+def test_a_letter_over_the_ceiling_is_cut_once(fake, monkeypatch):
+    long_body = " ".join(["ord"] * 430)
+    short_body = " ".join(["ord"] * 380)
+    letter = {"subject": "Ansøgning", "letter": f"Hej Mette,\n\n{long_body}\n\nMed venlig hilsen\nSara Lund"}
+    assert writer.body_words(letter["letter"]) == 430, "greeting and sign-off aren't counted"
+    asked = []
+
+    def answer(system, user, schema):
+        asked.append(user)
+        return {"subject": "Ansøgning", "letter": f"Hej Mette,\n\n{short_body}\n\nMed venlig hilsen\nSara Lund", "main_gap": "",
+                "gap_line": "", "used_fact_ids": [], "assumed": [], "angle": "", "notes": []}
+
+    monkeypatch.setattr(fake, "answer", answer)
+    notes = writer.fit_ceiling(letter, "SYSTEM", {"title": "Product Owner"}, "da")
+    assert notes == ["Shortened from 430 to 380 words to stay under the ceiling of 400."] and writer.body_words(letter["letter"]) == 380
+    assert "the ceiling is 400" in asked[0] and len(asked) == 1
+    assert writer.fit_ceiling(letter, "SYSTEM", {"title": "Product Owner"}, "da") == [] and len(asked) == 1, "within the ceiling: no model is asked"
+
+
+def test_the_fact_check_knows_the_town_you_live_in(fake, monkeypatch):
+    from career_agent import settings
+
+    settings.update("profile", {"city": "Horsens"})
+    seen = []
+
+    def answer(system, user, schema):
+        seen.append(system)
+        return {"verdicts": [{"n": 1, "kind": "fact", "status": "supported", "fact_ids": [], "problem": ""}]}
+
+    monkeypatch.setattr(fake, "answer", answer)
+    writer.check_claims("I live in Horsens, so Aarhus would be the natural office for me.", "")
+    assert "The candidate lives in Horsens." in seen[0], "your own setting, so the check doesn't flag it as unbacked"

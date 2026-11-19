@@ -75,9 +75,9 @@ def test_a_source_the_site_forbids_is_not_added(fake, site_rules):
 def test_an_old_source_the_site_forbids_reports_why(fake, site_rules):
     sid = db.insert("sources", {"name": "old", "kind": "rss", "url": "https://www.jobindex.dk/jobsoegning.rss?q=po&radius=20",
                                 "created_at": db.now()})
-    with pytest.raises(sources.fetch.FetchError, match="region"):
-        sources.poll(sid)
-    assert "radius=" in db.q1("SELECT last_error FROM sources WHERE id = ?", (sid,))["last_error"]
+    assert "switched off" in sources.poll(sid)["skipped"]
+    row = db.q1("SELECT enabled, last_error FROM sources WHERE id = ?", (sid,))
+    assert "radius=" in row["last_error"] and "region" in row["last_error"] and row["enabled"] == 0
 
 
 def test_tracking_links_become_the_ads_own_page_or_are_kept_for_you(fake, site_rules):

@@ -168,8 +168,43 @@ def length_rule(language: str | None = None) -> str:
     words = letter_length(language)
     if words:
         return f"about {words} words (between {round(words * 0.8)} and {round(words * 1.15)})"
-    return (f"at most {LETTER_MAX} words. That is a ceiling, not a length to aim for: stop when the case is made. "
-            "Don't fill up to it, and don't cut a point that earns its place to stay well under it")
+    return (f"at most {LETTER_MAX} words, not counting the greeting and the sign-off. That is a ceiling, not a length "
+            "to aim for: stop when the case is made. Don't fill up to it, and don't cut a point that earns its place "
+            "to stay well under it")
+
+
+def body_words(text: str | None) -> int:
+    """The words of a letter without its greeting ("Hej Mads,") and its sign-off and name."""
+    parts = [p.split() for p in (text or "").split("\n\n") if p.strip()]
+    if len(parts) > 1 and len(parts[0]) <= 5:
+        parts = parts[1:]
+    while len(parts) > 1 and len(parts[-1]) <= 6:
+        parts = parts[:-1]
+    return sum(len(p) for p in parts)
+
+
+def letter_ceiling(language: str | None = None) -> int:
+    words = letter_length(language)
+    return round(words * 1.15) if words else LETTER_MAX
+
+
+def fit_ceiling(letter: dict, system: str, job: dict, language: str) -> list[str]:
+    """A letter over the ceiling is cut once, by the writer itself, so it still fits its page. Changes `letter` in
+    place and returns a note for you; nothing happens to a letter within the ceiling."""
+    limit, had = letter_ceiling(language), body_words(letter.get("letter"))
+    if had <= limit:
+        return []
+    task = (f"The cover letter below runs to {had} words without its greeting and sign-off; the ceiling is {limit}. "
+            f"Shorten it to at most {limit - 15}. Cut the point or the sentences the reader would miss least, keep the "
+            "line of thought, the sentence about the gap and the candidate's voice, and change nothing else. "
+            "Return every field again, with the shortened letter.\n\n"
+            f"<letter>\n{letter['letter']}\n</letter>\n\n" + _job_context(job, language, None))
+    d = llm.run("writing", "revise_letter", system, task, LETTER_SCHEMA, max_tokens=16000, effort="medium").data
+    now = body_words(d.get("letter"))
+    if not now or now >= had:
+        return [f"The letter is {had} words, over the ceiling of {limit}, and shortening it didn't work. Cut it by hand."]
+    letter.update({k: d[k] for k in ("letter", "subject") if d.get(k)})
+    return [f"Shortened from {had} to {now} words to stay under the ceiling of {limit}."]
 
 
 # What a letter is for and how to get there. Deliberately a goal with room to think, not a recipe: a fixed plan
@@ -489,6 +524,7 @@ def draft(app_id: int, part: str = "both") -> dict:
     if part in ("letter", "both"):
         letter = llm.run("writing", "write_letter", system, _letter_task(job, language, app["instructions"]),
                          LETTER_SCHEMA, max_tokens=16000).data
+        notes += fit_ceiling(letter, system, job, language)
         patch.update({"subject": letter["subject"], "letter": strip_citations(letter["letter"]),
                       "review": db.jdump(_review(letter, letter["letter"]))})
         notes += _gap_note(letter) + _assumed_notes(letter) + letter["notes"]
@@ -583,7 +619,11 @@ def check_claims(letter: str, cv: str, tier: str | None = None) -> dict:
     items = check_items(letter, cv)
     if not items:
         return {"claims": [], "counts": {}, "summary": "Nothing to check."}
-    system = (CHECK_SYSTEM + f"\n\nToday's date: {date.today().isoformat()}\n\nCAREER DATABASE:\n"
+    # The writer is told the town you live in (Settings), so the check must know it too: it is your own word,
+    # not something the career database records, and "I live in Horsens" was flagged as unbacked without it.
+    city = (settings.get("profile").get("city") or "").strip()
+    lives = f"\nThe candidate lives in {city}. They said so themselves, so it counts as backed.\n" if city else ""
+    system = (CHECK_SYSTEM + f"\n\nToday's date: {date.today().isoformat()}\n{lives}\nCAREER DATABASE:\n"
               + profile.facts_digest(budget, with_evidence=True, query=f"{letter}\n\n{cv}"))
     user = "APPLICATION, ONE ITEM PER NUMBER:\n" + "\n".join(f"[{n}] ({where}) {text}" for n, (where, text) in enumerate(items, 1))
     d = llm.run(tier, "claim_check", system, user, CHECK_SCHEMA, max_tokens=12000, effort="medium").data
