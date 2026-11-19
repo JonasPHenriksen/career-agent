@@ -168,6 +168,8 @@ def length_rule(language: str | None = None) -> str:
     words = letter_length(language)
     if words:
         return f"about {words} words (between {round(words * 0.8)} and {round(words * 1.15)})"
+    # The number stays in the prompt. Tried without it on 2026-11-19: the writer's own idea of a fitting length was
+    # 482 words, so the letter had to be cut by almost 100 afterwards. With the number it writes 380-400 by itself.
     return (f"at most {LETTER_MAX} words, not counting the greeting and the sign-off. That is a ceiling, not a length "
             "to aim for: stop when the case is made. Don't fill up to it, and don't cut a point that earns its place "
             "to stay well under it")
@@ -284,14 +286,30 @@ CV_RULES = """- Use only facts from the career database. Keep every job title, e
 - Skills: only skills in the database, most relevant first.
 - No name or contact details (added automatically)."""
 
-def _cv_task(job: dict, language: str, instructions: str | None) -> str:
+def cv_notes_rule(told: list[str] | None = None) -> str:
+    """What the CV step's notes are for. The letter is written first and has its own notes; without this the CV step
+    said the same things again (the distance, the location, the start date) and advised on a letter already written."""
+    rule = ("Your notes are about the CV only: something in it the candidate should check or correct, or a requirement "
+            "of the ad the CV can't honestly show. The cover letter is written separately, so don't suggest what it "
+            "should say, and don't comment on the distance, the location, the deadline, the start date or the "
+            "interview. No notes is fine.")
+    told = [t.strip() for t in told or [] if t and t.strip()]
+    if told:
+        rule += ("\nThe candidate has already been told the following with the letter. Don't repeat any of it, in "
+                 "other words either:\n" + "\n".join(f"- {t}" for t in told))
+    return rule
+
+
+def _cv_task(job: dict, language: str, instructions: str | None, told: list[str] | None = None) -> str:
     return (f"Tailor the candidate's CV for the job below, written in {LANG_NAMES.get(language, language)}.\n\n"
             f"Rules:\n{CV_RULES}\n\n"
             f"Use exactly this Markdown structure, with everything (headings included) in the CV's language:\n{cv_format(language)}\n\n"
-            "Return cv_markdown, used_fact_ids and notes.\n\n" + _job_context(job, language, instructions))
+            f"Return cv_markdown, used_fact_ids and notes. {cv_notes_rule(told)}\n\n"
+            + _job_context(job, language, instructions))
 
 
-def _cv_tailor_task(job: dict, language: str, instructions: str | None, base: dict, current: dict | None = None) -> str:
+def _cv_tailor_task(job: dict, language: str, instructions: str | None, base: dict, current: dict | None = None,
+                    told: list[str] | None = None) -> str:
     """Tailor the candidate's own CV (the base) with small changes, or revise an already tailored one."""
     import json
 
@@ -299,7 +317,8 @@ def _cv_tailor_task(job: dict, language: str, instructions: str | None, base: di
     doc = json.dumps(current or base, ensure_ascii=False, indent=1)
     what = ("the CV as it is now, already tailored for this job" if current else "the candidate's own CV, the base")
     return (f"Tailor the candidate's CV for the job below.\n\n{cvdata.TAILOR_RULES.format(language=lang, pages=_cv_pages(base))}\n\n"
-            f"Return cv, changes, used_fact_ids and notes.\n\nTHE CV ({what}):\n<cv>\n{doc}\n</cv>\n\n"
+            f"Return cv, changes, used_fact_ids and notes. {cv_notes_rule(told)}\n\n"
+            f"THE CV ({what}):\n<cv>\n{doc}\n</cv>\n\n"
             + _job_context(job, language, instructions))
 
 
@@ -314,12 +333,14 @@ def _cv_pages(data: dict, language: str | None = None) -> int:
 
 
 def tailor_cv(job: dict, language: str, instructions: str | None, system: str, purpose: str = "write_cv",
-              current: dict | None = None, effort: str | None = None) -> tuple[dict, list[str]] | None:
-    """The CV for this job as data, made from your base CV, with the list of changes. None if you have no base CV."""
+              current: dict | None = None, effort: str | None = None,
+              told: list[str] | None = None) -> tuple[dict, list[str]] | None:
+    """The CV for this job as data, made from your base CV, with the list of changes. None if you have no base CV.
+    `told` is what the letter's notes already say, so the CV's notes don't say it again."""
     base = cvdata.base_for(language)  # your base CV in this language if you have one, so nothing needs translating
     if not base:
         return None
-    task = _cv_tailor_task(job, language, instructions, base["data"], current)
+    task = _cv_tailor_task(job, language, instructions, base["data"], current, told)
     d = llm.run("writing", purpose, system, task, cvdata.TAILOR_SCHEMA, max_tokens=16000, effort=effort).data
     data = cvdata.clean(d["cv"])
     if cvdata.is_empty(data):  # a model that returned nothing usable: keep what we had
@@ -530,12 +551,12 @@ def draft(app_id: int, part: str = "both") -> dict:
         notes += _gap_note(letter) + _assumed_notes(letter) + letter["notes"]
         words = len(letter["letter"].split())
     if part in ("cv", "both"):
-        tailored = tailor_cv(job, language, app["instructions"], system)
+        tailored = tailor_cv(job, language, app["instructions"], system, told=notes)
         if tailored:  # your own CV with small changes for this job
             cv_data, cv_notes = tailored
             patch.update({"cv": cvdata.to_markdown(cv_data), "cv_data": db.jdump(cv_data)})
         else:  # no CV of yours to start from: one is written from the career database
-            cv = llm.run("writing", "write_cv", system, _cv_task(job, language, app["instructions"]),
+            cv = llm.run("writing", "write_cv", system, _cv_task(job, language, app["instructions"], notes),
                          CV_SCHEMA, max_tokens=16000).data
             cv_notes = cv["notes"]
             patch.update({"cv": strip_citations(cv["cv_markdown"]), "cv_data": None})

@@ -280,3 +280,23 @@ def test_the_cv_prints_its_own_place_line_and_the_linkedin_address(fake):
     assert "København, Danmark" in lines and "København" not in lines
     assert settings.get("profile")["city"] == "København", "your city, used for distances and letter dates, is untouched"
     assert cvrender.pages(cvdata.clean(data), "da") == 1
+
+
+def test_the_cv_step_is_told_what_the_letter_already_said(fake, monkeypatch):
+    answer = fake.answer
+
+    def with_a_note(system, user, schema):
+        data = answer(system, user, schema)
+        if schema is writer.LETTER_SCHEMA:
+            data = {**data, "notes": ["Kolding is 48 km away, just inside your limit."]}
+        return data
+
+    monkeypatch.setattr(fake, "answer", with_a_note)
+    _draft()
+    cv_calls = [user for _, user, schema in fake.calls if schema in (cvdata.TAILOR_SCHEMA, writer.CV_SCHEMA)]
+    assert cv_calls and "Your notes are about the CV only" in cv_calls[0]
+    told = cv_calls[0].split("already been told the following", 1)[1]
+    assert "- Kolding is 48 km away, just inside your limit." in told, "said with the letter, so the CV step doesn't repeat it"
+    rule = writer.cv_notes_rule(["The deadline is 29 November.", " "])
+    assert rule.endswith("- The deadline is 29 November.") and "No notes is fine" in rule
+    assert "already been told" not in writer.cv_notes_rule([]), "nothing said yet: only the rule"
