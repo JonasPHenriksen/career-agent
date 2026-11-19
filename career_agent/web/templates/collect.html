@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Collect jobs{% endblock %}
+{% block content %}
+<h1>Collect jobs</h1>
+<section class="card" id="collect-box" data-close="{{ '1' if result and result.ok and not result.ask else '' }}">
+  {% if not result %}
+  <p>This page shows what the <em>Collect jobs</em> bookmark took from a job site. Open a job search results page and click the bookmark there.</p>
+  {% else %}
+  <p id="collect-status" role="status" class="{{ '' if result.ok else 'flash err' }}">{{ result.message }}</p>
+  {% if result.ask %}
+  <form method="post" action="/collect/confirm" class="row">
+    <input type="hidden" name="page_id" value="{{ result.ask }}">
+    <button class="btn primary" data-busy="Queuing…">Look for jobs on this page</button>
+    <a class="btn ghost" href="/jobs">No, leave it</a>
+  </form>
+  {% else %}
+  <p class="small text-2" id="collect-closing" hidden>This tab closes in <span id="collect-left">4</span> s. <a href="#" id="collect-keep">Keep it open</a></p>
+  <p class="small text-2"><a href="/jobs">Go to Jobs</a> · <a href="/tasks">See the queue</a></p>
+  {% endif %}
+  {% endif %}
+</section>
+<p class="small text-2">The bookmark is under <a href="/settings#collect">Settings → Job sources</a>.</p>
+<script src="/static/collect.js?v={{ static_v }}"></script>
+{% endblock %}

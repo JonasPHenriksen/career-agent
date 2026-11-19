@@ -11,11 +11,11 @@ from pathlib import Path
 from urllib.parse import quote, urlencode, urlparse
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import (alerts, backup, companies, config, cvdata, cvrender, db, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
+from .. import (alerts, backup, collect, companies, config, cvdata, cvrender, db, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
                 profile, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
@@ -80,7 +80,8 @@ async def local_guard(request: Request, call_next):
     host = host.rsplit(":", 1)[0] if not host.endswith("]") else host
     if host not in _LOCAL_HOSTS:
         return PlainTextResponse("Forbidden host", status_code=403)
-    if request.method not in ("GET", "HEAD", "OPTIONS"):
+    # The Collect jobs bookmark posts from the job site's own tab; /collect/take checks the bookmark's key instead.
+    if request.method not in ("GET", "HEAD", "OPTIONS") and request.url.path != "/collect/take":
         origin = request.headers.get("origin")
         if origin and origin != "null" and (urlparse(origin).hostname or "") not in ("127.0.0.1", "localhost", "::1", "testserver"):
             return PlainTextResponse("Cross-site request blocked", status_code=403)
@@ -319,7 +320,7 @@ def jobs_list(request: Request, view: str = "inbox", sort: str = "score", q: str
         "dismissed": db.scalar("SELECT COUNT(*) FROM jobs WHERE status = 'dismissed'"),
         "all": db.scalar("SELECT COUNT(*) FROM jobs"),
     }
-    busy = db.scalar("SELECT COUNT(*) FROM tasks WHERE kind IN ('parse_job', 'score_job', 'poll_source') "
+    busy = db.scalar("SELECT COUNT(*) FROM tasks WHERE kind IN ('parse_job', 'score_job', 'poll_source', 'collect_jobs') "
                      "AND status IN ('queued', 'running')") or 0
     return render(request, "jobs.html", rows=rows, view=view, sort=sort, q=q, counts=counts, busy=busy,
                   sources=db.q("SELECT * FROM sources ORDER BY id"))
@@ -327,7 +328,7 @@ def jobs_list(request: Request, view: str = "inbox", sort: str = "score", q: str
 
 @app.get("/jobs/progress")
 def jobs_progress(request: Request, n: int = 0):
-    busy = db.scalar("SELECT COUNT(*) FROM tasks WHERE kind IN ('parse_job', 'score_job', 'poll_source') "
+    busy = db.scalar("SELECT COUNT(*) FROM tasks WHERE kind IN ('parse_job', 'score_job', 'poll_source', 'collect_jobs') "
                      "AND status IN ('queued', 'running')") or 0
     if busy == 0:
         return done_response()
@@ -1184,6 +1185,8 @@ def settings_page(request: Request):
     return render(request, "settings.html", st=st, cfg=settings.get("llm"), auto=settings.get("automation"),
                   w=settings.get("writing"), anthropic_models=llm.ANTHROPIC_MODELS,
                   sources=db.q("SELECT * FROM sources ORDER BY id"), source_kinds=sources.KINDS, alert_days=alerts.FIRST_READ_DAYS,
+                  collect_bookmark=collect.bookmark(str(request.base_url)),
+                  collect_sites=sorted({name for name, _ in collect.SITES.values()}),
                   data_dir=str(config.DATA_DIR), efforts=["low", "medium", "high", "xhigh", "max"],
                   search=retrieval.status(), letter_max=writer.LETTER_MAX,
                   steps=[{"key": k, "label": label, "tier": {"check": writer.check_tier()}.get(tier, tier),
@@ -1464,6 +1467,54 @@ async def sources_add_mail(request: Request):
         return go("/settings#alerts", err=str(e))
     tasks.enqueue("poll_source", {"source_id": sid}, ref=f"source:{sid}")
     return go("/settings#sources", msg="Job alerts added. Reading the mailbox now… (macOS may ask to let the app use Mail)")
+
+
+# --- Jobs collected from a page you have open (the "Collect jobs" bookmark) ---
+
+@app.get("/collect")
+def collect_page(request: Request):
+    return render(request, "collect.html", result=None)
+
+
+@app.get("/collect/take")
+def collect_take_without_page(request: Request):
+    # A browser that opened the new tab without sending the page along (or a reload of the result).
+    return render(request, "collect.html", result={"ok": False, "message": "The page didn't come along. Go back to "
+                  "the job site and click the Collect jobs bookmark again."})
+
+
+@app.post("/collect/take")
+async def collect_take(request: Request):
+    """The bookmark posts the page you're on here, from the job site's own tab. It's the one address other sites
+    may post to (see local_guard), so it takes nothing without the bookmark's key."""
+    f = await request.form()
+    if not collect.token_ok(f.get("token") if isinstance(f.get("token"), str) else None):
+        return render(request, "collect.html", result={"ok": False, "message": "This bookmark is out of date. "
+                      "Remove it, and drag the Collect jobs button from Settings → Job sources to your Favourites bar again."})
+    html, page_url = f.get("html"), f.get("url")
+    try:
+        if not isinstance(html, str) or not isinstance(page_url, str):
+            raise ValueError("The page didn't arrive in one piece. Click the bookmark again.")
+        result = await asyncio.to_thread(collect.receive, html, page_url)
+    except ValueError as e:
+        result = {"ok": False, "message": str(e)}
+    return render(request, "collect.html", result=result)
+
+
+@app.post("/collect/confirm")
+async def collect_confirm(request: Request):
+    f = await form(request)
+    try:
+        result = collect.confirm(f.get("page_id", ""))
+    except ValueError as e:
+        result = {"ok": False, "message": str(e)}
+    return render(request, "collect.html", result=result)
+
+
+@app.post("/collect/new-key")
+def collect_new_key(request: Request):
+    collect.new_token()
+    return go("/settings#collect", msg="New key made. The old bookmark no longer works: drag the button to your Favourites bar again.")
 
 
 @app.post("/sources/{source_id}/run")

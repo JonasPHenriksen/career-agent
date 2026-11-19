@@ -140,7 +140,7 @@
 
 <section class="card" id="sources">
   <h2>Job sources</h2>
-  <p class="small text-2">Watched automatically. New jobs are screened, read and scored; strong matches get a draft. For Jobindex, run a search on jobindex.dk and paste the address of the results page (it becomes an RSS feed automatically). Most job sites' search pages work, as do any RSS feeds. The app follows each site's rules for robots (robots.txt) and tells you when an address isn't allowed. On Jobindex that means up to two search words and a region (<code>area=storkbh</code>), but no distance, municipality or page number, so a feed shows the newest 20 jobs. To get every job, or Ofir and Jobnet, use their job alerts by email (below).</p>
+  <p class="small text-2">Watched automatically. New jobs are screened, read and scored; strong matches get a draft. For Jobindex, run a search on jobindex.dk and paste the address of the results page (it becomes an RSS feed automatically). Most job sites' search pages work, as do any RSS feeds. The app follows each site's rules for robots (robots.txt) and tells you when an address isn't allowed. On Jobindex that means up to two search words and a region (<code>area=storkbh</code>), but no distance, municipality or page number, so a feed shows the newest 20 jobs. To get every job in a filtered search, or Jobnet, collect the results pages yourself (below).</p>
   {% if sources %}
   <div class="table-wrap">
   <table class="data" style="margin-bottom:1rem">
@@ -148,13 +148,13 @@
     <tbody>
       {% for s in sources %}
       <tr>
-        <td><strong>{{ s.name }}</strong>{% if not s.enabled %} <span class="pill">paused</span>{% endif %}<div class="small muted" style="word-break:break-all">{% if s.kind == 'mail' %}job alerts in Mail · mailbox “{{ s.url }}”{% else %}{{ s.kind }} · {{ s.url }}{% endif %}</div></td>
-        <td class="small">{{ s.last_run_at|ago or 'never' }}<div class="muted">every {{ (s.interval_minutes / 60)|round(1) }} h</div></td>
+        <td><strong>{{ s.name }}</strong>{% if not s.enabled %} <span class="pill">paused</span>{% endif %}<div class="small muted" style="word-break:break-all">{% if s.kind == 'mail' %}job alerts in Mail · mailbox “{{ s.url }}”{% elif s.kind == 'collect' %}pages you collect with the bookmark · {{ s.url }}{% else %}{{ s.kind }} · {{ s.url }}{% endif %}</div></td>
+        <td class="small">{{ s.last_run_at|ago or 'never' }}<div class="muted">{% if s.kind == 'collect' %}when you collect{% else %}every {{ (s.interval_minutes / 60)|round(1) }} h{% endif %}</div></td>
         <td class="num">{{ s.jobs_found }}</td>
         <td class="small">{% if s.last_error %}<span class="pill bad">error</span> {{ s.last_error }}{% else %}{{ s.last_status or '' }}{% endif %}</td>
         <td><div class="row">
-          <form method="post" action="/sources/{{ s.id }}/run" class="inline row">{{ model_picker() }}<button class="btn small">Check now</button></form>
-          <form method="post" action="/sources/{{ s.id }}/toggle" class="inline"><button class="btn small ghost">{{ 'Resume' if not s.enabled else 'Pause' }}</button></form>
+          {% if s.kind != 'collect' %}<form method="post" action="/sources/{{ s.id }}/run" class="inline row">{{ model_picker() }}<button class="btn small">Check now</button></form>
+          <form method="post" action="/sources/{{ s.id }}/toggle" class="inline"><button class="btn small ghost">{{ 'Resume' if not s.enabled else 'Pause' }}</button></form>{% endif %}
           <form method="post" action="/sources/{{ s.id }}/delete" class="inline" data-confirm="Stop watching this source?"><button class="btn small ghost danger">Remove</button></form>
         </div></td>
       </tr>
@@ -172,6 +172,18 @@
     </div>
     <button class="btn primary" data-busy="Adding…">Add source</button>
   </form>
+
+  <h3 id="collect" style="margin-top:1.6rem">Collect jobs from a page you have open</h3>
+  <p class="small text-2">A job board's filtered search (category, distance, page 2 and on) is closed to robots, so the app can't watch it. You can open it yourself and hand the page to the app. The app fetches nothing from the site: it reads the jobs that were on your screen, drops the ones it already has, and screens the rest like any other source.</p>
+  <p><a class="btn" href="{{ collect_bookmark }}" title="Drag me to your Favourites bar">Collect jobs</a> <span class="small text-2">← drag this button to your browser's Favourites bar (Safari: View → Show Favourites Bar).</span></p>
+  <ol class="small text-2">
+    <li>Keep Career Agent running.</li>
+    <li>Run your search on the job site, with any filters. On Jobnet, press “Indlæs flere job” until everything you want is showing.</li>
+    <li>Click <em>Collect jobs</em> in the Favourites bar. A tab opens, says how many jobs it took, and closes again.</li>
+    <li>Go to the next page of results and click again. One click takes one page: the bookmark never pages through a site for you.</li>
+  </ol>
+  <p class="small text-2">Read by their layout: {{ collect_sites|join(', ') }}. On any other site the app asks first, then picks out the job links like it does for a watched results page. LinkedIn's terms forbid collecting with scripts, so paste LinkedIn links by hand.</p>
+  <form method="post" action="/collect/new-key" class="small text-2" data-confirm="Make a new key? The bookmark you have now stops working until you drag the button to the Favourites bar again.">The bookmark carries a private key, so only a page you click it on can hand the app a page. <button class="btn small ghost">Make a new key</button></form>
 
   <h3 id="alerts" style="margin-top:1.6rem">Job alerts by email</h3>
   <p class="small text-2">The job sites' own alerts send you every new job that matches, with any filters you like (distance included), and nothing is missed while this Mac is off. The app reads them from a mailbox in Apple Mail; it never logs in to the sites.</p>

@@ -83,6 +83,14 @@ job sources ──► quick screening ──► read the ad ──► fit score 
   words and a region (`area=storkbh`), but not distance (`radius=`), municipality (`geoareaid=`) or paging
   (`page=`), so a Jobindex feed shows the newest 20 jobs. LinkedIn needs a login, so paste
   LinkedIn job links (or the ad text) by hand.
+* **Collect jobs from a page you have open.** A job board's filtered search (category, distance, page 2 and
+  on) is closed to robots, and Jobnet has no feed, so the app can't watch them. Drag the *Collect jobs* button
+  from Settings → Job sources to your browser's Favourites bar, run the search yourself, and click the bookmark
+  on each page of results. It posts the page you're looking at to the app, which fetches nothing from the site:
+  it reads the jobs on the page (Jobindex, IT-Jobbank and Jobnet by their layout; any other site after asking,
+  with the same link-picking as a watched page), drops the ones it already has and screens the rest. One click
+  takes one page; the bookmark never pages through a site. It carries a private key, so a website can't feed
+  the app listings on its own.
 * **Job alerts by email.** To get every job, with any filter, and from sites the app can't read on its own
   (Ofir forbids robots; Jobnet needs MitID), set up the site's own job alert, have a Mail rule move the
   emails to one mailbox, and add that mailbox under Settings → Job sources → Job alerts by email. The app

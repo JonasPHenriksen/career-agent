@@ -67,7 +67,7 @@ def add(name: str, url: str, kind: str = "auto", interval_minutes: int = 360) ->
 
 
 def due() -> list[dict]:
-    rows = db.q("SELECT * FROM sources WHERE enabled = 1")
+    rows = db.q("SELECT * FROM sources WHERE enabled = 1 AND kind <> 'collect'")  # collected by you, not polled
     out = []
     for s in rows:
         last = db.parse_ts(s["last_run_at"])
@@ -180,6 +180,9 @@ def _store(it: dict, source_id: int, status: str = "new", queue: bool = True) ->
         extra["location"] = it["location"][:200]
     if not readable:
         extra["link_locked"] = 1
+    for key in ("posted_at", "deadline"):  # a results page's card often says both; reading the ad may refine them
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", it.get(key) or ""):
+            extra[key] = it[key]
     if extra:
         db.update("jobs", jid, extra)
     return jid
@@ -245,6 +248,8 @@ def poll(source_id: int) -> dict:
     if src["kind"] == "mail":
         from . import alerts
         return alerts.poll(src)
+    if src["kind"] == "collect":
+        return {"skipped": "collected with the bookmark, not checked automatically"}
     db.update("sources", source_id, {"last_run_at": db.now()})
     try:
         problem = robots.check(src["url"])

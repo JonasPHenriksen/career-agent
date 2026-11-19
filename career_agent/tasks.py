@@ -32,6 +32,7 @@ TASK_LABELS = {
     "followup": "Writing follow-up",
     "classify_response": "Reading employer's reply",
     "poll_source": "Checking job source",
+    "collect_jobs": "Screening jobs you collected",
     "maintenance": "Housekeeping",
     "scan_folder": "Checking a watched folder",
     "embed_index": "Indexing documents for search",
@@ -59,7 +60,7 @@ def enqueue(kind: str, payload: dict | None = None, ref: str | None = None, dedu
 
 
 def _handlers() -> dict:
-    from . import cvdata, jobs, profile, retrieval, review, sources, tracker, voice, watch, writer
+    from . import collect, cvdata, jobs, profile, retrieval, review, sources, tracker, voice, watch, writer
 
     def wait_for_analyses() -> None:
         """Let in-flight document analyses finish so we see everything."""
@@ -101,6 +102,7 @@ def _handlers() -> dict:
         "followup": lambda p: writer.followup(p["application_id"]),
         "classify_response": lambda p: tracker.classify_response(p["application_id"], p["text"]),
         "poll_source": lambda p: sources.poll(p["source_id"]),
+        "collect_jobs": collect.store,
         "maintenance": maintenance,
         "scan_folder": lambda p: watch.scan(p["folder_id"]),
         "embed_index": lambda p: retrieval.embed_pending(),
@@ -200,10 +202,10 @@ def is_transient(e: Exception) -> bool:
 TASK_STEPS = {
     "draft_application": ("letter", "cv", "fact_check"), "revise_application": ("letter", "cv", "fact_check"),
     "check_application": ("fact_check",), "interview_prep": ("prep",), "followup": ("letter",), "build_style": ("style",),
-    "build_cv_base": ("cv",), "check_cv_base": ("fact_check",), "rescreen_jobs": ("screen",), "parse_job": ("read_ad",), "score_job": ("score",), "poll_source": ("screen",),
+    "build_cv_base": ("cv",), "check_cv_base": ("fact_check",), "rescreen_jobs": ("screen",), "parse_job": ("read_ad",), "score_job": ("score",), "poll_source": ("screen",), "collect_jobs": ("screen",),
     "analyze_document": ("read_document",), "consolidate_facts": ("read_document",), "classify_response": ("reply",),
 }
-FETCH_TASKS = {"poll_source", "parse_job"}
+FETCH_TASKS = {"poll_source", "parse_job", "collect_jobs"}
 NEED_LABELS = {"ollama": "Ollama (the local models)", "network": "an internet connection",
                "claude_code": "Claude (your plan's usage limit)", "anthropic": "the Claude API",
                "openai": "the model server"}
