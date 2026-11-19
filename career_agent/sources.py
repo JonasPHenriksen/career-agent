@@ -17,8 +17,8 @@ TRIAGE_BATCH = 40
 MAX_PAGES = 5
 PAGE_PAUSE = 1.5  # seconds between page fetches from the same site
 FILTERED_NOTE = "Filtered out by quick screening. Open it and press Analyse to look anyway."
-UNREADABLE_NOTE = ("From a job alert. The site doesn't let the app open this link on its own, so the ad wasn't read "
-                   "or scored. Open it and paste the ad text to have it read.")
+UNREADABLE_NOTE = ("The site doesn't let the app open this link on its own, so the ad wasn't read or scored. Open it "
+                   "and paste the ad text to have it read.")
 
 PAGE_SCHEMA = J.obj(jobs=J.arr(J.obj(
     n=J.i("The [n] number of the link"),
@@ -99,7 +99,7 @@ def _rss_items(content: bytes, feed_url: str) -> list[dict]:
 
 
 def pick_jobs(links: list[dict], header: str, system: str = PAGE_SYSTEM) -> list[dict]:
-    """Ask the model which of these links lead to single job ads (a results page, or a job-alert email)."""
+    """Ask the model which of these links lead to single job ads on a results page."""
     if not links:
         return []
     lines = [f"[{n}] {l['text']} → {l['url']}" + (f"  (context: {l['context']})" if l["context"] else "")
@@ -208,8 +208,8 @@ def _screen_and_store(batch: list[dict], source_id: int) -> int:
         if same:
             repeats.append((it, same))
             continue
-        # Within one batch everything comes from one place: only job-alert copies (whose links differ from email
-        # to email) can be the same job twice.
+        # Within one batch everything comes from one place: only copies whose links the app may not open (tracking
+        # links that differ each time) can be the same job twice.
         key = jobs.same_key(it["company"], it["title"])
         twin = next((n for n, w in enumerate(wanted) if key and not (readable and w.get("readable", True))
                      and jobs.same_name(w["company"], w["title"], it["company"], it["title"])
@@ -226,8 +226,8 @@ def _screen_and_store(batch: list[dict], source_id: int) -> int:
             if it.get("readable", True):
                 jobs.retire_locked_copies(jid, it["company"], it["title"], it.get("location"))
             else:
-                # A link the site doesn't let robots open (a job alert's tracking link, say) is kept for you to
-                # open; the app doesn't read the ad behind it.
+                # A link the site doesn't let robots open (a LinkedIn ad on Jobnet, say) is kept for you to open;
+                # the app doesn't read the ad behind it.
                 db.update("jobs", jid, {"notes": it.get("note") or UNREADABLE_NOTE})
         else:
             jid = _store(it, source_id, status="filtered", queue=False)
@@ -245,9 +245,6 @@ def poll(source_id: int) -> dict:
     src = db.q1("SELECT * FROM sources WHERE id = ?", (source_id,))
     if not src:
         return {"skipped": "source deleted"}
-    if src["kind"] == "mail":
-        from . import alerts
-        return alerts.poll(src)
     if src["kind"] == "collect":
         return {"skipped": "collected with the bookmark, not checked automatically"}
     db.update("sources", source_id, {"last_run_at": db.now()})

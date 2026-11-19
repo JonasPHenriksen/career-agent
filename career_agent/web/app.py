@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import (alerts, backup, collect, companies, config, cvdata, cvrender, db, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
+from .. import (backup, collect, companies, config, cvdata, cvrender, db, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
                 profile, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
@@ -241,6 +241,7 @@ async def todos_add(request: Request):
 @app.post("/todos/{todo_id}/done")
 def todos_done(request: Request, todo_id: int):
     todos.set_done(todo_id, True)
+    collect.remind()  # ticking off the weekly collect reminder dates the next one
     return go("/#todo", msg="Done. Nice.")
 
 
@@ -1184,9 +1185,10 @@ def settings_page(request: Request):
         bk_error = None
     return render(request, "settings.html", st=st, cfg=settings.get("llm"), auto=settings.get("automation"),
                   w=settings.get("writing"), anthropic_models=llm.ANTHROPIC_MODELS,
-                  sources=db.q("SELECT * FROM sources ORDER BY id"), source_kinds=sources.KINDS, alert_days=alerts.FIRST_READ_DAYS,
+                  sources=db.q("SELECT * FROM sources ORDER BY id"), source_kinds=sources.KINDS,
                   collect_bookmark=collect.bookmark(str(request.base_url)),
                   collect_sites=sorted({name for name, _ in collect.SITES.values()}),
+                  collect_searches=collect.searches(), remind_days=collect.REMIND_DAYS,
                   data_dir=str(config.DATA_DIR), efforts=["low", "medium", "high", "xhigh", "max"],
                   search=retrieval.status(), letter_max=writer.LETTER_MAX,
                   steps=[{"key": k, "label": label, "tier": {"check": writer.check_tier()}.get(tier, tier),
@@ -1454,21 +1456,6 @@ async def sources_add(request: Request):
     return go("/settings#sources", msg="Source added. Checking it now…")
 
 
-@app.post("/sources/add-mail")
-async def sources_add_mail(request: Request):
-    f = await form(request)
-    try:
-        interval = int(f.get("interval") or 360)
-    except ValueError:
-        interval = 360
-    try:
-        sid = alerts.add(f.get("name", ""), f.get("mailbox", ""), interval)
-    except ValueError as e:
-        return go("/settings#alerts", err=str(e))
-    tasks.enqueue("poll_source", {"source_id": sid}, ref=f"source:{sid}")
-    return go("/settings#sources", msg="Job alerts added. Reading the mailbox now… (macOS may ask to let the app use Mail)")
-
-
 # --- Jobs collected from a page you have open (the "Collect jobs" bookmark) ---
 
 @app.get("/collect")
@@ -1512,6 +1499,23 @@ async def collect_confirm(request: Request):
     except ValueError as e:
         result = {"ok": False, "message": str(e)}
     return render(request, "collect.html", result=result)
+
+
+@app.post("/collect/searches/add")
+async def collect_search_add(request: Request):
+    f = await form(request)
+    try:
+        row = collect.add_search(f.get("name", ""), f.get("url", ""))
+    except ValueError as e:
+        return go("/settings#collect-searches", err=str(e))
+    return go("/settings#collect-searches", msg=f"Saved “{row['name']}”. Today reminds you when it's a week since you collected it.")
+
+
+@app.post("/collect/searches/remove")
+async def collect_search_remove(request: Request):
+    f = await form(request)
+    collect.remove_search(f.get("url", ""))
+    return go("/settings#collect-searches", msg="Search removed.")
 
 
 @app.post("/collect/new-key")

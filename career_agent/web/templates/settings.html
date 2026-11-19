@@ -148,7 +148,7 @@
     <tbody>
       {% for s in sources %}
       <tr>
-        <td><strong>{{ s.name }}</strong>{% if not s.enabled %} <span class="pill">paused</span>{% endif %}<div class="small muted" style="word-break:break-all">{% if s.kind == 'mail' %}job alerts in Mail · mailbox “{{ s.url }}”{% elif s.kind == 'collect' %}pages you collect with the bookmark · {{ s.url }}{% else %}{{ s.kind }} · {{ s.url }}{% endif %}</div></td>
+        <td><strong>{{ s.name }}</strong>{% if not s.enabled %} <span class="pill">paused</span>{% endif %}<div class="small muted" style="word-break:break-all">{% if s.kind == 'collect' %}pages you collect with the bookmark · {{ s.url }}{% else %}{{ s.kind }} · {{ s.url }}{% endif %}</div></td>
         <td class="small">{{ s.last_run_at|ago or 'never' }}<div class="muted">{% if s.kind == 'collect' %}when you collect{% else %}every {{ (s.interval_minutes / 60)|round(1) }} h{% endif %}</div></td>
         <td class="num">{{ s.jobs_found }}</td>
         <td class="small">{% if s.last_error %}<span class="pill bad">error</span> {{ s.last_error }}{% else %}{{ s.last_status or '' }}{% endif %}</td>
@@ -182,25 +182,34 @@
     <li>Click <em>Collect jobs</em> in the Favourites bar. One click takes the whole search: on Jobindex and IT-Jobbank it reads every page of results (up to 50, a little apart), and on Jobnet it presses “Indlæs flere job” until all the jobs are showing. A box on the page says how far it has got.</li>
     <li>Press <em>Send to Career Agent</em> in the box. A tab opens, says how many jobs it took, and closes again. (A search with just one page is sent at once.)</li>
   </ol>
-  <p class="small text-2">Made the bookmark before 19 November 2026? Remove it and drag the button again: the old one takes one page per click.</p>
+  <h4 id="collect-searches" style="margin:1.2rem 0 .3rem">Your saved searches</h4>
+  <p class="small text-2">The searches you collect every week. Each opens in a new tab: click <em>Collect jobs</em> there. A to-do on Today reminds you when one hasn't been collected for {{ remind_days }} days and starts the run; after each <em>Send</em>, the page that opens takes you to the next search still to collect. Collecting a search that isn't saved offers to save it.</p>
+  {% if collect_searches %}
+  <div class="table-wrap">
+  <table class="data" style="margin-bottom:.8rem">
+    <thead><tr><th>Search</th><th>Last collected</th><th></th></tr></thead>
+    <tbody>
+      {% for s in collect_searches %}
+      <tr>
+        <td><a href="{{ s.url }}" target="_blank" rel="noopener noreferrer"><strong>{{ s.name }}</strong></a><div class="small muted" style="word-break:break-all">{{ s.url }}</div></td>
+        <td class="small">{{ s.last_at|ago or 'never' }}</td>
+        <td><form method="post" action="/collect/searches/remove" class="inline" data-confirm="Remove this saved search?"><input type="hidden" name="url" value="{{ s.url }}"><button class="btn small ghost danger">Remove</button></form></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+  <form method="post" action="/collect/searches/add">
+    <div class="fields-2">
+      <div class="field"><label for="cs-name">Name <span class="hint">· optional</span></label><input id="cs-name" type="text" name="name" placeholder="Jobnet – IT, 50 km"></div>
+      <div class="field"><label for="cs-url">Address of the search results page</label><input id="cs-url" type="url" name="url" placeholder="https://jobnet.dk/find-job?…" required></div>
+    </div>
+    <button class="btn" data-busy="Saving…">Save search</button>
+  </form>
+  <p class="small text-2" style="margin-top:1rem">Made the bookmark before 19 November 2026? Remove it and drag the button again: the old one takes one page per click.</p>
   <p class="small text-2">Read by their layout: {{ collect_sites|join(', ') }}. On any other site the app asks first, then picks out the job links like it does for a watched results page. LinkedIn's terms forbid collecting with scripts, so paste LinkedIn links by hand.</p>
   <form method="post" action="/collect/new-key" class="small text-2" data-confirm="Make a new key? The bookmark you have now stops working until you drag the button to the Favourites bar again.">The bookmark carries a private key, so only a page you click it on can hand the app a page. <button class="btn small ghost">Make a new key</button></form>
-
-  <h3 id="alerts" style="margin-top:1.6rem">Job alerts by email</h3>
-  <p class="small text-2">The job sites' own alerts send you every new job that matches, with any filters you like (distance included), and nothing is missed while this Mac is off. The app reads them from a mailbox in Apple Mail; it never logs in to the sites.</p>
-  <ol class="small text-2">
-    <li>Create a job alert (Jobagent) on the site: <a href="https://www.jobindex.dk" target="_blank" rel="noopener noreferrer">Jobindex</a>, <a href="https://www.ofir.dk" target="_blank" rel="noopener noreferrer">Ofir</a>, or <a href="https://jobnet.dk" target="_blank" rel="noopener noreferrer">Jobnet</a> (log in with MitID yourself). Choose daily emails.</li>
-    <li>In Mail, make a top-level mailbox, for example “Job alerts”, and a rule (Mail → Settings → Rules) that moves emails from the sites there.</li>
-    <li>Add the mailbox here. The first check reads the last {{ alert_days }} days.</li>
-  </ol>
-  <form method="post" action="/sources/add-mail">
-    <div class="fields-3">
-      <div class="field"><label for="aname">Name</label><input id="aname" type="text" name="name" placeholder="Jobindex, Ofir and Jobnet alerts"></div>
-      <div class="field"><label for="abox">Mailbox in Mail</label><input id="abox" type="text" name="mailbox" placeholder="Job alerts" required></div>
-      <div class="field"><label for="aint">Check every</label><select id="aint" name="interval"><option value="120">2 hours</option><option value="360" selected>6 hours</option><option value="720">12 hours</option><option value="1440">day</option></select></div>
-    </div>
-    <button class="btn primary" data-busy="Adding…">Add job alerts</button>
-  </form>
 </section>
 
 <section class="card" id="automation">

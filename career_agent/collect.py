@@ -14,12 +14,13 @@ import json
 import re
 import secrets
 import time
+from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import parse_qs, parse_qsl, unquote, urlencode, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from . import alerts, config, db, fetch, settings, sources, tasks
+from . import config, db, fetch, robots, settings, sources, tasks, todos
 
 KIND = "collect"
 MAX_HTML = 8_000_000  # characters: a results page is 0.1-2 MB
@@ -126,6 +127,30 @@ def extract(html: str, page_url: str) -> list[dict] | None:
     return out[:MAX_ITEMS]
 
 
+def _unwrapped(url: str) -> list[str]:
+    """Addresses a tracking link carries inside it: a full address in its query, or (on Jobindex) the ad's id,
+    whose own page /vis-job/<id> is open to robots."""
+    p = urlparse(url)
+    out = []
+    for _, value in parse_qsl(p.query, keep_blank_values=True):
+        v = unquote(value)
+        if v.startswith(("http://", "https://")):
+            out.append(v)
+        elif p.netloc.lower().endswith("jobindex.dk") and re.fullmatch(r"[hr]\d{5,9}", v):
+            out.append(f"https://www.jobindex.dk/vis-job/{v}")
+    return out
+
+
+def readable_link(url: str) -> str | None:
+    """The address to read this ad from without breaking the site's rules, or None if there isn't one."""
+    if robots.allowed(url):
+        return url
+    for inner in _unwrapped(url):
+        if robots.allowed(inner):
+            return inner
+    return None
+
+
 def _site_name(page_url: str) -> str:
     site = site_for(page_url)
     return site[0] if site else (urlparse(page_url).hostname or "").removeprefix("www.")
@@ -212,14 +237,16 @@ def receive(html: str, page_url: str, pages: int = 1) -> dict:
                            "If it is, the site has changed its layout and the collector needs adjusting."}
     fresh = [it for it in items if not db.q1("SELECT 1 FROM jobs WHERE url = ?", (fetch.canonical_url(it["url"]),))]
     n, k = len(items), len(fresh)
+    saved = mark_collected(page_url)
+    chain = _chain() if saved else {}
     if not fresh:
-        return {"ok": True, "site": name, "found": n, "new": 0,
+        return {"ok": True, "site": name, "found": n, "new": 0, "saved": saved, "page_url": page_url, **chain,
                 "message": f"{where}: {n} job{'s' if n != 1 else ''} {on}, all already in Career Agent."}
     sid = source_for(page_url)
     step = sources.MAX_NEW_PER_RUN  # a whole search can be more than one queue task screens
     for i in range(0, k, step):
         tasks.enqueue("collect_jobs", {"source_id": sid, "page_url": page_url, "items": fresh[i:i + step]}, ref=f"source:{sid}")
-    return {"ok": True, "site": name, "found": n, "new": k,
+    return {"ok": True, "site": name, "found": n, "new": k, "saved": saved, "page_url": page_url, **chain,
             "message": f"{where}: {n} job{'s' if n != 1 else ''} {on}, {k} new. The new ones are being "
                        "screened now; the ones that fit show up under Jobs."}
 
@@ -251,7 +278,7 @@ def store(payload: dict) -> dict:
         path.unlink(missing_ok=True)
     note = LOCKED_NOTE.format(site=_site_name(page_url))
     for it in items:
-        good = alerts.readable_link(it["url"])
+        good = readable_link(it["url"])
         if good:
             it["url"] = good
         else:
@@ -267,6 +294,118 @@ def store(payload: dict) -> dict:
                                    "last_status": f"{len(items)} listings, {len(fresh)} new, {kept} kept for review",
                                    "jobs_found": (src["jobs_found"] or 0) + kept})
     return {"listings": len(items), "new": len(fresh), "kept": kept}
+
+
+# --- Your saved searches and the weekly reminder to collect them ---
+# The app may not check a filtered search on its own, so new jobs there only arrive when you collect it. The searches
+# you run each week are saved here with when you last collected them, and a to-do on Today reminds you when one
+# hasn't been collected for a week.
+
+SEARCHES = "collect_searches"
+REMIND_DAYS = 7
+REMIND_TITLE = "Collect new jobs from your saved searches"
+REMIND_DETAIL = ("The job sites don't let the app check these searches on its own. Open each one and click the "
+                 "*Collect jobs* bookmark there. Your searches are under [Settings → Job sources](/settings#collect).")
+
+
+def search_key(url: str) -> str:
+    """The same search whatever page you're on and however the site orders the address."""
+    p = urlparse((url or "").strip())
+    query = sorted((k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if k != "page")
+    return f"{(p.hostname or '').lower().removeprefix('www.')}{p.path.rstrip('/')}?{urlencode(query)}"
+
+
+def searches() -> list[dict]:
+    return [dict(s) for s in (settings.get(SEARCHES) or []) if isinstance(s, dict) and s.get("url")]
+
+
+def _save(rows: list[dict]) -> None:
+    settings.set(SEARCHES, rows)
+    remind()
+
+
+def add_search(name: str, url: str) -> dict:
+    url = " ".join((url or "").split())
+    if not url.startswith(("http://", "https://")) or not urlparse(url).hostname:
+        raise ValueError("Paste the address of the search results page, starting with https://.")
+    rows = searches()
+    if any(search_key(s["url"]) == search_key(url) for s in rows):
+        raise ValueError("That search is already saved.")
+    row = {"name": (" ".join((name or "").split()) or f"{_site_name(url)} search")[:120], "url": url[:2000],
+           "last_at": None}
+    _save(rows + [row])
+    return row
+
+
+def remove_search(url: str) -> None:
+    _save([s for s in searches() if search_key(s["url"]) != search_key(url)])
+
+
+def mark_collected(page_url: str) -> bool:
+    """Note that a saved search was just collected. True when the page is one of your saved searches."""
+    rows, hit = searches(), False
+    for s in rows:
+        if search_key(s["url"]) == search_key(page_url):
+            s["last_at"], hit = db.now(), True
+    if hit:
+        _save(rows)
+    return hit
+
+
+def _collected_on(row: dict) -> date | None:
+    ts = db.parse_ts(row.get("last_at"))
+    return ts.date() if ts else None
+
+
+def due_searches(today: date | None = None) -> list[dict]:
+    """Saved searches not collected in the last week, oldest first (never collected first of all)."""
+    today = today or date.today()
+    out = [s for s in searches() if not _collected_on(s) or _collected_on(s) <= today - timedelta(days=REMIND_DAYS)]
+    return sorted(out, key=lambda s: s.get("last_at") or "")
+
+
+def remind(today: date | None = None) -> None:
+    """Keep one to-do on Today for collecting your saved searches, dated the day the first of them turns a week
+    old: it waits under Coming up until then and is shown (with one notification) on the day. Collecting them all
+    moves it a week on; ticking it off without collecting waits a week before reminding again."""
+    today = today or date.today()
+    rows = searches()
+    open_ = db.q1("SELECT * FROM todos WHERE check_kind = 'collect' AND done_at IS NULL ORDER BY id")
+    if not rows:
+        if open_:
+            todos.delete(open_["id"])
+        return
+    due = min((_collected_on(s) + timedelta(days=REMIND_DAYS)) if _collected_on(s) else today for s in rows)
+    if not open_:
+        last_done = db.parse_ts(db.scalar("SELECT MAX(done_at) FROM todos WHERE check_kind = 'collect'"))
+        if last_done:
+            due = max(due, last_done.date() + timedelta(days=REMIND_DAYS))
+        todos.add(REMIND_TITLE, REMIND_DETAIL, show_from=max(due, today).isoformat(), check_kind="collect")
+        return
+    if due > today:
+        show_from = due.isoformat()
+    else:  # due now: keep the day it first showed, or show it today if it was still waiting
+        show_from = min(open_["show_from"] or today.isoformat(), today.isoformat())
+    if show_from != open_["show_from"]:
+        db.update("todos", open_["id"], {"show_from": show_from, "notified_at": None})
+
+
+def next_search(today: date | None = None) -> dict | None:
+    """The next saved search to collect this week, in the order of your list."""
+    due = {search_key(s["url"]) for s in due_searches(today)}
+    return next((s for s in searches() if search_key(s["url"]) in due), None)
+
+
+def _chain() -> dict:
+    """After collecting a saved search: the next one still to collect this week, so a weekly run is one click after
+    another, and how many are left."""
+    return {"next": next_search(), "left": len(due_searches())}
+
+
+def search_links(today: date | None = None) -> list[dict]:
+    """The saved searches for the reminder on Today: name, address and when you last collected each."""
+    due = {search_key(s["url"]) for s in due_searches(today)}
+    return [{**s, "due": search_key(s["url"]) in due} for s in searches()]
 
 
 _BOOKMARK_JS = Path(__file__).with_name("collect_bookmark.js")

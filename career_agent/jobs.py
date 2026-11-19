@@ -281,7 +281,7 @@ def parse(job_id: int, use_text: bool = False) -> dict:
 
     title = d["title"] or (jsonld or {}).get("title") or job["title"] or page_title
     company = d["company"] or (jsonld or {}).get("company") or job["company_name"]
-    # An ad that states no dates keeps the ones its results page or job alert gave.
+    # An ad that states no dates keeps the ones its results page gave.
     deadline = _iso_date(d["deadline"]) or _iso_date((jsonld or {}).get("validThrough")) or job["deadline"]
     posted = _iso_date((jsonld or {}).get("datePosted")) or _iso_date(d["posted_at"]) or job["posted_at"]
     company_id = companies.upsert(company, website=d["company_website"] or (jsonld or {}).get("company_url"),
@@ -365,7 +365,7 @@ def same_ad_text(a: str | None, b: str | None) -> bool:
 
 
 # --- The same job from several places ------------------------------------------------------------------------
-# A job is often on Jobindex, Akademikernes Jobbank, the employer's own page and in a job-alert email. The first
+# A job is often on Jobindex, Akademikernes Jobbank, Jobnet and the employer's own page. The first
 # copy is kept; the others are set aside as repeats of it (duplicate_of), before any model sees them when the
 # listing names the company, otherwise right after the ad is read.
 REPEAT_DAYS = 21  # same company and title within three weeks = the same posting; later = re-posted (see parse)
@@ -435,7 +435,7 @@ def _copies(company: str | None, title: str | None, exclude_id: int | None = Non
 
 def _other_place(a_source: int | None, a_locked: bool, b_source: int | None, b_locked: bool) -> bool:
     """Copies found in two different places. One site listing two ads with the same title usually means two jobs
-    (the text check after reading catches a real repeat there); job-alert emails are the exception, since their
+    (the text check after reading catches a real repeat there); links the app may not open are the exception, since
     links change from email to email."""
     return a_source is None or b_source is None or a_source != b_source or a_locked or b_locked
 
@@ -477,7 +477,7 @@ def _protected(job: dict) -> bool:
 
 
 def retire_locked_copies(job_id: int, company: str | None, title: str | None, location: str | None) -> int:
-    """A copy from a job-alert email whose link the app may not open gives way to a copy it can read."""
+    """A copy whose link the app may not open gives way to a copy it can read."""
     if not same_key(company, title):
         return 0
     n = 0

@@ -206,7 +206,8 @@ def test_the_bookmark_posts_from_the_job_site_and_needs_its_key(fake):
     assert "out of date" in wrong.text and db.scalar("SELECT COUNT(*) FROM tasks") == 0
 
     r = c.post("/collect/take", data={**body, "token": collect.token()}, headers=site)
-    assert r.status_code == 200 and "2 jobs on the page, 2 new" in r.text and 'data-close="1"' in r.text
+    assert r.status_code == 200 and "2 jobs on the page, 2 new" in r.text
+    assert 'data-close=""' in r.text and "Save this search" in r.text, "a search that isn't saved stays open to offer it"
     assert db.scalar("SELECT COUNT(*) FROM tasks WHERE kind = 'collect_jobs'") == 1
 
     # A long results page (Jobnet after "Indlæs flere job") is past the 1 MB a form field may be by default.
@@ -270,3 +271,111 @@ def test_the_page_count_comes_along_with_the_post(fake):
     assert "Jobindex, 14 pages: 2 jobs in the search" in r.text
     r = c.post("/collect/take", data={**body, "pages": "lots"}, headers={"origin": "https://www.jobindex.dk"})
     assert "Jobindex: 2 jobs on the page" in r.text
+
+
+def test_a_saved_search_is_the_same_search_on_any_page_and_in_any_order():
+    a = "https://www.jobindex.dk/jobsoegning?address=8700+Horsens&radius=50&subid=1&subid=11"
+    assert collect.search_key(a) == collect.search_key("https://jobindex.dk/jobsoegning/?subid=11&radius=50&subid=1&address=8700+Horsens&page=3")
+    assert collect.search_key(a) != collect.search_key(a.replace("subid=11", "subid=122"))
+
+
+def test_saved_searches_are_marked_when_collected_and_kept_once(fake):
+    url = "https://www.jobindex.dk/jobsoegning/it?address=8700+Horsens&radius=50"
+    collect.add_search("Jobindex IT", url)
+    with pytest.raises(ValueError, match="already saved"):
+        collect.add_search("Again", url + "&page=2")
+    with pytest.raises(ValueError, match="https://"):
+        collect.add_search("", "jobindex.dk")
+    assert collect.add_search("", "https://jobnet.dk/find-job?occupationAreas=110000")["name"] == "Jobnet search"
+    assert [s["last_at"] for s in collect.searches()] == [None, None]
+
+    r = collect.receive(JOBINDEX_PAGE, url + "&page=2")
+    assert r["saved"] is True and collect.searches()[0]["last_at"] and collect.searches()[1]["last_at"] is None
+    assert collect.receive(JOBINDEX_PAGE, "https://www.jobindex.dk/jobsoegning?q=python")["saved"] is False
+    collect.remove_search(url)
+    assert [s["name"] for s in collect.searches()] == ["Jobnet search"]
+
+
+def _reminder():
+    return db.q1("SELECT * FROM todos WHERE check_kind = 'collect' AND done_at IS NULL")
+
+
+def test_the_weekly_reminder_waits_for_the_oldest_search_and_moves_on_when_all_are_collected(fake):
+    from datetime import date, timedelta
+
+    from career_agent import settings, todos
+
+    today = date.today()
+    collect.add_search("Jobindex IT", "https://www.jobindex.dk/jobsoegning/it?radius=50")
+    collect.add_search("Jobnet IT", "https://jobnet.dk/find-job?occupationAreas=110000")
+    todo = _reminder()
+    assert todo["title"] == collect.REMIND_TITLE and todo["show_from"] == today.isoformat(), "never collected: due now"
+    now = todos.lists()["now"]
+    assert now[0]["progress"] == "0 of 2 saved searches collected in the last 7 days"
+    assert [s["name"] for s in now[0]["searches"]] == ["Jobindex IT", "Jobnet IT"]
+
+    collect.mark_collected("https://www.jobindex.dk/jobsoegning/it?radius=50")
+    assert _reminder()["show_from"] == today.isoformat(), "one search still waits"
+    db.update("todos", todo["id"], {"notified_at": db.now()})
+    collect.mark_collected("https://jobnet.dk/find-job?occupationAreas=110000")
+    moved = _reminder()
+    assert moved["show_from"] == (today + timedelta(days=7)).isoformat() and moved["notified_at"] is None
+    assert todos.lists()["later"][0]["id"] == todo["id"]
+
+    # A search collected nine days ago makes it due again: it shows today.
+    rows = collect.searches()
+    rows[0]["last_at"] = db.days_ago(9)
+    settings.set(collect.SEARCHES, rows)
+    collect.remind()
+    assert _reminder()["show_from"] == today.isoformat()
+
+    # Ticked off without collecting: the next one waits a week.
+    todos.set_done(todo["id"])
+    collect.remind()
+    assert _reminder()["show_from"] == (today + timedelta(days=7)).isoformat()
+    # No saved searches, no reminder.
+    for s in collect.searches():
+        collect.remove_search(s["url"])
+    assert _reminder() is None
+
+
+def test_the_pages_show_saved_searches_and_offer_to_save_a_new_one(fake):
+    c = TestClient(app)
+    local, site = {"origin": "http://testserver"}, {"origin": "https://www.jobindex.dk"}
+    url = "https://www.jobindex.dk/jobsoegning/it?address=8700+Horsens&radius=50"
+    r = c.post("/collect/take", data={"url": url, "html": JOBINDEX_PAGE, "token": collect.token()}, headers=site)
+    assert "Save this search for the weekly reminder" in r.text and 'data-close=""' in r.text
+
+    r = c.post("/collect/searches/add", data={"name": "Jobindex IT, 50 km", "url": url}, headers=local)
+    assert "Saved “Jobindex IT, 50 km”" in r.text and "Your saved searches" in r.text and "never" in r.text
+    assert "already saved" in c.post("/collect/searches/add", data={"url": url}, headers=local).text
+    r = c.post("/collect/take", data={"url": url, "html": JOBINDEX_PAGE, "token": collect.token()}, headers=site)
+    assert "Save this search" not in r.text and 'data-close="1"' in r.text
+
+    today = c.get("/").text  # collected just now: the reminder waits a week
+    assert collect.REMIND_TITLE in today.split("Coming up")[1]
+    r = c.post("/collect/searches/remove", data={"url": url}, headers=local)
+    assert "Search removed." in r.text and "Jobindex IT, 50 km" not in r.text
+
+
+def test_collecting_a_saved_search_leads_on_to_the_next_one_still_to_collect(fake):
+    c = TestClient(app)
+    site = {"origin": "https://www.jobindex.dk"}
+    first = "https://www.jobindex.dk/jobsoegning/it?address=8700+Horsens&radius=50"
+    second = "https://jobnet.dk/find-job?postalCode=8700&occupationAreas=110000"
+    collect.add_search("Jobindex IT", first)
+    collect.add_search("Jobnet IT", second)
+    assert collect.next_search()["name"] == "Jobindex IT"
+    today = c.get("/").text
+    assert f'href="{first.replace("&", "&amp;")}"' in today and "Start: Jobindex IT →" in today
+
+    r = collect.receive(JOBINDEX_PAGE, first)
+    assert r["next"]["name"] == "Jobnet IT" and r["left"] == 1
+    page = c.post("/collect/take", data={"url": first, "html": JOBINDEX_PAGE, "token": collect.token()}, headers=site).text
+    assert f'href="{second.replace("&", "&amp;")}">Next: Jobnet IT →' in page and "1 of your saved searches left" in page
+    assert 'data-close=""' in page, "the tab stays open so the next search is one click away"
+
+    collect.mark_collected(second)
+    page = c.post("/collect/take", data={"url": first, "html": JOBINDEX_PAGE, "token": collect.token()}, headers=site).text
+    assert "Next:" not in page and "the last of your saved searches this week" in page and 'data-close="1"' in page
+    assert "Start:" not in c.get("/").text

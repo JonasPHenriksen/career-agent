@@ -85,8 +85,8 @@ def test_one_site_with_two_ads_of_the_same_title_keeps_both(fake):
     assert _job("https://x.example/3")["duplicate_of"] is None
 
 
-def test_the_same_job_in_two_alert_emails(fake):
-    mail = _source("mail")
+def test_the_same_job_twice_behind_links_the_app_may_not_open(fake):
+    mail = _source("collected")
     sources._screen_and_store([_item("https://track.example/a", readable=False),
                                _item("https://track.example/b", readable=False)], mail)
     one, two = _job("https://track.example/a"), _job("https://track.example/b")
@@ -103,8 +103,8 @@ def test_a_dismissed_copy_does_not_hide_a_new_one(fake):
     assert _job("https://jobbank.example/2")["duplicate_of"] is None
 
 
-def test_an_alert_copy_never_stands_in_for_one_the_app_can_read(fake):
-    mail, feed = _source("mail"), _source("feed")
+def test_a_locked_copy_never_stands_in_for_one_the_app_can_read(fake):
+    mail, feed = _source("collected"), _source("feed")
     sources._screen_and_store([_item("https://track.example/c?x=1", readable=False)], mail)
     locked = _job("https://track.example/c?x=1")
     assert locked["link_locked"] == 1 and locked["parse_status"] == "skipped" and locked["status"] == "new"
@@ -115,7 +115,7 @@ def test_an_alert_copy_never_stands_in_for_one_the_app_can_read(fake):
     locked = _job("https://track.example/c?x=1")
     assert locked["status"] == "filtered" and locked["duplicate_of"] == readable["id"]
 
-    # And a later alert copy of a job that's already here is only a repeat.
+    # And a later locked copy of a job that's already here is only a repeat.
     sources._screen_and_store([_item("https://track.example/c?x=2", readable=False)], mail)
     assert _job("https://track.example/c?x=2")["duplicate_of"] == readable["id"]
 

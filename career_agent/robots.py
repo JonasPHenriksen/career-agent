@@ -92,15 +92,15 @@ def explain(url: str, rule: str) -> str:
     query = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
     hint = ""
     if rule.strip("/") == "" or rule == "/":
-        hint = (f" {host} doesn't allow automated access at all. Set up the site's own job alert by email "
-                "instead and add it under Job alerts by email.")
+        hint = (f" {host} doesn't allow automated access at all. Open the search yourself and collect it with "
+                "the Collect jobs bookmark (Settings → Job sources).")
     elif "page=" in rule:
-        hint = " Take out the page number; to see older jobs, use the site's job alert by email."
+        hint = " Take out the page number; to get every page, collect the search with the Collect jobs bookmark."
     elif "+*+" in rule:
         hint = " Use at most two search words (one + between them), or split it into two searches."
     elif any(k in rule for k in ("radius=", "geoareaid=")):
         hint = (" Distance and municipality filters aren't allowed for robots; pick a region instead "
-                "(on Jobindex: area=storkbh, for example), or use the site's job alert by email.")
+                "(on Jobindex: area=storkbh, for example), or collect the search with the Collect jobs bookmark.")
     elif "&*&" in rule or rule.endswith("?*&") or ("&" in url and len(query) > 2):
         hint = " Use fewer filters in the address: a search word and a region, for example."
     return f"{host} doesn't let robots read this address (rule: Disallow: {rule}).{hint}"

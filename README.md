@@ -91,14 +91,10 @@ job sources ──► quick screening ──► read the ad ──► fit score 
   *Send to Career Agent* when it's done. The app fetches nothing from the site: it reads the jobs (Jobindex,
   IT-Jobbank and Jobnet by their layout; any other site after asking, with the same link-picking as a watched
   page), drops the ones it already has and screens the rest. It carries a private key, so a website can't feed
-  the app listings on its own.
-* **Job alerts by email.** To get every job, with any filter, and from sites the app can't read on its own
-  (Ofir forbids robots; Jobnet needs MitID), set up the site's own job alert, have a Mail rule move the
-  emails to one mailbox, and add that mailbox under Settings → Job sources → Job alerts by email. The app
-  reads the emails through Apple Mail (macOS asks once for permission), picks out the jobs and screens them
-  like any other source. Links are only followed where the site's robots.txt allows; Jobindex's tracking
-  links are turned into the ad's own page where the link carries its id, and any other forbidden link is kept
-  for you to open and paste.
+  the app listings on its own. Save the searches you run each week under Settings → Job sources (or from the
+  page that opens after collecting): a to-do on Today lists them with links and comes back when one hasn't been
+  collected for a week. After each *Send*, the page that opens links straight to the next search still to collect,
+  so the weekly run is one search after another.
 * **Kinds of job you don't want.** Under Profile → About you, switch off student jobs, internships, part-time,
   temporary, freelance, research posts or volunteer work. Those are set aside by their title before any model
   sees them, so they cost no time or tokens. A job you added by hand, chose to keep or have an application for

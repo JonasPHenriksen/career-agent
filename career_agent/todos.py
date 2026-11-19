@@ -11,7 +11,7 @@ from datetime import date
 
 from . import db, notify
 
-CHECKS = ("facts",)
+CHECKS = ("facts", "collect")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -43,6 +43,12 @@ def progress(item: dict) -> str:
         total = db.scalar("SELECT COUNT(*) FROM facts WHERE hidden = 0") or 0
         ticked = db.scalar("SELECT COUNT(*) FROM facts WHERE hidden = 0 AND verified = 1") or 0
         return f"{ticked} of {total} facts ticked"
+    if item.get("check_kind") == "collect":
+        from . import collect
+
+        rows = collect.searches()
+        fresh = len(rows) - len(collect.due_searches())
+        return f"{fresh} of {len(rows)} saved searches collected in the last {collect.REMIND_DAYS} days"
     return ""
 
 
@@ -54,6 +60,10 @@ def lists(today: str | None = None) -> dict:
     later = sorted((r for r in rows if r["show_from"] and r["show_from"] > today), key=lambda r: r["show_from"])
     for r in now:
         r["progress"] = progress(r)
+        if r.get("check_kind") == "collect":
+            from . import collect
+
+            r["searches"] = collect.search_links()
     done = db.q("SELECT * FROM todos WHERE done_at IS NOT NULL ORDER BY done_at DESC, id DESC LIMIT 5")
     return {"now": now, "later": later, "done": done}
 

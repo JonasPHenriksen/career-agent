@@ -2,7 +2,9 @@
 {% block title %}Collect jobs{% endblock %}
 {% block content %}
 <h1>Collect jobs</h1>
-<section class="card" id="collect-box" data-close="{{ '1' if result and result.ok and not result.ask else '' }}">
+{% set offer_save = result and result.ok and result.found and result.page_url and not result.saved %}
+{% set chain_next = result and result.ok and result.saved and result.next %}
+<section class="card" id="collect-box" data-close="{{ '1' if result and result.ok and not result.ask and not offer_save and not chain_next else '' }}">
   {% if not result %}
   <p>This page shows what the <em>Collect jobs</em> bookmark took from a job site. Open a job search results page and click the bookmark there.</p>
   {% else %}
@@ -14,6 +16,19 @@
     <a class="btn ghost" href="/jobs">No, leave it</a>
   </form>
   {% else %}
+  {% if offer_save %}
+  <form method="post" action="/collect/searches/add" class="row" style="margin:.4rem 0 .8rem">
+    <input type="hidden" name="url" value="{{ result.page_url }}">
+    <input type="text" name="name" value="{{ result.site }} search" aria-label="Name of the search" style="max-width:18rem">
+    <button class="btn" data-busy="Saving…">Save this search for the weekly reminder</button>
+  </form>
+  {% endif %}
+  {% if chain_next %}
+  <p style="margin:.4rem 0 .8rem"><a class="btn primary" href="{{ result.next.url }}">Next: {{ result.next.name }} →</a>
+    <span class="small text-2">{{ result.left }} of your saved searches left this week. Click <em>Collect jobs</em> there too.</span></p>
+  {% elif result.saved %}
+  <p class="small text-2">That was the last of your saved searches this week. The reminder on Today waits until next week.</p>
+  {% endif %}
   <p class="small text-2" id="collect-closing" hidden>This tab closes in <span id="collect-left">4</span> s. <a href="#" id="collect-keep">Keep it open</a></p>
   <p class="small text-2"><a href="/jobs">Go to Jobs</a> · <a href="/tasks">See the queue</a></p>
   {% endif %}
