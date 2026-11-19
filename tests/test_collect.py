@@ -40,6 +40,22 @@ JOBINDEX_PAGE = """
 </div><a href="/jobsoegning?q=embedded&page=2">2</a></body></html>
 """
 
+# IT-Jobbank's results page (November 2026): the same wrappers as Jobindex, with its own card inside and no date.
+ITJOBBANK_PAGE = """
+<html><body>
+<div id="jobad-wrapper-h1717546" data-jobsearch_position="1"><div><div class="jobsearch-result"><div class="result">
+  <header class="job-header"><div class="job-info"><div class="job-place">
+    <div class="job-company">Falcon Fondsmæglerselskab A/S </div> <span class="job-location">Aarhus C</span>
+    <span class="jobad-element-distance"><span class="job-distance">40 km</span><span class="job-distance-dropdown">
+      <ul><li data-type="car">40&nbsp;min</li><li data-type="transit">60&nbsp;min</li></ul></span></span>
+  </div></div></header>
+  <h3 class="job-title"><a href="https://www.it-jobbank.dk/jobannonce/h1717546/senior-softwareudvikler">Senior Softwareudvikler</a></h3>
+  <div class="job-body"><p>Vi søger en erfaren softwareudvikler.</p><p>Du sætter den tekniske retning.</p></div>
+  <footer class="job-footer"><span class="jobad-element-share"><a data-share-title="Senior Softwareudvikler" href="#">Del</a></span></footer>
+</div></div></div></div>
+</body></html>
+"""
+
 # Jobnet's find-job page: cards with hashed class endings that link straight to the employer or to LinkedIn.
 JOBNET_PAGE = """
 <html><body><main>
@@ -82,6 +98,14 @@ def test_jobindex_cards_are_read_by_their_layout():
     assert first["location"] == "Horsens" and first["posted_at"] == "2026-11-18"
     assert first["text"] == "Du skriver firmware i C til vores styringer. Du bliver en del af et team på otte."
     assert items[1]["company"] == "Vestby Kommune" and items[1]["location"] == "Vejle"
+
+
+def test_it_jobbank_cards_are_read_by_their_layout():
+    items = collect.extract(ITJOBBANK_PAGE, "https://www.it-jobbank.dk/jobsoegning?address=8700+Horsens&radius=50")
+    assert [(it["url"], it["title"], it["company"], it["location"]) for it in items] == [
+        ("https://www.it-jobbank.dk/vis-job/h1717546", "Senior Softwareudvikler", "Falcon Fondsmæglerselskab A/S", "Aarhus C")]
+    assert items[0]["text"] == "Vi søger en erfaren softwareudvikler. Du sætter den tekniske retning."
+    assert items[0]["posted_at"] == ""
 
 
 def test_jobnet_cards_are_read_by_their_layout():
@@ -185,6 +209,11 @@ def test_the_bookmark_posts_from_the_job_site_and_needs_its_key(fake):
     assert r.status_code == 200 and "2 jobs on the page, 2 new" in r.text and 'data-close="1"' in r.text
     assert db.scalar("SELECT COUNT(*) FROM tasks WHERE kind = 'collect_jobs'") == 1
 
+    # A long results page (Jobnet after "Indlæs flere job") is past the 1 MB a form field may be by default.
+    long_page = JOBINDEX_PAGE.replace("</body>", "<p>" + "æøå " * 400_000 + "</p></body>")
+    big = c.post("/collect/take", data={**body, "html": long_page, "token": collect.token()}, headers=site)
+    assert big.status_code == 200 and "Jobindex: 2 jobs on the page" in big.text
+
     bad = c.post("/collect/take", data={"url": "javascript:alert(1)", "html": "<p>x</p>", "token": collect.token()}, headers=site)
     assert "isn&#39;t a web page" in bad.text and 'data-close=""' in bad.text
     # Every other address still refuses a post from another site.
@@ -210,10 +239,34 @@ def test_settings_offers_the_bookmark_and_lists_collected_sites(fake):
     c = TestClient(app)
     page = c.get("/settings").text
     key = collect.token()
-    assert 'href="javascript:(function(){var A=&#39;http://testserver&#39;,d=document;' in page and key in page
+    assert 'href="javascript:(function () {var APP = &#39;http://testserver&#39;, KEY = &#39;' + key in page
     assert "Collected from Jobnet" in page and "pages you collect with the bookmark" in page
-    assert collect.bookmark("http://127.0.0.1:8765/").count("http://127.0.0.1:8765'") == 1
+    js = collect.bookmark("http://127.0.0.1:8765/")
+    assert js.count("http://127.0.0.1:8765'") == 1 and "__KEY__" not in js and "__APP__" not in js
+    # A browser runs a bookmark's address as one line and reads a percent sign in it as an escape.
+    assert "\n" not in js and "%" not in js and "/*" not in js
     assert "collect_jobs" in tasks.TASK_LABELS and "collect_jobs" in tasks.FETCH_TASKS
 
     c.post("/collect/new-key", headers={"origin": "http://testserver"})
     assert collect.token() != key and not collect.token_ok(key) and collect.token_ok(collect.token())
+
+
+def test_a_whole_search_is_taken_in_one_post_and_screened_in_parts(fake, monkeypatch):
+    url = "https://www.jobindex.dk/jobsoegning/it?address=8700+Horsens&radius=50"
+    r = collect.receive(JOBINDEX_PAGE, url, pages=3)
+    assert r["new"] == 2 and r["message"].startswith("Jobindex, 3 pages: 2 jobs in the search, 2 new.")
+
+    monkeypatch.setattr(sources, "MAX_NEW_PER_RUN", 1)  # a search with more new jobs than one task screens
+    db.ex("DELETE FROM tasks")
+    collect.receive(JOBINDEX_PAGE, url, pages=3)
+    parts = [json.loads(t["payload"])["items"] for t in db.q("SELECT payload FROM tasks WHERE kind = 'collect_jobs' ORDER BY id")]
+    assert [[it["title"] for it in p] for p in parts] == [["Embedded Software Engineer"], ["Pædagog til børnehus"]]
+
+
+def test_the_page_count_comes_along_with_the_post(fake):
+    c = TestClient(app)
+    body = {"url": "https://www.jobindex.dk/jobsoegning/it", "html": JOBINDEX_PAGE, "token": collect.token()}
+    r = c.post("/collect/take", data={**body, "pages": "14"}, headers={"origin": "https://www.jobindex.dk"})
+    assert "Jobindex, 14 pages: 2 jobs in the search" in r.text
+    r = c.post("/collect/take", data={**body, "pages": "lots"}, headers={"origin": "https://www.jobindex.dk"})
+    assert "Jobindex: 2 jobs on the page" in r.text

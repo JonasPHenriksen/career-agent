@@ -23,7 +23,8 @@ from . import alerts, config, db, fetch, settings, sources, tasks
 
 KIND = "collect"
 MAX_HTML = 8_000_000  # characters: a results page is 0.1-2 MB
-MAX_ITEMS = 300
+MAX_POST = 4 * MAX_HTML  # bytes the page may take as it's posted: Danish letters grow when a form encodes them
+MAX_ITEMS = 1000  # a whole search: the bookmark reads up to 50 pages of 20
 TEASER = 600
 KEEP_PAGE_SECONDS = 24 * 3600
 LOCKED_NOTE = ("Collected from {site}. The site behind the link doesn't let the app open it on its own, so only the "
@@ -45,13 +46,14 @@ def _date(node) -> str:
 
 def _jobindex(soup: BeautifulSoup, page_url: str) -> list[dict]:
     """Jobindex and IT-Jobbank: one <div id="jobad-wrapper-<id>"> per ad. The ad's own page /vis-job/<id> is open
-    to robots and is the address the RSS feeds use, so a job seen both ways is one job."""
+    to robots and is the address the RSS feeds use, so a job seen both ways is one job. IT-Jobbank's cards have
+    their own class names (job-title, job-company, job-location, job-body) and show no posted date."""
     home = "https://www.it-jobbank.dk" if urlparse(page_url).netloc.endswith("it-jobbank.dk") else "https://www.jobindex.dk"
     items = []
     for w in soup.select('div[id^="jobad-wrapper-"]'):
         tid = w["id"].removeprefix("jobad-wrapper-")
-        inner = w.select_one(".PaidJob-inner, .jix_robotjob-inner") or w
-        head = inner.select_one("h4 a")
+        inner = w.select_one(".PaidJob-inner, .jix_robotjob-inner, .job-body") or w
+        head = w.select_one(".PaidJob-inner h4 a, .jix_robotjob-inner h4 a, h3.job-title a") or inner.select_one("h4 a")
         share = w.select_one("[data-share-title]")
         title = _txt(head) or (share["data-share-title"].strip() if share else "")
         if not title:
@@ -63,8 +65,8 @@ def _jobindex(soup: BeautifulSoup, page_url: str) -> list[dict]:
         else:
             continue
         teaser = " ".join(t for t in (_txt(p) for p in inner.find_all(["p", "li"])) if t)
-        items.append({"url": url, "title": title, "company": _txt(w.select_one(".jix-toolbar-top__company")),
-                      "location": _txt(w.select_one(".jix_robotjob--area")), "text": teaser[:TEASER],
+        items.append({"url": url, "title": title, "company": _txt(w.select_one(".jix-toolbar-top__company, .job-company")),
+                      "location": _txt(w.select_one(".jix_robotjob--area, .job-location")), "text": teaser[:TEASER],
                       "posted_at": _date(w.select_one(".jix-toolbar__pubdate time"))})
     return items
 
@@ -188,9 +190,10 @@ def _kept_page(page_id: str) -> Path | None:
     return path if path.exists() else None
 
 
-def receive(html: str, page_url: str) -> dict:
-    """Take a page from the bookmark. Answers at once with what was found; screening runs in the queue. A page
-    from a site the app has no layout for is put aside and you're asked first (`ask`, then `confirm`)."""
+def receive(html: str, page_url: str, pages: int = 1) -> dict:
+    """Take a page from the bookmark: one results page, or every page of a search joined (`pages` of them). Answers
+    at once with what was found; screening runs in the queue. A page from a site the app has no layout for is put
+    aside and you're asked first (`ask`, then `confirm`)."""
     page_url = (page_url or "").strip()
     if not page_url.startswith(("http://", "https://")) or not urlparse(page_url).hostname:
         raise ValueError("That isn't a web page the app can read jobs from.")
@@ -202,7 +205,7 @@ def receive(html: str, page_url: str) -> dict:
         return {"ok": True, "site": name, "found": None, "new": None, "ask": _keep_page(html, page_url),
                 "message": f"This page is from {name}. The app has no layout for that site, but it can pick out "
                            "the links that look like job ads."}
-    where = f"{name}{_page_no(page_url)}"
+    where, on = (f"{name}, {pages} pages", "in the search") if pages > 1 else (f"{name}{_page_no(page_url)}", "on the page")
     if not items:
         return {"ok": False, "site": name, "found": 0, "new": 0,
                 "message": f"No jobs found on this {name} page. Is it a search results page with jobs showing? "
@@ -211,11 +214,13 @@ def receive(html: str, page_url: str) -> dict:
     n, k = len(items), len(fresh)
     if not fresh:
         return {"ok": True, "site": name, "found": n, "new": 0,
-                "message": f"{where}: {n} job{'s' if n != 1 else ''} on the page, all already in Career Agent."}
+                "message": f"{where}: {n} job{'s' if n != 1 else ''} {on}, all already in Career Agent."}
     sid = source_for(page_url)
-    tasks.enqueue("collect_jobs", {"source_id": sid, "page_url": page_url, "items": fresh}, ref=f"source:{sid}")
+    step = sources.MAX_NEW_PER_RUN  # a whole search can be more than one queue task screens
+    for i in range(0, k, step):
+        tasks.enqueue("collect_jobs", {"source_id": sid, "page_url": page_url, "items": fresh[i:i + step]}, ref=f"source:{sid}")
     return {"ok": True, "site": name, "found": n, "new": k,
-            "message": f"{where}: {n} job{'s' if n != 1 else ''} on the page, {k} new. The new ones are being "
+            "message": f"{where}: {n} job{'s' if n != 1 else ''} {on}, {k} new. The new ones are being "
                        "screened now; the ones that fit show up under Jobs."}
 
 
@@ -264,20 +269,14 @@ def store(payload: dict) -> dict:
     return {"listings": len(items), "new": len(fresh), "kept": kept}
 
 
+_BOOKMARK_JS = Path(__file__).with_name("collect_bookmark.js")
+
+
 def bookmark(app_url: str) -> str:
-    """The bookmark's address: a script that posts the page you're on to the app, in a new tab, as an ordinary
-    form. A form needs nothing from the site (Jobindex cuts the tie between its pages and the tabs they open, so
-    one tab can't hand a page to another). It carries no site-specific code, so a site changing its layout never
-    means making the bookmark again."""
-    app_url = app_url.rstrip("/")
-    js = ("(function(){var A='%s',d=document;"
-          "if(location.origin===A){alert('Drag this button to your Favourites bar. Then click it there while a "
-          "job search results page is open.');return;}"
-          "var h=d.documentElement.outerHTML,f=d.createElement('form');"
-          "f.method='post';f.action=A+'/collect/take';f.target='_blank';f.acceptCharset='UTF-8';"
-          "f.style.display='none';"
-          "function a(n,v){var i=d.createElement('input');i.type='hidden';i.name=n;i.value=v;f.appendChild(i);}"
-          "a('token','%s');a('url',location.href);a('html',h);"
-          "(d.body||d.documentElement).appendChild(f);f.submit();f.remove();"
-          "})();") % (app_url, token())
-    return "javascript:" + js
+    """The bookmark's address: collect_bookmark.js on one line, with the app's address and key filled in. It reads
+    every page of a Jobindex or IT-Jobbank search (or presses a "load more" button until all jobs show) from your
+    own tab, then posts them to the app in a new tab, as an ordinary form. A form needs nothing from the site
+    (Jobindex cuts the tie between its pages and the tabs they open, so one tab can't hand a page to another)."""
+    js = re.sub(r"/\*.*?\*/", "", _BOOKMARK_JS.read_text(encoding="utf-8"), count=1, flags=re.S)
+    js = "".join(line.strip() for line in js.splitlines())
+    return "javascript:" + js.replace("__APP__", app_url.rstrip("/")).replace("__KEY__", token())

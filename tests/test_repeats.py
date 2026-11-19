@@ -29,6 +29,35 @@ def test_keys_and_places():
     assert not jobs.same_place("Aarhus", "Vejle")
 
 
+def test_one_company_written_differently_on_different_sites_is_one_company():
+    same = [("VELUX Group", "VELUX A/S"), ("Vattenfall A/S (via Academic Work Denmark A/S)", "VATTENFALL A/S"),
+            ("Region Syddanmark – Regional IT", "Region Syddanmark"), ("Twoday Denmark", "Twoday A/S"),
+            ("AAK - Aarhuskarlshamn", "AAK Denmark A/S"), ("Arla Foods amba", "Arla Foods"),
+            ("Aarhus Universitet (AU)", "Aarhus Universitet, AU HR - Data og Digitalisering"),
+            ("SCR ApS  søger for Bizbrains", "Bizbrains ApS"), ("Bloom recruiting on behalf of Whiteaway Group", "WhiteAway")]
+    for a, b in same:
+        assert jobs.same_key(a, "Platform Engineer") == jobs.same_key(b, "Platform Engineer"), (a, b)
+    assert jobs.same_key("Lunar ApS", "Platform Engineer") != jobs.same_key("Mind Energy A/S", "Platform Engineer")
+    assert jobs.same_key("Hewlett-Packard", "x") == "hewlett packard|x" and jobs.company_core("Group") == "group"
+    for a, b in [("Energinet", "Energinet Eltransmission A/S"), ("Knowit Solutions Danmark A/S", "Knowit"),
+                 ("Arla", "Arla Foods amba"), ("CyberPilot ApS", "CyberPilot.io"), ("Danish Agro a.m.b.a.", "Danish Agro")]:
+        assert jobs.same_company(a, b) and jobs.same_name(a, "IT-supporter (m/k)", b, "IT-supporter"), (a, b)
+    assert not jobs.same_company("NRGi", "Nordenta") and not jobs.same_company("Ukendt", "Ukendt")
+    assert not jobs.same_name("Energinet", "OT Security Engineer", "Energinet", "OT Architect")
+
+
+def test_the_sweep_keeps_one_copy_per_company_when_several_companies_share_a_title(fake):
+    a, b = _source("jobindex"), _source("jobnet")
+    sources._screen_and_store([_item("https://a.example/1", title="IT-supporter", company="NRGi", location="Aarhus"),
+                               _item("https://a.example/2", title="IT-supporter", company="Nordenta", location="Hørning")], a)
+    db.ex("UPDATE jobs SET company_name = 'Energinet' WHERE url = 'https://a.example/1'")
+    db.insert("jobs", {"url": "https://b.example/9", "title": "IT-supporter", "company_name": "Energinet Eltransmission A/S",
+                       "location": "Aarhus N", "source_id": b, "status": "new", "created_at": db.now()})
+    assert jobs.mark_existing_repeats() == 1
+    assert _job("https://b.example/9")["duplicate_of"] == _job("https://a.example/1")["id"]
+    assert _job("https://a.example/2")["duplicate_of"] is None
+
+
 def test_a_job_already_here_from_another_place_is_set_aside_before_screening(fake):
     a, b = _source("jobindex"), _source("jobbank")
     sources._screen_and_store([_item("https://jobindex.example/1", location="København K")], a)

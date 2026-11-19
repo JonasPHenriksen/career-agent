@@ -1487,7 +1487,8 @@ def collect_take_without_page(request: Request):
 async def collect_take(request: Request):
     """The bookmark posts the page you're on here, from the job site's own tab. It's the one address other sites
     may post to (see local_guard), so it takes nothing without the bookmark's key."""
-    f = await request.form()
+    # A long results page is several MB, past the 1 MB a form field may be by default; collect.receive has the limit.
+    f = await request.form(max_part_size=collect.MAX_POST)
     if not collect.token_ok(f.get("token") if isinstance(f.get("token"), str) else None):
         return render(request, "collect.html", result={"ok": False, "message": "This bookmark is out of date. "
                       "Remove it, and drag the Collect jobs button from Settings → Job sources to your Favourites bar again."})
@@ -1495,7 +1496,9 @@ async def collect_take(request: Request):
     try:
         if not isinstance(html, str) or not isinstance(page_url, str):
             raise ValueError("The page didn't arrive in one piece. Click the bookmark again.")
-        result = await asyncio.to_thread(collect.receive, html, page_url)
+        pages = f.get("pages")
+        pages = int(pages) if isinstance(pages, str) and pages.isdigit() else 1
+        result = await asyncio.to_thread(collect.receive, html, page_url, min(max(pages, 1), 100))
     except ValueError as e:
         result = {"ok": False, "message": str(e)}
     return render(request, "collect.html", result=result)

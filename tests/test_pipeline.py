@@ -359,3 +359,12 @@ def test_newest_cv_wins_in_either_order(fake):
         rows = db.q("SELECT * FROM facts WHERE category = 'experience'")
         assert len(rows) == 1 and rows[0]["end_date"] == "2025-06", f"order {order}: {rows[0]['end_date']}"
         assert rows[0]["document_id"] == ids["2025-10"]
+
+
+def test_reading_an_ad_keeps_the_dates_its_results_page_gave_when_the_ad_states_none(fake):
+    job_id = jobs.add_from_text(JOB_TEXT)
+    db.update("jobs", job_id, {"posted_at": "2026-11-16", "deadline": "2026-11-30"})
+    jobs.parse(job_id, use_text=True)  # the fake reads no publication date and a deadline of 2030-12-01
+    job = jobs.get(job_id)
+    assert job["posted_at"] == "2026-11-16", "a date the ad doesn't state is kept"
+    assert job["deadline"] == "2030-12-01", "a date the ad states wins"

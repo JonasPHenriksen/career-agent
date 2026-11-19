@@ -281,8 +281,9 @@ def parse(job_id: int, use_text: bool = False) -> dict:
 
     title = d["title"] or (jsonld or {}).get("title") or job["title"] or page_title
     company = d["company"] or (jsonld or {}).get("company") or job["company_name"]
-    deadline = _iso_date(d["deadline"]) or _iso_date((jsonld or {}).get("validThrough"))
-    posted = _iso_date((jsonld or {}).get("datePosted")) or _iso_date(d["posted_at"])
+    # An ad that states no dates keeps the ones its results page or job alert gave.
+    deadline = _iso_date(d["deadline"]) or _iso_date((jsonld or {}).get("validThrough")) or job["deadline"]
+    posted = _iso_date((jsonld or {}).get("datePosted")) or _iso_date(d["posted_at"]) or job["posted_at"]
     company_id = companies.upsert(company, website=d["company_website"] or (jsonld or {}).get("company_url"),
                                   description=d["company_blurb"], location=d["location"])
     fp = fingerprint(company, title)
@@ -378,11 +379,41 @@ def title_key(title: str | None) -> str:
     return companies.norm_name(re.sub(r"[(\[][^)\]]*[)\]]", " ", title or ""))
 
 
+# A company is written differently from site to site: "VELUX Group" / "VELUX A/S", "Vattenfall A/S (via Academic
+# Work Denmark A/S)" / "VATTENFALL A/S", "Region Syddanmark – Regional IT" / "Region Syddanmark", "SCR ApS søger
+# for Bizbrains" / "Bizbrains". For telling repeats apart, a name is cut to its core.
+_COMPANY_FOR = re.compile(r"^.*?\b(?:søger for|recruiting (?:on behalf of|for))\s+", re.I)
+_COMPANY_TAIL = re.compile(r"\s+[-–—]\s+.*$|\s*[,(].*$")
+_COMPANY_NOISE = {"group", "gruppen", "koncernen", "denmark", "danmark", "dk", "amba", "holding", "international"}
+
+
+def company_core(name: str | None) -> str:
+    s = _COMPANY_TAIL.sub("", _COMPANY_FOR.sub("", " ".join((name or "").split())))
+    core = " ".join(w for w in companies.norm_name(s).split() if w not in _COMPANY_NOISE)
+    return core or companies.norm_name(name)
+
+
 def same_key(company: str | None, title: str | None) -> str | None:
-    c, t = companies.norm_name(company), title_key(title)
+    c, t = company_core(company), title_key(title)
     if c in _NO_COMPANY or not t:
         return None
     return f"{c}|{t}"
+
+
+def same_company(a: str | None, b: str | None) -> bool:
+    """One company when the core names match, or one is the start of the other ("Energinet" and "Energinet
+    Eltransmission A/S", "Knowit" and "Knowit Solutions Danmark A/S")."""
+    ca, cb = company_core(a), company_core(b)
+    if ca in _NO_COMPANY or cb in _NO_COMPANY:
+        return False
+    short, long = sorted((ca.split(), cb.split()), key=len)
+    return long[:len(short)] == short
+
+
+def same_name(company_a: str | None, title_a: str | None, company_b: str | None, title_b: str | None) -> bool:
+    """Same title from the same company: the first test for two listings being one job."""
+    t = title_key(title_a)
+    return bool(t) and t == title_key(title_b) and same_company(company_a, company_b)
 
 
 def _places(location: str | None) -> set[str]:
@@ -395,11 +426,11 @@ def same_place(a: str | None, b: str | None) -> bool:
     return not pa or not pb or bool(pa & pb)
 
 
-def _copies(key: str, exclude_id: int | None = None) -> list[dict]:
+def _copies(company: str | None, title: str | None, exclude_id: int | None = None) -> list[dict]:
     rows = db.q("SELECT id, title, company_name, location, status, parse_status, source_id, link_locked, keep, "
                 "created_at FROM jobs WHERE duplicate_of IS NULL AND status != 'dismissed' AND created_at >= ? "
                 "AND title IS NOT NULL AND company_name IS NOT NULL ORDER BY id", (db.days_ago(REPEAT_DAYS),))
-    return [r for r in rows if r["id"] != exclude_id and same_key(r["company_name"], r["title"]) == key]
+    return [r for r in rows if r["id"] != exclude_id and same_name(company, title, r["company_name"], r["title"])]
 
 
 def _other_place(a_source: int | None, a_locked: bool, b_source: int | None, b_locked: bool) -> bool:
@@ -415,10 +446,9 @@ def find_same_job(company: str | None, title: str | None, location: str | None =
     weeks, in the same place when both say where. A copy whose link the app may not open never stands in for one
     it can read, and a job you dismissed doesn't hide new copies. For a job being read (`job_id`), only copies
     already read or found before it count."""
-    key = same_key(company, title)
-    if not key:
+    if not same_key(company, title):
         return None
-    for r in _copies(key, exclude_id=job_id):
+    for r in _copies(company, title, exclude_id=job_id):
         if not same_place(location, r["location"]) or (r["link_locked"] and readable):
             continue
         if not _other_place(source_id, not readable, r["source_id"], bool(r["link_locked"])):
@@ -448,12 +478,11 @@ def _protected(job: dict) -> bool:
 
 def retire_locked_copies(job_id: int, company: str | None, title: str | None, location: str | None) -> int:
     """A copy from a job-alert email whose link the app may not open gives way to a copy it can read."""
-    key = same_key(company, title)
-    if not key:
+    if not same_key(company, title):
         return 0
     n = 0
     original = db.q1("SELECT id, source_id FROM jobs WHERE id = ?", (job_id,))
-    for r in _copies(key, exclude_id=job_id):
+    for r in _copies(company, title, exclude_id=job_id):
         if r["link_locked"] and same_place(location, r["location"]) and not _protected(r):
             mark_repeat(r["id"], original)
             n += 1
@@ -474,26 +503,32 @@ def mark_existing_repeats() -> int:
     for r in db.q("SELECT id, title, company_name, location, status, parse_status, source_id, link_locked, keep, "
                   "description, created_at FROM jobs WHERE duplicate_of IS NULL AND status != 'dismissed' "
                   "AND title IS NOT NULL AND company_name IS NOT NULL"):
-        key = same_key(r["company_name"], r["title"])
-        if key:
-            groups.setdefault(key, []).append(r)
+        if same_key(r["company_name"], r["title"]):
+            groups.setdefault(title_key(r["title"]), []).append(r)
     n = 0
     for rows in groups.values():
-        if len(rows) < 2:
-            continue
         rows.sort(key=lambda r: (not _protected(r), r["status"] == "filtered", r["parse_status"] != "parsed",
                                  r["link_locked"], r["id"]))
-        root = rows[0]
-        root_at = db.parse_ts(root["created_at"])
-        for r in rows[1:]:
-            far = abs((db.parse_ts(r["created_at"]) - root_at).days) > REPEAT_DAYS
-            if _protected(r) or far or not same_place(root["location"], r["location"]):
-                continue
-            if not _other_place(root["source_id"], bool(root["link_locked"]), r["source_id"], bool(r["link_locked"])) \
-                    and not same_ad_text(root["description"], r["description"]):
-                continue
-            mark_repeat(r["id"], root)
-            n += 1
+        while len(rows) > 1:  # one title can be several companies' jobs: one root per company
+            root, rest = rows[0], rows[1:]
+            copies = [r for r in rest if same_company(root["company_name"], r["company_name"])]
+            rows = [r for r in rest if r not in copies]
+            n += _set_aside_copies(root, copies)
+    return n
+
+
+def _set_aside_copies(root: dict, copies: list[dict]) -> int:
+    n = 0
+    root_at = db.parse_ts(root["created_at"])
+    for r in copies:
+        far = abs((db.parse_ts(r["created_at"]) - root_at).days) > REPEAT_DAYS
+        if _protected(r) or far or not same_place(root["location"], r["location"]):
+            continue
+        if not _other_place(root["source_id"], bool(root["link_locked"]), r["source_id"], bool(r["link_locked"])) \
+                and not same_ad_text(root["description"], r["description"]):
+            continue
+        mark_repeat(r["id"], root)
+        n += 1
     return n
 
 

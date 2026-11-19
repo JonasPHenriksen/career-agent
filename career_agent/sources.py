@@ -212,7 +212,7 @@ def _screen_and_store(batch: list[dict], source_id: int) -> int:
         # to email) can be the same job twice.
         key = jobs.same_key(it["company"], it["title"])
         twin = next((n for n, w in enumerate(wanted) if key and not (readable and w.get("readable", True))
-                     and jobs.same_key(w["company"], w["title"]) == key
+                     and jobs.same_name(w["company"], w["title"], it["company"], it["title"])
                      and jobs.same_place(w.get("location"), it.get("location"))), None)
         if twin is not None:
             repeats.append((it, twin))

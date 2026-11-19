@@ -178,10 +178,11 @@
   <p><a class="btn" href="{{ collect_bookmark }}" title="Drag me to your Favourites bar">Collect jobs</a> <span class="small text-2">← drag this button to your browser's Favourites bar (Safari: View → Show Favourites Bar).</span></p>
   <ol class="small text-2">
     <li>Keep Career Agent running.</li>
-    <li>Run your search on the job site, with any filters. On Jobnet, press “Indlæs flere job” until everything you want is showing.</li>
-    <li>Click <em>Collect jobs</em> in the Favourites bar. A tab opens, says how many jobs it took, and closes again.</li>
-    <li>Go to the next page of results and click again. One click takes one page: the bookmark never pages through a site for you.</li>
+    <li>Run your search on the job site, with any filters.</li>
+    <li>Click <em>Collect jobs</em> in the Favourites bar. One click takes the whole search: on Jobindex and IT-Jobbank it reads every page of results (up to 50, a little apart), and on Jobnet it presses “Indlæs flere job” until all the jobs are showing. A box on the page says how far it has got.</li>
+    <li>Press <em>Send to Career Agent</em> in the box. A tab opens, says how many jobs it took, and closes again. (A search with just one page is sent at once.)</li>
   </ol>
+  <p class="small text-2">Made the bookmark before 19 November 2026? Remove it and drag the button again: the old one takes one page per click.</p>
   <p class="small text-2">Read by their layout: {{ collect_sites|join(', ') }}. On any other site the app asks first, then picks out the job links like it does for a watched results page. LinkedIn's terms forbid collecting with scripts, so paste LinkedIn links by hand.</p>
   <form method="post" action="/collect/new-key" class="small text-2" data-confirm="Make a new key? The bookmark you have now stops working until you drag the button to the Favourites bar again.">The bookmark carries a private key, so only a page you click it on can hand the app a page. <button class="btn small ghost">Make a new key</button></form>
 
