@@ -78,7 +78,10 @@ job sources ──► quick screening ──► read the ad ──► fit score 
 
 * **Job sources.** For Jobindex, run a search on jobindex.dk and paste the results page address in
   Settings → Job sources (it becomes an RSS feed automatically). Any RSS/Atom feed works, and so do
-  most job sites' search pages (the agent picks out the job links). The app checks each site's robots.txt
+  most job sites' search pages (the agent picks out the job links; a page that spreads its jobs over several
+  pages is followed through its own page links while they show new jobs). Large employers that skip the job
+  boards can be watched on their own career sites: a search page like Vestas', or a Workday site such as
+  LEGO's (`…myworkdayjobs.com/<site>`, with its filters in the address). The app checks each site's robots.txt
   and won't add an address the site doesn't allow robots to read. On Jobindex that allows up to two search
   words and a region (`area=storkbh`), but not distance (`radius=`), municipality (`geoareaid=`) or paging
   (`page=`), so a Jobindex feed shows the newest 20 jobs. LinkedIn needs a login, so paste

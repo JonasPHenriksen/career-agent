@@ -48,6 +48,24 @@ def get(url: str, timeout: float = 25) -> httpx2.Response:
     return r
 
 
+def post_json(url: str, payload: dict, timeout: float = 25) -> httpx2.Response:
+    """POST a JSON body and get JSON back: the job lists behind career sites like Workday's."""
+    if urlparse(url).scheme not in ("http", "https"):
+        raise FetchError("Only http(s) links can be fetched.")
+    headers = {**HEADERS, "Accept": "application/json", "Content-Type": "application/json"}
+    try:
+        r = httpx2.post(url, json=payload, headers=headers, follow_redirects=True, timeout=timeout)
+    except httpx2.TimeoutException as e:
+        raise FetchError("The site took too long to answer.", connection=True) from e
+    except httpx2.TransportError as e:
+        raise FetchError(f"Couldn't load the job list ({e.__class__.__name__}).", connection=True) from e
+    except httpx2.HTTPError as e:
+        raise FetchError(f"Couldn't load the job list ({e.__class__.__name__}).") from e
+    if r.status_code >= 400:
+        raise FetchError(f"The site answered HTTP {r.status_code} for its job list.")
+    return r
+
+
 # Is this Mac online at all? Asked only after a fetch fails, to tell "the site is down" from "no internet".
 # These are the connectivity checks macOS and Android use themselves; nothing about you is sent.
 _PROBES = ("http://captive.apple.com/hotspot-detect.html", "https://www.gstatic.com/generate_204")

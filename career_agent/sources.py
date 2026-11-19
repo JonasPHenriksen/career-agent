@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import time
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlparse, urlunparse
 
 import feedparser
 from bs4 import BeautifulSoup
@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 from . import db, fetch, jobkinds, jobs, llm, places, profile, robots, settings, tasks
 from .llm import jsonutil as J
 
-KINDS = {"rss": "RSS / Atom feed", "page": "Search results page"}
+KINDS = {"rss": "RSS / Atom feed", "page": "Search results page", "workday": "Workday career site"}
 MAX_NEW_PER_RUN = 200  # screened 40 at a time, so one check can take a whole long list
 TRIAGE_BATCH = 40
 MAX_PAGES = 5
@@ -41,6 +41,8 @@ def suggest_url(url: str) -> str:
 
 
 def detect_kind(url: str) -> str:
+    if workday_parts(url):
+        return "workday"
     try:
         resp = fetch.get(url)
     except fetch.FetchError:
@@ -120,6 +122,96 @@ def _page_items(html: str, page_url: str) -> list[dict]:
     items = pick_jobs(fetch.page_links(html, page_url), f"Page: {page_url}\nTitle: {title}")
     for it in items:
         it["text"] = ""  # a results page's surrounding text is navigation more often than a teaser
+    return items
+
+
+# Results pages that spread their jobs over several pages link to the next ones by a number in the address.
+_PAGE_KEYS = {"page", "p", "pg", "startrow", "start", "offset", "from"}
+
+
+def next_pages(html: str, page_url: str) -> list[str]:
+    """The results page's own links to its later pages, in order: the same address with only a page number or
+    start row changed (Vestas: startrow=10, 20, 30)."""
+    here = urlparse(page_url)
+    base = dict(parse_qsl(here.query, keep_blank_values=True))
+    found: dict[int, str] = {}
+    for a in BeautifulSoup(html, "html.parser").find_all("a", href=True):
+        url = urljoin(page_url, a["href"].strip())
+        u = urlparse(url)
+        if (u.netloc, u.path) != (here.netloc, here.path):
+            continue
+        q = dict(parse_qsl(u.query, keep_blank_values=True))
+        changed = {k for k in set(q) | set(base) if q.get(k) != base.get(k)}
+        if len(changed) != 1:
+            continue
+        key = changed.pop()
+        if key in _PAGE_KEYS and q.get(key, "").isdigit() and int(q[key]) > int(base.get(key) or 0):
+            found.setdefault(int(q[key]), url)
+    return [found[n] for n in sorted(found)]
+
+
+# Workday career sites (LEGO, many large employers) build their pages in the browser, but list their jobs from a
+# JSON address next to the site, and each ad page carries the ad as JSON-LD. Their robots.txt allows both.
+_WORKDAY_HOST = re.compile(r"^(?P<tenant>[\w-]+)\.wd\d+\.myworkdayjobs\.com$", re.I)
+WORKDAY_PAGE = 20  # the most Workday hands out at a time
+WORKDAY_MAX = 400
+
+
+def workday_parts(url: str) -> dict | None:
+    """{api, site_url, search, facets} for a Workday career-site address, e.g.
+    https://lego.wd103.myworkdayjobs.com/LEGO_External?Location=<id> (filters as the site puts them in the address,
+    q= for search words)."""
+    p = urlparse(url)
+    m = _WORKDAY_HOST.match(p.hostname or "")
+    parts = [s for s in p.path.split("/") if s and not re.fullmatch(r"[a-z]{2}-[A-Z]{2}", s)]
+    if not m or not parts:
+        return None
+    facets: dict[str, list[str]] = {}
+    search = ""
+    for k, v in parse_qsl(p.query):
+        if k == "q":
+            search = v
+        else:
+            facets.setdefault(k, []).append(v)
+    return {"api": f"https://{p.netloc}/wday/cxs/{m['tenant']}/{parts[0]}/jobs",
+            "site_url": f"https://{p.netloc}/{parts[0]}", "search": search, "facets": facets}
+
+
+def _workday_place(jp: dict) -> str:
+    """Where a Workday job is: its location text when it names one place, else the place in its address
+    (/job/Billund/…); "2 Locations" tells nothing."""
+    text = (jp.get("locationsText") or "").strip()
+    if text and not re.match(r"^\d+ (locations|lokationer)", text, re.I):
+        return text
+    m = re.match(r"^/job/([^/]+)/", jp.get("externalPath") or "")
+    return unquote(m.group(1)).replace("-", " ") if m else text
+
+
+def _workday_items(url: str, company: str) -> list[dict]:
+    wd = workday_parts(url)
+    if not wd:
+        raise fetch.FetchError("That isn't a Workday career-site address (…myworkdayjobs.com/<site>).")
+    if not robots.allowed(wd["api"]):
+        raise fetch.FetchError("This Workday site doesn't let robots read its job list.")
+    items: list[dict] = []
+    offset, total = 0, None
+    while offset < WORKDAY_MAX:
+        body = {"appliedFacets": wd["facets"], "limit": WORKDAY_PAGE, "offset": offset, "searchText": wd["search"]}
+        try:
+            data = fetch.post_json(wd["api"], body).json()
+        except ValueError as e:
+            raise fetch.FetchError("The Workday job list didn't come back as data.") from e
+        posts = data.get("jobPostings") or []
+        if total is None:  # Workday says how many there are in its first answer only
+            total = data.get("total") or 0
+        for jp in posts:
+            if jp.get("externalPath") and jp.get("title"):
+                items.append({"url": wd["site_url"] + jp["externalPath"], "title": jp["title"].strip(),
+                              "company": company, "location": _workday_place(jp), "text": ""})
+        offset += WORKDAY_PAGE
+        if len(posts) < WORKDAY_PAGE or offset >= total:
+            break
+        time.sleep(PAGE_PAUSE)
     return items
 
 
@@ -252,12 +344,33 @@ def poll(source_id: int) -> dict:
         problem = robots.check(src["url"])
         if problem:
             raise fetch.FetchError(problem)
-        resp = fetch.get(src["url"])
-        is_feed = src["kind"] == "rss" or fetch.looks_like_feed(resp)
-        items = _rss_items(resp.content, src["url"]) if is_feed else _page_items(resp.text, str(resp.url))
+        resp = None
+        if src["kind"] == "workday":
+            is_feed, items = False, _workday_items(src["url"], src["name"])
+        else:
+            resp = fetch.get(src["url"])
+            is_feed = src["kind"] == "rss" or fetch.looks_like_feed(resp)
+            items = _rss_items(resp.content, src["url"]) if is_feed else _page_items(resp.text, str(resp.url))
         seen: set[str] = set()
         fresh = _unseen(items, seen)
         listings = len(items)
+        # A results page that spreads its jobs over several pages: follow its own page links while they still
+        # show something new (the first check reads them all; later ones stop at the first page with nothing new).
+        if resp is not None and not is_feed:
+            for more_url in next_pages(resp.text, str(resp.url))[:MAX_PAGES - 1]:
+                if not fresh or len(fresh) >= MAX_NEW_PER_RUN or not robots.allowed(more_url):
+                    break
+                time.sleep(PAGE_PAUSE)
+                try:
+                    more_resp = fetch.get(more_url)
+                except fetch.FetchError:
+                    break
+                more = _page_items(more_resp.text, str(more_resp.url))
+                listings += len(more)
+                new = _unseen(more, seen)
+                if not new:
+                    break
+                fresh += new
         # The app is off between runs, so the newest page may not reach back to the last run: keep going back
         # while each page still holds something new.
         page = 1
