@@ -72,7 +72,7 @@ def test_a_local_model_thinks_when_you_switch_it_on_on_any_step(fake, monkeypatc
     settings.set("llm", cfg)
     assert llm._build("analysis", "medium", "fit_score").think, "thinking switched on for an analysis step works now"
     assert not llm._build("writing", None, "write_letter").think, "and switched off for a writing step"
-    assert [llm.effort_kind(p) for p in ("claude_code", "ollama", "openai")] == ["claude", "local", "none"]
+    assert [llm.effort_kind(p) for p in ("claude_code", "ollama")] == ["claude", "local"]
 
 
 def test_effort_choices_fit_each_steps_model(fake, tmp_path, monkeypatch):
@@ -81,8 +81,7 @@ def test_effort_choices_fit_each_steps_model(fake, tmp_path, monkeypatch):
     settings.update("llm", {"ollama_url": "http://127.0.0.1:9",
                             "writing": {"provider": "claude_code", "model": "claude-opus-5-5", "effort": "high"},
                             "analysis": {"provider": "ollama", "model": "gemma4:26b-mlx", "effort": "medium"},
-                            "steps": {"letter": {"provider": "ollama", "model": "gemma4:26b-mlx", "effort": "max"},
-                                      "cv": {"provider": "openai", "model": "qwen"}}})
+                            "steps": {"letter": {"provider": "ollama", "model": "gemma4:26b-mlx", "effort": "max"}}})
     page = TestClient(app).get("/settings").text
 
     def effort_select(step):
@@ -93,7 +92,6 @@ def test_effort_choices_fit_each_steps_model(fake, tmp_path, monkeypatch):
     assert "thinking off" in score and "usual (thinking off)" in score and ">xhigh<" not in score
     letter = effort_select("letter")  # its own local model, effort max = thinking on
     assert 'value="high" selected>thinking on' in letter
-    assert "disabled" in effort_select("cv") and "no effort setting" in effort_select("cv")
     prep = effort_select("prep")  # the Writing model is Claude
     options = prep[prep.index("<option"):]
     assert ">xhigh<" in options and "usual (high)" in options and "thinking" not in options
@@ -101,3 +99,19 @@ def test_effort_choices_fit_each_steps_model(fake, tmp_path, monkeypatch):
     import re
     assert all("autocomplete=\"off\"" in s for s in re.findall(r'<select[^>]*name="\w+_(?:model|effort)"[^>]*>', page)), \
         "a reload never brings back old choices"
+
+
+def test_there_is_no_other_server_option(fake):
+    page = TestClient(app).get("/settings").text
+    assert "OpenAI-compatible" not in page and "Other server" not in page and "openai_base_url" not in page
+    assert llm.PROVIDERS == ("claude_code", "ollama") and llm.parse_choice("openai|qwen") is None
+
+
+def test_the_old_server_address_is_cleared(fake):
+    from career_agent import db
+    cfg = settings.get("llm")
+    cfg["openai_base_url"] = "http://localhost:1234/v1"
+    settings.set("llm", cfg)
+    db.connect().execute("PRAGMA user_version = 11")
+    db.init()
+    assert "openai_base_url" not in settings.get("llm") and settings.get("llm")["writing"]["model"] == "fake"

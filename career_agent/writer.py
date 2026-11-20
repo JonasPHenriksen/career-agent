@@ -683,12 +683,7 @@ def check_tier() -> str:
     choice = cfg.get("check_with") or "auto"
     if choice in ("writing", "analysis"):
         return choice
-    from .llm.providers import is_local_url
-
-    w = cfg.get("writing") or {}
-    cloud = w.get("provider") == "claude_code" or (
-        w.get("provider") == "openai" and not is_local_url(cfg.get("openai_base_url") or ""))
-    return "writing" if cloud else "analysis"
+    return "writing" if (cfg.get("writing") or {}).get("provider") == "claude_code" else "analysis"
 
 
 VERIFY_SCHEMA = J.obj(verdicts=J.arr(J.obj(

@@ -18,17 +18,16 @@ from .errors import LLMConfigError, LLMError, LLMRefusal, LLMTransient
 from . import plan
 from .providers import installed_ollama_models as installed_ollama
 from .providers import (CLAUDE_CODE_ALIASES, claude_name, ClaudeCodeProvider, OllamaProvider,
-                        OpenAICompatProvider, ProviderReply, find_claude_binary, is_local_url, list_ollama_models,
+                        ProviderReply, find_claude_binary, is_local_url, list_ollama_models,
                         ollama_models)
 
 __all__ = ["run", "LLMResponse", "LLMError", "LLMConfigError", "LLMRefusal", "LLMTransient", "jsonutil", "using",
            "made_by", "model_label", "model_choices", "parse_choice", "backfill_refs", "PROVIDERS",
            "set_test_provider", "status", "tier_provider", "ollama_running", "EFFORTS", "thinks", "effort_kind", "STEPS", "STEP_OF", "step_provider", "step_settings", "detect_defaults", "bootstrap", "test_tier",
-           "OPENAI_KEY", "ProviderReply", "list_ollama_models"]
+           "ProviderReply", "list_ollama_models"]
 
-OPENAI_KEY = "OPENAI_API_KEY"
 CLAUDE_CODE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
-PROVIDERS = ("claude_code", "ollama", "openai")
+PROVIDERS = ("claude_code", "ollama")
 
 # What the current task is about ("app:12", "doc:3"…) and, for a redo, which model to use instead of Settings.
 _ctx: contextvars.ContextVar[dict] = contextvars.ContextVar("llm_context", default={})
@@ -54,9 +53,8 @@ def thinks(effort: str | None) -> bool:
 
 
 def effort_kind(provider: str | None) -> str:
-    """What the effort choice means for this provider: "claude" (five levels), "local" (thinking on/off) or
-    "none" (a model on another server has no such setting)."""
-    return {"ollama": "local", "openai": "none"}.get(provider or "", "claude")
+    """What the effort choice means for this provider: "claude" (five levels) or "local" (thinking on/off)."""
+    return "local" if provider == "ollama" else "claude"
 
 # What the app does, step by step: (key, label, the tier whose model it uses by default, its model calls).
 # Settings lets you pick another model and effort for any step; a redo can pick one for a single run.
@@ -154,11 +152,6 @@ def _build(tier: str, effort: str | None, purpose: str | None = None):
         level = effort or t.get("effort") or "high"
         return OllamaProvider(model=model, base_url=cfg.get("ollama_url") or "http://localhost:11434",
                               num_ctx=int(cfg.get("ollama_num_ctx") or 32768), think=thinks(level))
-    if provider == "openai":
-        base = cfg.get("openai_base_url") or ""
-        if cfg.get("local_only") and not is_local_url(base):
-            raise LLMConfigError("Local-only mode is on, and the OpenAI-compatible server isn't on this Mac.")
-        return OpenAICompatProvider(model=model, base_url=base, api_key=keychain.get(OPENAI_KEY))
     if provider == "claude_code":
         if cfg.get("local_only"):
             raise LLMConfigError("Local-only mode is on, so cloud models (Claude Code too) are blocked.")
@@ -307,7 +300,6 @@ def status() -> dict:
     live = list_ollama_models(url)
     models = live or (installed_ollama() if is_local_url(url) else [])
     return {
-        "openai_key": keychain.source(OPENAI_KEY),
         "ollama_running": bool(live) or _ollama_up(url),
         "ollama_models": [m.get("name") for m in models],
         "ollama_chat_models": [m.get("name") for m in _chat_models(models)],  # without embedding models
@@ -373,10 +365,6 @@ def model_choices() -> list[tuple[str, list[tuple[str, str]]]]:
     local = [m.get("name") for m in _chat_models(ollama_models(cfg.get("ollama_url") or "http://localhost:11434"))]
     if local:
         groups.append(("On this Mac (Ollama)", [(f"ollama|{m}", m) for m in local]))
-    other = [cfg.get(t) or {} for t in ("writing", "analysis")]
-    custom = sorted({o["model"] for o in other if o.get("provider") == "openai" and o.get("model")})
-    if custom:
-        groups.append(("OpenAI-compatible server", [(f"openai|{m}", m) for m in custom]))
     _choices_cache.update(at=time.monotonic(), value=groups)
     return groups
 

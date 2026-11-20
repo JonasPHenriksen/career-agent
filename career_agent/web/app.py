@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 templates = Jinja2Templates(directory=str(HERE / "templates"))
 helpers.install(templates.env)
 templates.env.globals["model_choices"] = llm.model_choices  # for the "with which model" picker on redo buttons
-templates.env.globals["effort_kind"] = llm.effort_kind  # what effort means for a model: levels, thinking, or nothing
+templates.env.globals["effort_kind"] = llm.effort_kind  # what effort means for a model: levels or thinking on/off
 
 
 def chosen_model(f: dict) -> dict:
@@ -1203,12 +1203,9 @@ def _save_models(f: dict) -> None:
     for tier in ("writing", "analysis"):
         choice = f.get(f"{tier}_model", "")
         provider, _, model = choice.partition("|")
-        if provider == "openai":
-            model = f.get(f"{tier}_custom", "") or model
         if provider in llm.PROVIDERS and model:
             patch[tier] = {"provider": provider, "model": model, "effort": f.get(f"{tier}_effort") or "medium"}
     patch["ollama_url"] = f.get("ollama_url") or "http://localhost:11434"
-    patch["openai_base_url"] = f.get("openai_base_url") or "http://localhost:1234/v1"
     try:
         patch["ollama_num_ctx"] = max(4096, min(262144, int(f.get("ollama_num_ctx") or 32768)))
         patch["concurrency"] = max(0, min(8, int(f.get("concurrency") or 0)))

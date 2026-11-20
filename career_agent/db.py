@@ -348,6 +348,10 @@ MIGRATIONS: list[str] = [
         '"provider": "claude_code", "model": "haiku"', '"provider": "claude_code", "model": "claude-haiku-5-5"')
     WHERE key = 'llm';
     """,
+    # 12: the OpenAI-compatible server option is gone, and with it its address
+    """
+    UPDATE settings SET value = json_remove(value, '$.openai_base_url') WHERE key = 'llm' AND json_valid(value);
+    """,
 ]
 
 

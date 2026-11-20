@@ -33,12 +33,11 @@ DEFAULTS: dict[str, Any] = {
         "about": "",
     },
     "llm": {
-        # provider: "claude_code" | "ollama" | "openai" ; "" = not configured yet
+        # provider: "claude_code" | "ollama" ; "" = not configured yet
         "writing": {"provider": "", "model": "", "effort": "high"},
         "analysis": {"provider": "", "model": "", "effort": "medium"},
         "ollama_url": "http://localhost:11434",
         "ollama_num_ctx": 32768,
-        "openai_base_url": "http://localhost:1234/v1",
         "local_only": False,
         "redact_for_cloud": True,
         "concurrency": 0,  # 0 = automatic (1 for local models, 3 for cloud)

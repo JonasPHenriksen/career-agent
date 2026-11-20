@@ -111,28 +111,17 @@
       });
     });
 
-    // Model picker: show the custom model field when an OpenAI-compatible server is chosen.
-    root.querySelectorAll("select[data-model-picker]").forEach((s) => {
-      const custom = document.querySelector(s.dataset.modelPicker);
-      const effort = document.querySelector(s.dataset.effort);
-      const sync = () => {
-        const provider = s.value.split("|")[0];
-        if (custom) custom.hidden = provider !== "openai";
-        if (effort) effort.hidden = !provider || provider === "openai";
-      };
-      s.addEventListener("change", sync);
-      sync();
-    });
-
     // Effort fits the model (as the effort_options macro renders it): five levels for Claude, thinking on/off for a
-    // local model, nothing for a model on another server. The usual model ("") is the tier's, in data-usual-provider.
+    // local model. The usual model ("") is the tier's, in data-usual-provider. A tier's effort shows once it has a model.
     root.querySelectorAll("select[data-effort-select]").forEach((s) => {
       const target = s.dataset.effortSelect ? document.querySelector(s.dataset.effortSelect)
         : s.form && s.form.querySelector('select[name="effort"]');
       if (!target) return;
+      const wrap = s.dataset.effort && document.querySelector(s.dataset.effort);
       const sync = () => {
         const provider = s.value ? s.value.split("|")[0] : (s.dataset.usualProvider || "claude_code");
-        fillEffort(target, { ollama: "local", openai: "none" }[provider] || "claude");
+        fillEffort(target, provider === "ollama" ? "local" : "claude");
+        if (wrap) wrap.hidden = !s.value;
       };
       s.addEventListener("change", sync);
       sync();
@@ -145,18 +134,13 @@
     const thinking = ["high", "xhigh", "max"].includes(cur);
     const add = (value, label, selected) => sel.add(new Option(label, value, selected, selected));
     sel.innerHTML = "";
-    sel.disabled = kind === "none";
-    if (kind === "none") {
-      add("", "no effort setting", true);
+    const usual = kind === "local" ? sel.dataset.usualLocal : sel.dataset.usualClaude;
+    if (usual) add("", usual, !cur);
+    if (kind === "local") {
+      add("low", "thinking off", !!cur && !thinking);
+      add("high", "thinking on", thinking);
     } else {
-      const usual = kind === "local" ? sel.dataset.usualLocal : sel.dataset.usualClaude;
-      if (usual) add("", usual, !cur);
-      if (kind === "local") {
-        add("low", "thinking off", !!cur && !thinking);
-        add("high", "thinking on", thinking);
-      } else {
-        ["low", "medium", "high", "xhigh", "max"].forEach((e) => add(e, e + (sel.dataset.suffix || ""), cur === e));
-      }
+      ["low", "medium", "high", "xhigh", "max"].forEach((e) => add(e, e + (sel.dataset.suffix || ""), cur === e));
     }
     sel.dataset.kind = kind;
   }

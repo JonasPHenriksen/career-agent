@@ -2,7 +2,7 @@
 {% from "_macros.html" import model_picker, effort_options, usual_label %}
 {% block title %}Settings{% endblock %}
 {% macro model_select(tier, current) %}
-<select id="{{ tier }}_model" name="{{ tier }}_model" autocomplete="off" data-model-picker="#{{ tier }}_custom_wrap" data-effort-select="#{{ tier }}_effort" data-effort="#{{ tier }}_effort_wrap">
+<select id="{{ tier }}_model" name="{{ tier }}_model" autocomplete="off" data-effort-select="#{{ tier }}_effort" data-effort="#{{ tier }}_effort_wrap">
   <optgroup label="Claude through Claude Code (your subscription)">
     {% for mid, label in claude_code_models %}<option value="claude_code|{{ mid }}" {{ 'selected' if current.provider == 'claude_code' and current.model == mid }}>{{ label }}{{ '' if st.claude_code else ' (Claude Code not found)' }}</option>{% endfor %}
   </optgroup>
@@ -14,13 +14,9 @@
     {% for m in st.ollama_chat_models %}<option value="ollama|{{ m }}" {{ 'selected' if current.provider == 'ollama' and current.model == m }}>{{ m }}</option>{% else %}<option disabled>No Ollama models found</option>{% endfor %}
     {% if current.provider == 'ollama' and current.model not in st.ollama_chat_models %}<option value="ollama|{{ current.model }}" selected>{{ current.model }} (not installed)</option>{% endif %}
   </optgroup>
-  <optgroup label="Other server (LM Studio, MLX, llama.cpp…)">
-    <option value="openai|{{ current.model if current.provider == 'openai' else '' }}" {{ 'selected' if current.provider == 'openai' }}>OpenAI-compatible server…</option>
-  </optgroup>
   {% if not current.provider %}<option value="" selected disabled>Choose a model</option>{% endif %}
 </select>
-<div id="{{ tier }}_custom_wrap" class="field" style="margin-top:.5rem" hidden><label for="{{ tier }}_custom">Model name on that server</label><input id="{{ tier }}_custom" type="text" name="{{ tier }}_custom" value="{{ current.model if current.provider == 'openai' else '' }}"></div>
-<div id="{{ tier }}_effort_wrap" class="field" style="margin-top:.5rem" {{ 'hidden' if current.provider == 'openai' }}><label for="{{ tier }}_effort">Effort <span class="hint">· Claude: higher = more careful, slower, more of your plan · local model: whether it thinks first</span></label>
+<div id="{{ tier }}_effort_wrap" class="field" style="margin-top:.5rem" {{ 'hidden' if not current.provider }}><label for="{{ tier }}_effort">Effort <span class="hint">· Claude: higher = more careful, slower, more of your plan · local model: whether it thinks first</span></label>
   <select id="{{ tier }}_effort" name="{{ tier }}_effort" autocomplete="off">{{ effort_options(effort_kind(current.provider), current.effort or 'high') }}</select></div>
 {% endmacro %}
 {% block content %}
@@ -45,7 +41,6 @@
       <div class="fields-3">
         <div class="field"><label for="ollama_url">Ollama address</label><input id="ollama_url" type="text" name="ollama_url" value="{{ cfg.ollama_url }}"></div>
         <div class="field"><label for="ollama_num_ctx">Context size (tokens)</label><input id="ollama_num_ctx" type="number" name="ollama_num_ctx" value="{{ cfg.ollama_num_ctx }}" step="4096"></div>
-        <div class="field"><label for="openai_base_url">OpenAI-compatible server</label><input id="openai_base_url" type="text" name="openai_base_url" value="{{ cfg.openai_base_url }}"></div>
         <div class="field"><label for="concurrency">Parallel tasks <span class="hint">(0 = automatic)</span></label><input id="concurrency" type="number" name="concurrency" value="{{ cfg.concurrency }}" min="0" max="8"></div>
         <div class="field"><label for="claude_code_path">Claude Code program <span class="hint">· empty = find it automatically</span></label><input id="claude_code_path" type="text" name="claude_code_path" value="{{ cfg.claude_code_path or '' }}" placeholder="{{ st.claude_code or 'claude' }}"></div>
       </div>
@@ -81,7 +76,7 @@
 
 <section class="card" id="steps">
   <h2>Model and effort for each step</h2>
-  <p class="small text-2">Every step uses the Writing or Analysis model above unless you pick another here. For a Claude model, effort is how carefully it works: higher is slower and uses more of your Claude plan. A local model has no effort levels, only whether it thinks before answering: better answers, but slower. A model on another server has no such setting. To use another model once, use the picker next to any button; to redo finished work, see below.</p>
+  <p class="small text-2">Every step uses the Writing or Analysis model above unless you pick another here. For a Claude model, effort is how carefully it works: higher is slower and uses more of your Claude plan. A local model has no effort levels, only whether it thinks before answering: better answers, but slower. To use another model once, use the picker next to any button; to redo finished work, see below.</p>
   <form method="post" action="/settings/steps">
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Step</th><th>Model</th><th>Effort / thinking</th></tr></thead>
@@ -96,8 +91,7 @@
             {% if st_.own.provider and not (st_.own.provider ~ '|' ~ st_.own.model) in model_groups|map(attribute=1)|sum(start=[])|map(attribute=0)|list %}<option value="{{ st_.own.provider }}|{{ st_.own.model }}" selected>{{ st_.own.model }} (not available now)</option>{% endif %}
           </select></td>
           <td><select id="effort_{{ st_.key }}" name="{{ st_.key }}_effort" aria-label="Effort for: {{ st_.label }}" autocomplete="off"
-                      data-usual-claude="{{ usual_label('claude', usual_effort) }}" data-usual-local="{{ usual_label('local', usual_effort) }}"
-                      {{ 'disabled' if kind == 'none' }}>
+                      data-usual-claude="{{ usual_label('claude', usual_effort) }}" data-usual-local="{{ usual_label('local', usual_effort) }}">
             {{ effort_options(kind, st_.own.effort, usual_label(kind, usual_effort)) }}
           </select></td></tr>
       {% endfor %}</tbody>

@@ -213,8 +213,7 @@ TASK_STEPS = {
 }
 FETCH_TASKS = {"poll_source", "parse_job", "collect_jobs"}
 NEED_LABELS = {"ollama": "Ollama (the local models)", "network": "an internet connection",
-               "claude_code": "Claude (your plan's usage limit)",
-               "openai": "the model server"}
+               "claude_code": "Claude (your plan's usage limit)"}
 
 _holds: dict[str, dict] = {}  # what's unavailable -> {"why": text, "until": epoch seconds or None}
 _holds_lock = threading.Lock()

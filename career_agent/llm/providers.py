@@ -1,5 +1,5 @@
-"""Model providers: Claude through Claude Code (your subscription), Ollama (local), and any OpenAI-compatible
-server (LM Studio, mlx_lm.server, llama.cpp...). Each exposes complete(system, user, schema, max_tokens)."""
+"""Model providers: Claude through Claude Code (your subscription) and Ollama (local). Each exposes
+complete(system, user, schema, max_tokens)."""
 from __future__ import annotations
 
 import re
@@ -164,58 +164,7 @@ def ollama_models(base_url: str) -> list[dict]:
 
 
 # ----------------------------------------------------------------------------------------
-# OpenAI-compatible servers (LM Studio, mlx_lm.server, llama.cpp, vLLM, ...)
-# ----------------------------------------------------------------------------------------
-
-class OpenAICompatProvider:
-    name = "openai"
-
-    def __init__(self, model: str, base_url: str, api_key: str = ""):
-        self.model = model
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
-        self.is_cloud = not is_local_url(self.base_url)
-
-    def complete(self, system: str, user: str, schema: dict | None, max_tokens: int) -> ProviderReply:
-        if schema is not None:
-            system = f"{system}\n\nRespond with a single JSON object matching this JSON schema:\n{jsonutil.describe(schema)}"
-        body: dict = {
-            "model": self.model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "max_tokens": max_tokens,
-            "temperature": 0.2 if schema is not None else 0.7,
-        }
-        if schema is not None:
-            body["response_format"] = {"type": "json_schema", "json_schema": {"name": "result", "schema": schema}}
-        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        url = f"{self.base_url}/chat/completions"
-        try:
-            r = httpx2.post(url, json=body, headers=headers, timeout=httpx2.Timeout(1800.0, connect=5.0))
-            if r.status_code == 400 and schema is not None:
-                body.pop("response_format")  # server without structured-output support
-                r = httpx2.post(url, json=body, headers=headers, timeout=httpx2.Timeout(1800.0, connect=5.0))
-        except httpx2.ConnectError as e:
-            raise LLMConfigError(f"Couldn't connect to {self.base_url}. Is the model server running?") from e
-        except httpx2.TimeoutException as e:
-            raise LLMError("The model server timed out.") from e
-        if r.status_code in (401, 403):
-            raise LLMConfigError("The model server rejected the API key.")
-        if r.status_code >= 400:
-            raise LLMError(f"Model server error {r.status_code}: {r.text[:300]}")
-        d = r.json()
-        choice = (d.get("choices") or [{}])[0]
-        usage = d.get("usage") or {}
-        return ProviderReply(
-            text=(choice.get("message") or {}).get("content") or "",
-            input_tokens=usage.get("prompt_tokens") or 0,
-            output_tokens=usage.get("completion_tokens") or 0,
-            truncated=choice.get("finish_reason") == "length",
-            model=str(d.get("model") or self.model),
-        )
-
-
-# ----------------------------------------------------------------------------------------
-# Claude through Claude Code (your Claude subscription, no API key)
+# Claude through Claude Code (your Claude subscription)
 # ----------------------------------------------------------------------------------------
 
 # Exact versions, so you always know which model did the work: the ones a Claude subscription runs through Claude

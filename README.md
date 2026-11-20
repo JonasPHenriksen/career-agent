@@ -234,8 +234,6 @@ Tips:
   (quantised) run; the 31B uses 21–27 GB while running, so close heavy apps while it writes.
 * **Context size** (Settings → local model options) defaults to 32k tokens and grows automatically up to
   64k for big requests. With hundreds of facts, raising it helps.
-* LM Studio, `mlx_lm.server`, llama.cpp and similar servers work through the
-  “OpenAI-compatible server” option.
 * A good middle ground: **Claude for Writing, the local model for Analysis.** Your documents are read
   locally; only the letter-writing context goes to Claude. The fact check runs on the Writing model by
   default (Settings → Search & fact check), since it's your safety net.
@@ -396,7 +394,7 @@ uv run python -m career_agent --port 8765 --data ./data --no-browser
 
 | Path | What |
 |---|---|
-| `career_agent/llm/` | Providers (Claude Code, Ollama, OpenAI-compatible), the models your Claude plan offers, JSON schemas, usage tracking, who made what |
+| `career_agent/llm/` | Providers (Claude Code, Ollama), the models your Claude plan offers, JSON schemas, usage tracking, who made what |
 | `career_agent/ingest.py` | File, folder and mailbox import; text extraction |
 | `career_agent/profile.py` | Document analysis into facts, de-duplication, prompt digests |
 | `career_agent/retrieval.py` | Passages, local embeddings, hybrid keyword + meaning search |
