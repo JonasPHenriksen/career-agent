@@ -339,6 +339,15 @@ MIGRATIONS: list[str] = [
     ALTER TABLE facts ADD COLUMN depth TEXT;
     ALTER TABLE facts ADD COLUMN absorbed TEXT;
     """,
+    # 11: Claude Code models saved by short name ("opus") get the exact version that name ran on until now
+    """
+    UPDATE settings SET value =
+      replace(replace(replace(value,
+        '"provider": "claude_code", "model": "opus"', '"provider": "claude_code", "model": "claude-opus-5-5"'),
+        '"provider": "claude_code", "model": "sonnet"', '"provider": "claude_code", "model": "claude-sonnet-5-5"'),
+        '"provider": "claude_code", "model": "haiku"', '"provider": "claude_code", "model": "claude-haiku-5-5"')
+    WHERE key = 'llm';
+    """,
 ]
 
 

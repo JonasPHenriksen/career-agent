@@ -41,6 +41,7 @@ TASK_LABELS = {
     "rescreen_jobs": "Screening job listings again",
     "check_cv_base": "Checking your base CV against your career database",
     "backup": "Backing up your data",
+    "check_claude_models": "Checking which Claude models your plan offers",
 }
 
 _wake = threading.Event()
@@ -61,6 +62,7 @@ def enqueue(kind: str, payload: dict | None = None, ref: str | None = None, dedu
 
 def _handlers() -> dict:
     from . import collect, cvdata, jobs, profile, retrieval, review, sources, tracker, voice, watch, writer
+    from .llm import plan as llm_plan
 
     def wait_for_analyses() -> None:
         """Let in-flight document analyses finish so we see everything."""
@@ -114,6 +116,7 @@ def _handlers() -> dict:
         "check_cv_base": lambda p: review.check_base(p.get("base_id")),
         "rescreen_jobs": lambda p: sources.rescreen(p.get("job_ids")),
         "backup": lambda p: _backup(),
+        "check_claude_models": lambda p: llm_plan.check(),
     }
 
 
@@ -210,7 +213,7 @@ TASK_STEPS = {
 }
 FETCH_TASKS = {"poll_source", "parse_job", "collect_jobs"}
 NEED_LABELS = {"ollama": "Ollama (the local models)", "network": "an internet connection",
-               "claude_code": "Claude (your plan's usage limit)", "anthropic": "the Claude API",
+               "claude_code": "Claude (your plan's usage limit)",
                "openai": "the model server"}
 
 _holds: dict[str, dict] = {}  # what's unavailable -> {"why": text, "until": epoch seconds or None}
@@ -251,6 +254,8 @@ def needs(task: dict) -> set[str]:
         out.add("network")
     if kind == "pull_model":
         return {"ollama", "network"}
+    if kind == "check_claude_models":
+        return {"claude_code"}
     for step in TASK_STEPS.get(kind, ()):
         provider = llm.step_provider(step, payload.get("model"))
         if provider:
@@ -533,8 +538,10 @@ def _in_history(context: str, fn, *args):
 
 
 async def scheduler_loop(stop: asyncio.Event) -> None:
-    """Checks sources when due, marks ghosted applications, sends a morning digest, makes the weekly backup."""
+    """Checks sources when due, marks ghosted applications, sends a morning digest, makes the weekly backup, and
+    keeps the list of Claude models your plan offers up to date."""
     from . import tracker
+    from .llm import plan as llm_plan
 
     while not stop.is_set():
         try:
@@ -546,6 +553,8 @@ async def scheduler_loop(stop: asyncio.Event) -> None:
             state = settings.get("state")
             now_local = datetime.now()
             last_maint = db.parse_ts(state.get("last_maintenance"))
+            if not on_hold() and llm_plan.due():  # Claude Code updated, or a week since the plan's models were checked
+                enqueue("check_claude_models", {}, ref="claude-models")
             if not last_maint or (db.parse_ts(db.now()) - last_maint).total_seconds() > 6 * 3600:
                 enqueue("maintenance", {}, ref="maintenance")
                 settings.update("state", {"last_maintenance": db.now()})

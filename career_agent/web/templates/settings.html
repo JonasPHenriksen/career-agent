@@ -1,13 +1,14 @@
 {% extends "base.html" %}
-{% from "_macros.html" import model_picker %}
+{% from "_macros.html" import model_picker, effort_options, usual_label %}
 {% block title %}Settings{% endblock %}
 {% macro model_select(tier, current) %}
-<select id="{{ tier }}_model" name="{{ tier }}_model" data-model-picker="#{{ tier }}_custom_wrap" data-effort="#{{ tier }}_effort_wrap">
-  <optgroup label="Claude (cloud, best quality)">
-    {% for mid, label in anthropic_models %}<option value="anthropic|{{ mid }}" {{ 'selected' if current.provider == 'anthropic' and current.model == mid }}>{{ label }}</option>{% endfor %}
-  </optgroup>
-  <optgroup label="Claude through Claude Code (your subscription, no API key)">
+<select id="{{ tier }}_model" name="{{ tier }}_model" autocomplete="off" data-model-picker="#{{ tier }}_custom_wrap" data-effort-select="#{{ tier }}_effort" data-effort="#{{ tier }}_effort_wrap">
+  <optgroup label="Claude through Claude Code (your subscription)">
     {% for mid, label in claude_code_models %}<option value="claude_code|{{ mid }}" {{ 'selected' if current.provider == 'claude_code' and current.model == mid }}>{{ label }}{{ '' if st.claude_code else ' (Claude Code not found)' }}</option>{% endfor %}
+  </optgroup>
+  <optgroup label="Claude Code: earlier versions">
+    {% for mid, label in claude_code_earlier %}<option value="claude_code|{{ mid }}" {{ 'selected' if current.provider == 'claude_code' and current.model == mid }}>{{ label }}{{ '' if st.claude_code else ' (Claude Code not found)' }}</option>{% endfor %}
+    {% if current.provider == 'claude_code' and current.model not in (claude_code_models + claude_code_earlier)|map(attribute=0)|list %}<option value="claude_code|{{ current.model }}" selected>{{ current.model }} (not on your plan now)</option>{% endif %}
   </optgroup>
   <optgroup label="On this Mac (Ollama, private and free)">
     {% for m in st.ollama_chat_models %}<option value="ollama|{{ m }}" {{ 'selected' if current.provider == 'ollama' and current.model == m }}>{{ m }}</option>{% else %}<option disabled>No Ollama models found</option>{% endfor %}
@@ -19,8 +20,8 @@
   {% if not current.provider %}<option value="" selected disabled>Choose a model</option>{% endif %}
 </select>
 <div id="{{ tier }}_custom_wrap" class="field" style="margin-top:.5rem" hidden><label for="{{ tier }}_custom">Model name on that server</label><input id="{{ tier }}_custom" type="text" name="{{ tier }}_custom" value="{{ current.model if current.provider == 'openai' else '' }}"></div>
-<div id="{{ tier }}_effort_wrap" class="field" style="margin-top:.5rem" hidden><label for="{{ tier }}_effort">Effort <span class="hint">· higher = more careful, slower, pricier</span></label>
-  <select id="{{ tier }}_effort" name="{{ tier }}_effort">{% for e in efforts %}<option value="{{ e }}" {{ 'selected' if current.effort == e }}>{{ e }}</option>{% endfor %}</select></div>
+<div id="{{ tier }}_effort_wrap" class="field" style="margin-top:.5rem" {{ 'hidden' if current.provider == 'openai' }}><label for="{{ tier }}_effort">Effort <span class="hint">· Claude: higher = more careful, slower, more of your plan · local model: whether it thinks first</span></label>
+  <select id="{{ tier }}_effort" name="{{ tier }}_effort" autocomplete="off">{{ effort_options(effort_kind(current.provider), current.effort or 'high') }}</select></div>
 {% endmacro %}
 {% block content %}
 <header class="page-head"><div><h1>Settings</h1></div></header>
@@ -29,8 +30,7 @@
 <section class="card" id="models">
   <h2>AI models</h2>
   <div class="grid-3" style="margin-bottom:1rem">
-    <div class="card flat"><strong>Claude API key</strong><div class="small">{% if st.anthropic_key %}<span class="pill good">saved</span> in your {{ st.anthropic_key }}{% else %}<span class="pill">not added</span>{% endif %}</div></div>
-    <div class="card flat"><strong>Ollama on this Mac</strong><div class="small">{% if st.ollama_running %}<span class="pill good">running</span> {{ st.ollama_models|length }} model{{ 's' if st.ollama_models|length != 1 }}{% else %}<span class="pill bad">not running</span> open the Ollama app{% endif %}</div></div>
+    <div class="card flat"><strong>Ollama on this Mac</strong><div class="small">{% if st.ollama_running %}<span class="pill good">running</span> {{ st.ollama_models|length }} model{{ 's' if st.ollama_models|length != 1 }}{% elif st.ollama_models %}<span class="pill">stopped</span> {{ st.ollama_models|length }} model{{ 's' if st.ollama_models|length != 1 }} installed; it starts when a step needs it{% else %}<span class="pill bad">no models</span> install Ollama and pull a model{% endif %}</div></div>
     <div class="card flat"><strong>Claude Code</strong><div class="small">{% if st.claude_code %}<span class="pill good">found</span> uses your Claude subscription{% else %}<span class="pill">not found</span>{% endif %}</div></div>
     <div class="card flat"><strong>Privacy</strong><div class="small">{% if st.local_only %}<span class="pill good">local only</span> nothing leaves this Mac{% else %}<span class="pill">cloud allowed</span>{% endif %}</div></div>
   </div>
@@ -58,23 +58,22 @@
   </form>
   <p class="small text-2" style="margin-top:.6rem">Tip: save before testing. Local models are free and private; Claude writes noticeably better letters. A common setup is Claude for writing and the local model for analysis.</p>
 
-  <hr>
-  <form method="post" action="/settings/key">
-    <input type="hidden" name="provider" value="anthropic">
-    <label for="key">Anthropic API key <span class="hint">· from console.anthropic.com → API keys. Stored in your macOS Keychain.</span></label>
-    <div class="row"><input id="key" type="password" name="key" placeholder="sk-ant-…" autocomplete="off" style="flex:1;min-width:240px">
-      <label class="check" style="margin:0"><input type="checkbox" name="use_claude" value="1"> <span>Use Claude for both tiers</span></label>
-      <button class="btn">Save key</button>
-      {% if st.anthropic_key == 'keychain' %}<button class="btn ghost danger" name="delete" value="1" formnovalidate>Remove key</button>{% endif %}</div>
-  </form>
 </section>
 
 <section class="card" id="claude-code">
   <h2>Claude through Claude Code</h2>
-  <p class="small text-2">Uses the Claude subscription you're logged in with (Pro or Max) instead of an API key, so there's no bill per call: it counts against your plan's usage limits, and when you hit one, tasks wait and try again later. The app runs Claude Code with every tool switched off, without plugins, connectors or saved sessions, in an empty folder, so it can only answer. Like any cloud model, it's blocked by Local only, and ID and bank numbers are removed first.</p>
+  <p class="small text-2">Uses the Claude subscription you're logged in with (Pro or Max), so there's no bill per call: it counts against your plan's usage limits, and when you hit one, tasks wait and try again later. The app runs Claude Code with every tool switched off, without plugins, connectors or saved sessions, in an empty folder, so it can only answer. Like any cloud model, it's blocked by Local only, and ID and bank numbers are removed first.</p>
   {% if st.claude_code %}
   <p class="small"><strong>Log in once.</strong> Open Terminal, run the line below, type <code>/login</code> and sign in in the browser, then type <code>/exit</code>. After that, pick a Claude Code model under AI models and press Test.</p>
   <pre class="code-line">"{{ st.claude_code }}"</pre>
+  <form method="post" action="/settings/claude-models" class="row" style="align-items:center;margin-top:.6rem">
+    <p class="small" style="margin:0;flex:1;min-width:240px"><strong>Models on your plan:</strong>
+      {% if claude_plan_busy %}being checked now…
+      {% elif claude_plan.checked_at %}{{ claude_plan.count }} versions, checked {{ claude_plan.checked_at|local_dt }}.
+      {% else %}not checked yet; the list shows the versions a subscription offered in November 2026.{% endif %}
+      The app asks each model Claude Code knows for one word through your plan, and checks again by itself when Claude Code is updated and once a week, so new versions appear and ones your plan drops disappear.</p>
+    <button class="btn" data-busy="Checking…" {{ 'disabled' if claude_plan_busy }}>Check again</button>
+  </form>
   {% else %}
   <p class="small">Claude Code wasn't found on this Mac. Install it from claude.com/claude-code (or open the Claude desktop app's Code tab once), then reload this page.</p>
   {% endif %}
@@ -82,20 +81,24 @@
 
 <section class="card" id="steps">
   <h2>Model and effort for each step</h2>
-  <p class="small text-2">Every step uses the Writing or Analysis model above unless you pick another here. Effort is how carefully a model works: higher is slower and uses more of your Claude plan. It applies to Claude models; on a local model, high or above switches thinking on. To use another model once, use the picker next to any button; to redo finished work, see below.</p>
+  <p class="small text-2">Every step uses the Writing or Analysis model above unless you pick another here. For a Claude model, effort is how carefully it works: higher is slower and uses more of your Claude plan. A local model has no effort levels, only whether it thinks before answering: better answers, but slower. A model on another server has no such setting. To use another model once, use the picker next to any button; to redo finished work, see below.</p>
   <form method="post" action="/settings/steps">
     <div class="table-wrap"><table class="data">
-      <thead><tr><th>Step</th><th>Model</th><th>Effort</th></tr></thead>
+      <thead><tr><th>Step</th><th>Model</th><th>Effort / thinking</th></tr></thead>
       <tbody>{% for st_ in steps %}
         <tr><td>{{ st_.label }}</td>
-          <td><select name="{{ st_.key }}_model" aria-label="Model for: {{ st_.label }}">
+          {%- set tier_cfg = cfg[st_.tier] or {} %}
+          {%- set usual_effort = st_.usual_effort or tier_cfg.effort %}
+          {%- set kind = effort_kind(st_.own.provider or tier_cfg.provider) %}
+          <td><select name="{{ st_.key }}_model" aria-label="Model for: {{ st_.label }}" autocomplete="off" data-effort-select="#effort_{{ st_.key }}" data-usual-provider="{{ tier_cfg.provider }}">
             <option value="">the {{ st_.tier|capitalize }} model{% if cfg[st_.tier] and cfg[st_.tier].model %} ({{ cfg[st_.tier].model }}){% endif %}</option>
             {% for group, items in model_groups %}<optgroup label="{{ group }}">{% for value, label in items %}<option value="{{ value }}" {{ 'selected' if st_.own.provider and value == st_.own.provider ~ '|' ~ st_.own.model }}>{{ label }}</option>{% endfor %}</optgroup>{% endfor %}
             {% if st_.own.provider and not (st_.own.provider ~ '|' ~ st_.own.model) in model_groups|map(attribute=1)|sum(start=[])|map(attribute=0)|list %}<option value="{{ st_.own.provider }}|{{ st_.own.model }}" selected>{{ st_.own.model }} (not available now)</option>{% endif %}
           </select></td>
-          <td><select name="{{ st_.key }}_effort" aria-label="Effort for: {{ st_.label }}">
-            <option value="">usual{% if st_.usual_effort %} ({{ st_.usual_effort }}){% elif cfg[st_.tier] and cfg[st_.tier].effort %} ({{ cfg[st_.tier].effort }}){% endif %}</option>
-            {% for e in efforts %}<option value="{{ e }}" {{ 'selected' if st_.own.effort == e }}>{{ e }}</option>{% endfor %}
+          <td><select id="effort_{{ st_.key }}" name="{{ st_.key }}_effort" aria-label="Effort for: {{ st_.label }}" autocomplete="off"
+                      data-usual-claude="{{ usual_label('claude', usual_effort) }}" data-usual-local="{{ usual_label('local', usual_effort) }}"
+                      {{ 'disabled' if kind == 'none' }}>
+            {{ effort_options(kind, st_.own.effort, usual_label(kind, usual_effort)) }}
           </select></td></tr>
       {% endfor %}</tbody>
     </table></div>
@@ -110,7 +113,7 @@
     <div class="grid-2">
       <div class="field"><label>Redo</label>{{ model_picker() }}</div>
       <div class="field"><label for="only_model">Only work made by <span class="hint">· optional</span></label>
-        <select id="only_model" name="only_model"><option value="">any model</option>{% for value, label in models_used %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></div>
+        <select id="only_model" name="only_model" autocomplete="off"><option value="">any model</option>{% for value, label in models_used %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></div>
     </div>
     {% for k, label in redo_kinds.items() %}<label class="check"><input type="checkbox" name="what_{{ k }}" value="1"> <span>{{ label }} <span class="muted">· {{ redo_counts[k] }} now</span></span></label>{% endfor %}
     <p class="small text-2">Documents whose facts came from the agent folder aren't read again here; improve the folder and import it again instead. With a local model, each item takes from one minute (a job) to about twelve (a draft).</p>

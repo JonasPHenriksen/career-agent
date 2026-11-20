@@ -33,7 +33,7 @@ DEFAULTS: dict[str, Any] = {
         "about": "",
     },
     "llm": {
-        # provider: "anthropic" | "ollama" | "openai" | "claude_code" ; "" = not configured yet
+        # provider: "claude_code" | "ollama" | "openai" ; "" = not configured yet
         "writing": {"provider": "", "model": "", "effort": "high"},
         "analysis": {"provider": "", "model": "", "effort": "medium"},
         "ollama_url": "http://localhost:11434",

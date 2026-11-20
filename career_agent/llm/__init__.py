@@ -15,18 +15,20 @@ from typing import Any
 from .. import db, keychain, privacy, settings
 from . import jsonutil
 from .errors import LLMConfigError, LLMError, LLMRefusal, LLMTransient
-from .providers import (CLAUDE_CODE_MODELS, AnthropicProvider, ClaudeCodeProvider, OllamaProvider,
-                        OpenAICompatProvider, ProviderReply, find_claude_binary, is_local_url, list_ollama_models)
+from . import plan
+from .providers import installed_ollama_models as installed_ollama
+from .providers import (CLAUDE_CODE_ALIASES, claude_name, ClaudeCodeProvider, OllamaProvider,
+                        OpenAICompatProvider, ProviderReply, find_claude_binary, is_local_url, list_ollama_models,
+                        ollama_models)
 
 __all__ = ["run", "LLMResponse", "LLMError", "LLMConfigError", "LLMRefusal", "LLMTransient", "jsonutil", "using",
            "made_by", "model_label", "model_choices", "parse_choice", "backfill_refs", "PROVIDERS",
-           "set_test_provider", "status", "tier_provider", "ollama_running", "EFFORTS", "STEPS", "STEP_OF", "step_provider", "step_settings", "detect_defaults", "bootstrap", "test_tier",
-           "ANTHROPIC_KEY", "OPENAI_KEY", "ProviderReply", "list_ollama_models"]
+           "set_test_provider", "status", "tier_provider", "ollama_running", "EFFORTS", "thinks", "effort_kind", "STEPS", "STEP_OF", "step_provider", "step_settings", "detect_defaults", "bootstrap", "test_tier",
+           "OPENAI_KEY", "ProviderReply", "list_ollama_models"]
 
-ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
 OPENAI_KEY = "OPENAI_API_KEY"
 CLAUDE_CODE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
-PROVIDERS = ("anthropic", "ollama", "openai", "claude_code")
+PROVIDERS = ("claude_code", "ollama", "openai")
 
 # What the current task is about ("app:12", "doc:3"…) and, for a redo, which model to use instead of Settings.
 _ctx: contextvars.ContextVar[dict] = contextvars.ContextVar("llm_context", default={})
@@ -35,7 +37,7 @@ _ctx: contextvars.ContextVar[dict] = contextvars.ContextVar("llm_context", defau
 @contextlib.contextmanager
 def using(ref: str | None = None, model: str | None = None):
     """Run model calls for `ref` (recorded with each call, so you can see which model made what) and, if `model`
-    is a choice like "claude_code|sonnet" or "ollama|gemma4:31b", with that model instead of the configured ones."""
+    is a choice like "claude_code|claude-sonnet-5-5" or "ollama|gemma4:31b", with that model instead of the configured ones."""
     token = _ctx.set({"ref": ref, "override": parse_choice(model)})
     try:
         yield
@@ -44,6 +46,17 @@ def using(ref: str | None = None, model: str | None = None):
 
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
+
+def thinks(effort: str | None) -> bool:
+    """For a local model, effort only says whether it thinks before answering."""
+    return effort in ("high", "xhigh", "max")
+
+
+def effort_kind(provider: str | None) -> str:
+    """What the effort choice means for this provider: "claude" (five levels), "local" (thinking on/off) or
+    "none" (a model on another server has no such setting)."""
+    return {"ollama": "local", "openai": "none"}.get(provider or "", "claude")
 
 # What the app does, step by step: (key, label, the tier whose model it uses by default, its model calls).
 # Settings lets you pick another model and effort for any step; a redo can pick one for a single run.
@@ -98,25 +111,6 @@ def step_provider(step: str, choice: str | None = None) -> str:
         tier = check_tier()
     return (settings.get("llm").get(tier) or {}).get("provider") or ""
 
-# USD per million tokens: input, output, cache read, cache write (5-minute TTL). Estimates.
-PRICES = {
-    "claude-opus-5-5": (4.0, 20.0, 0.20, 5.0),
-    "claude-opus-5": (5.0, 25.0, 0.50, 6.25),
-    "claude-sonnet-5-5": (2.0, 10.0, 0.10, 2.5),
-    "claude-sonnet-5": (2.0, 10.0, 0.20, 2.5),
-    "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125),
-    "claude-fable-5-2": (8.0, 40.0, 0.20, 10.0),
-    "claude-fable-5-1": (10.0, 50.0, 0.25, 12.5),
-}
-
-ANTHROPIC_MODELS = [
-    ("claude-opus-5-5", "Claude Opus 5.5 (best writing, recommended)"),
-    ("claude-sonnet-5-5", "Claude Sonnet 5.5 (cheaper, fast)"),
-    ("claude-haiku-5-5", "Claude Haiku 5.5 (cheapest, for bulk analysis)"),
-    ("claude-fable-5-2", "Claude Fable 5.2 (most capable, most expensive)"),
-]
-
-
 @dataclass
 class LLMResponse:
     text: str
@@ -128,7 +122,6 @@ class LLMResponse:
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
     duration_ms: int = 0
-    cost_usd: float = 0.0
 
 
 _test_provider = None
@@ -156,18 +149,11 @@ def _build(tier: str, effort: str | None, purpose: str | None = None):
     provider, model = t.get("provider"), t.get("model")
     if not provider or not model:
         raise LLMConfigError("No AI model is set up yet. Open Settings → AI models.")
-    if provider == "anthropic":
-        if cfg.get("local_only"):
-            raise LLMConfigError("Local-only mode is on, so cloud models are blocked. Pick a local model for this task in Settings.")
-        key = keychain.get(ANTHROPIC_KEY)
-        if not key:
-            raise LLMConfigError("Add your Anthropic API key in Settings → AI models.")
-        return AnthropicProvider(model=model, api_key=key, effort=effort or t.get("effort") or "medium")
     if provider == "ollama":
+        # A local model has no effort levels, only thinking first or not: on at high or above, on any step.
         level = effort or t.get("effort") or "high"
         return OllamaProvider(model=model, base_url=cfg.get("ollama_url") or "http://localhost:11434",
-                              num_ctx=int(cfg.get("ollama_num_ctx") or 32768),
-                              think=(tier == "writing" and level in ("high", "xhigh", "max")))
+                              num_ctx=int(cfg.get("ollama_num_ctx") or 32768), think=thinks(level))
     if provider == "openai":
         base = cfg.get("openai_base_url") or ""
         if cfg.get("local_only") and not is_local_url(base):
@@ -199,21 +185,13 @@ def ollama_running() -> bool:
     return _ollama_up(settings.get("llm").get("ollama_url") or "http://localhost:11434")
 
 
-def _cost(model: str, r: ProviderReply) -> float:
-    p = PRICES.get(model) or next((v for k, v in PRICES.items() if model.startswith(k)), None)
-    if not p:
-        return 0.0
-    return (r.input_tokens * p[0] + r.output_tokens * p[1] + r.cache_read * p[2] + r.cache_write * p[3]) / 1_000_000
-
-
-def _log(purpose: str, provider: str, model: str, r: ProviderReply | None, ms: int, cost: float,
-         error: str | None = None) -> None:
+def _log(purpose: str, provider: str, model: str, r: ProviderReply | None, ms: int, error: str | None = None) -> None:
     try:
         db.insert("llm_calls", {
             "purpose": purpose, "provider": provider, "model": model,
             "input_tokens": r.input_tokens if r else 0, "output_tokens": r.output_tokens if r else 0,
             "cache_read_tokens": r.cache_read if r else 0, "cache_write_tokens": r.cache_write if r else 0,
-            "cost_usd": cost, "duration_ms": ms, "ok": 0 if error else 1, "error": error,
+            "duration_ms": ms, "ok": 0 if error else 1, "error": error,
             "ref": _ctx.get().get("ref"), "created_at": db.now(),
         })
     except Exception:  # logging must never break a task
@@ -248,18 +226,17 @@ def run(tier: str, purpose: str, system: str, user: str, schema: dict | None = N
             reply.text = reply.text.rstrip() + "\n\n[…cut off: the model hit its output limit]"
         ms = int((time.monotonic() - t0) * 1000)
         used_model = reply.model or model
-        cost = _cost(used_model, reply)
-        _log(purpose, prov.name, used_model, reply, ms, cost)
+        _log(purpose, prov.name, used_model, reply, ms)
         return LLMResponse(text=reply.text, data=data, provider=prov.name, model=used_model,
                            input_tokens=reply.input_tokens, output_tokens=reply.output_tokens,
                            cache_read_tokens=reply.cache_read, cache_write_tokens=reply.cache_write,
-                           duration_ms=ms, cost_usd=cost)
+                           duration_ms=ms)
     except LLMError as e:
-        _log(purpose, prov.name, model, reply, int((time.monotonic() - t0) * 1000), 0.0, str(e))
+        _log(purpose, prov.name, model, reply, int((time.monotonic() - t0) * 1000), str(e))
         e.provider = prov.name  # so the task queue knows what to wait for
         raise
     except Exception as e:
-        _log(purpose, prov.name, model, reply, int((time.monotonic() - t0) * 1000), 0.0, repr(e))
+        _log(purpose, prov.name, model, reply, int((time.monotonic() - t0) * 1000), repr(e))
         err = LLMError(f"Unexpected error from the model provider: {e}")
         err.provider = prov.name
         raise err from e
@@ -284,7 +261,9 @@ def _chat_models(models: list[dict]) -> list[dict]:
     for m in models:
         name = m.get("name", "")
         family = ((m.get("details") or {}).get("family") or "").lower()
-        if "embed" in name or name.startswith(("bge", "all-minilm", "granite-embedding")) or family in _EMBEDDING_FAMILIES:
+        caps = m.get("capabilities") or []  # known when read from disk: an embedding model can't complete text
+        if "embed" in name or name.startswith(("bge", "all-minilm", "granite-embedding")) or family in _EMBEDDING_FAMILIES \
+                or (caps and "completion" not in caps):
             continue
         out.append(m)
     return out
@@ -303,11 +282,7 @@ def _pick_local(models: list[dict], prefs: tuple[str, ...] = _PREFER_WRITING) ->
 
 def detect_defaults() -> dict:
     cfg = settings.get("llm")
-    has_key = bool(keychain.get(ANTHROPIC_KEY))
-    models = list_ollama_models(cfg.get("ollama_url") or "http://localhost:11434")
-    if has_key and not cfg.get("local_only"):
-        return {"writing": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
-                "analysis": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "medium"}}
+    models = ollama_models(cfg.get("ollama_url") or "http://localhost:11434")
     writing, analysis = _pick_local(models, _PREFER_WRITING), _pick_local(models, _PREFER_ANALYSIS)
     if writing and analysis:
         return {"writing": {"provider": "ollama", "model": writing, "effort": "high"},
@@ -328,11 +303,12 @@ def bootstrap() -> None:
 
 def status() -> dict:
     cfg = settings.get("llm")
-    models = list_ollama_models(cfg.get("ollama_url") or "http://localhost:11434")
+    url = cfg.get("ollama_url") or "http://localhost:11434"
+    live = list_ollama_models(url)
+    models = live or (installed_ollama() if is_local_url(url) else [])
     return {
-        "anthropic_key": keychain.source(ANTHROPIC_KEY),
         "openai_key": keychain.source(OPENAI_KEY),
-        "ollama_running": bool(models) or _ollama_up(cfg.get("ollama_url") or ""),
+        "ollama_running": bool(live) or _ollama_up(url),
         "ollama_models": [m.get("name") for m in models],
         "ollama_chat_models": [m.get("name") for m in _chat_models(models)],  # without embedding models
         "local_only": bool(cfg.get("local_only")),
@@ -350,7 +326,8 @@ def status() -> dict:
 def model_label(provider: str | None, model: str | None) -> str:
     model = model or "?"
     if provider == "claude_code":
-        return f"Claude Code ({model.removeprefix('claude-code/')})"
+        short = model.removeprefix("claude-code/")
+        return f"{claude_name(CLAUDE_CODE_ALIASES.get(short, short))} (Claude Code)"
     if provider == "ollama":
         return f"{model} (local)"
     return model
@@ -389,11 +366,11 @@ def model_choices() -> list[tuple[str, list[tuple[str, str]]]]:
     cfg = settings.get("llm")
     groups = []
     if not cfg.get("local_only") and find_claude_binary(cfg.get("claude_code_path") or None):
-        groups.append(("Claude through Claude Code (your subscription)",
-                       [(f"claude_code|{m}", f"{label}") for m, label in CLAUDE_CODE_MODELS]))
-    if not cfg.get("local_only") and keychain.get(ANTHROPIC_KEY):
-        groups.append(("Claude API (billed per call)", [(f"anthropic|{m}", label) for m, label in ANTHROPIC_MODELS]))
-    local = [m.get("name") for m in _chat_models(list_ollama_models(cfg.get("ollama_url") or "http://localhost:11434"))]
+        newest, earlier = plan.choices()
+        groups.append(("Claude through Claude Code (your subscription)", [(f"claude_code|{m}", label) for m, label in newest]))
+        if earlier:
+            groups.append(("Claude Code: earlier versions", [(f"claude_code|{m}", label) for m, label in earlier]))
+    local = [m.get("name") for m in _chat_models(ollama_models(cfg.get("ollama_url") or "http://localhost:11434"))]
     if local:
         groups.append(("On this Mac (Ollama)", [(f"ollama|{m}", m) for m in local]))
     other = [cfg.get(t) or {} for t in ("writing", "analysis")]

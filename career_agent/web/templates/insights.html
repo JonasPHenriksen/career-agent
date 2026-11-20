@@ -80,10 +80,10 @@
     <h2>AI usage, last {{ spend.days }} days</h2>
     {% if spend.rows %}
     <table class="metric-table">
-      <thead><tr><th>Model</th><th class="num">Calls</th><th class="num">Tokens in / out</th><th class="num">Est. cost</th></tr></thead>
-      <tbody>{% for s in spend.rows %}<tr><td>{{ s.model }} <span class="muted small">{{ 'on this Mac' if s.provider == 'ollama' else s.provider }}</span></td><td class="num">{{ s.calls }}</td><td class="num">{{ '{:,}'.format(s.inp or 0) }} / {{ '{:,}'.format(s.outp or 0) }}</td><td class="num">{{ '$%.2f'|format(s.cost or 0) if s.provider != 'ollama' else 'free' }}</td></tr>{% endfor %}</tbody>
+      <thead><tr><th>Model</th><th class="num">Calls</th><th class="num">Tokens in / out</th></tr></thead>
+      <tbody>{% for s in spend.rows %}<tr><td>{{ s.label }}</td><td class="num">{{ s.calls }}</td><td class="num">{{ '{:,}'.format(s.inp or 0) }} / {{ '{:,}'.format(s.outp or 0) }}</td></tr>{% endfor %}</tbody>
     </table>
-    <p class="legend-note">Estimated from published prices. Local models cost nothing but electricity.</p>
+    <p class="legend-note">Claude through your subscription counts against your plan's usage limits, with no bill per call. Local models cost nothing but electricity.</p>
     {% else %}<p class="empty">No AI calls yet.</p>{% endif %}
   </section>
 </div>

@@ -78,7 +78,7 @@ def test_offline_waits_but_a_site_that_is_down_is_retried_then_reported(fake, mo
 
 def test_what_each_task_needs(fake):
     llm.set_test_provider(None)  # look at Settings, as the real queue does
-    settings.update("llm", {"writing": {"provider": "claude_code", "model": "opus"},
+    settings.update("llm", {"writing": {"provider": "claude_code", "model": "claude-opus-5-5"},
                             "analysis": {"provider": "ollama", "model": "gemma4:26b-mlx"}, "check_with": "auto"})
 
     def needs(kind, payload="{}"):
@@ -89,7 +89,7 @@ def test_what_each_task_needs(fake):
     assert needs("parse_job", '{"job_id": 1, "use_text": true}') == {"ollama"}
     assert needs("poll_source") == {"ollama", "network"}
     assert needs("draft_application") == {"claude_code"}  # written and fact-checked by the cloud writer
-    assert needs("score_job", '{"job_id": 1, "model": "claude_code|sonnet"}') == {"claude_code"}
+    assert needs("score_job", '{"job_id": 1, "model": "claude_code|claude-sonnet-5-5"}') == {"claude_code"}
     assert needs("maintenance") == set() and needs("embed_index") == set()
     settings.update("llm", {"check_with": "analysis"})
     assert needs("draft_application") == {"claude_code", "ollama"}

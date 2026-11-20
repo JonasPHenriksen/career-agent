@@ -686,7 +686,7 @@ def check_tier() -> str:
     from .llm.providers import is_local_url
 
     w = cfg.get("writing") or {}
-    cloud = w.get("provider") in ("anthropic", "claude_code") or (
+    cloud = w.get("provider") == "claude_code" or (
         w.get("provider") == "openai" and not is_local_url(cfg.get("openai_base_url") or ""))
     return "writing" if cloud else "analysis"
 

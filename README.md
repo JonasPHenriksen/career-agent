@@ -41,7 +41,7 @@ at the top. What you start yourself still runs.
 The **Today** page walks you through setup:
 
 1. **AI model.** Your Mac already has Ollama with Gemma 4 26B, so it works out of the box, fully
-   offline. For the best letters, add a Claude API key in Settings (see below).
+   offline. For the best letters, use Claude through your Claude subscription (see below).
 2. **About you.** Name and contact details (printed on your documents, never sent to the AI),
    target roles, locations, deal-breakers, things to always or never mention.
 3. **Import your documents.** Drop files (PDF, Word, PowerPoint…), or import a whole folder (`~/Documents/Job applications`).
@@ -240,7 +240,7 @@ Tips:
   locally; only the letter-writing context goes to Claude. The fact check runs on the Writing model by
   default (Settings → Search & fact check), since it's your safety net.
 
-## Using Claude without an API key (Free or Pro plan)
+## Using Claude.ai by copy and paste (Free or Pro plan)
 
 No per-call costs: the app prepares everything and you paste it into your normal Claude.ai chat.
 
@@ -284,23 +284,18 @@ and your contact details are never included (they're added to the PDFs locally).
 ### Claude through Claude Code (your subscription)
 
 With Claude Code installed (the Claude desktop app brings its own copy), pick *Claude through Claude Code* under
-Settings → AI models. It uses the Claude plan you're logged in with instead of an API key, so there's no bill per
-call: calls count against your plan's limits, and tasks wait and retry when you hit one. Log in once in Terminal
+Settings → AI models. It uses the Claude plan you're logged in with, so there's no bill per call: calls count against your plan's limits, and tasks wait and retry when you hit one. Log in once in Terminal
 (Settings shows the exact command; then type `/login`). The app runs it with every tool switched off, without
 plugins, connectors or saved sessions, in an empty folder, so it can only answer. *Local only* blocks it like any
 cloud model, and ID and bank numbers are removed first.
 
-## Using Claude (cloud, best quality)
-
-1. Create an API key at <https://console.anthropic.com> → API keys (it's separate from a Claude.ai
-   subscription and billed per use).
-2. Settings → AI models → paste the key (it's stored in your macOS Keychain), tick “Use Claude for both
-   tiers”, save, and press **Test**.
-
-The default model is Claude Opus 5.5. A full application (letter, CV, fact check) typically costs on the
-order of a few tens of cents, and reading and scoring a job a few cents. The large shared context
-(your career database, style guide and examples) is prompt-cached, so batches cost less. Insights → AI usage
-shows your actual spend. For cheaper bulk work, choose Claude Haiku 5.5 or Sonnet 5.5 for Analysis.
+The choices name exact versions, so you always know which model did the work: the newest of each kind (Claude
+Opus, Sonnet, Haiku, Fable) first, and the older versions your plan still runs under *earlier versions*. The list
+follows your subscription: the app reads the model IDs from the installed Claude Code (which updates itself and
+learns about new models), asks each one for a single word through your plan, and keeps the ones that answer as
+themselves. That check runs by itself when Claude Code has been updated and once a week (not while automatic work
+is on hold), and Settings → *Check again* runs it now. You get a notification when a new model appears, or when one
+you use is no longer on your plan; nothing switches on its own.
 
 **Which model for which step?** [reports/model-findings-2026-11.md](reports/model-findings-2026-11.md) has the short
 version from real job ads: Claude Opus at high effort for writing, the local model for the rest, and why.
@@ -314,9 +309,7 @@ closely, or let Claude do at least the fact check (Settings → Search & fact ch
 Claude as the Writing model).
 
 Before anything goes to a cloud model, ID numbers (CPR, etc.), bank and card numbers are removed.
-Your contact details are never sent: they're added to the PDFs locally. Requests use Anthropic's
-server-side fallback (`fallbacks: "default"`), so if the model declines a request it is retried on a
-fallback model automatically. Since this only writes job applications, that should almost never happen.
+Your contact details are never sent: they're added to the PDFs locally.
 
 ## Running it only when you want it
 
@@ -403,7 +396,7 @@ uv run python -m career_agent --port 8765 --data ./data --no-browser
 
 | Path | What |
 |---|---|
-| `career_agent/llm/` | Providers (Claude API, Claude Code, Ollama, OpenAI-compatible), JSON schemas, cost tracking, who made what |
+| `career_agent/llm/` | Providers (Claude Code, Ollama, OpenAI-compatible), the models your Claude plan offers, JSON schemas, usage tracking, who made what |
 | `career_agent/ingest.py` | File, folder and mailbox import; text extraction |
 | `career_agent/profile.py` | Document analysis into facts, de-duplication, prompt digests |
 | `career_agent/retrieval.py` | Passages, local embeddings, hybrid keyword + meaning search |

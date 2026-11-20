@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 templates = Jinja2Templates(directory=str(HERE / "templates"))
 helpers.install(templates.env)
 templates.env.globals["model_choices"] = llm.model_choices  # for the "with which model" picker on redo buttons
+templates.env.globals["effort_kind"] = llm.effort_kind  # what effort means for a model: levels, thinking, or nothing
 
 
 def chosen_model(f: dict) -> dict:
@@ -173,8 +174,6 @@ def llm_ready() -> tuple[bool, str]:
         t = cfg.get(tier) or {}
         if not t.get("provider") or not t.get("model"):
             return False, "Choose an AI model in Settings."
-        if t["provider"] == "anthropic" and not keychain.get(llm.ANTHROPIC_KEY):
-            return False, "Add your Anthropic API key in Settings."
         if t["provider"] == "claude_code" and not llm.find_claude_binary(cfg.get("claude_code_path") or None):
             return False, "Claude Code wasn't found on this Mac. See Settings → Claude through Claude Code."
     return True, ""
@@ -1184,7 +1183,7 @@ def settings_page(request: Request):
     if bk_error and (bk_error["finished_at"] or "") <= bk["last_at"]:
         bk_error = None
     return render(request, "settings.html", st=st, cfg=settings.get("llm"), auto=settings.get("automation"),
-                  w=settings.get("writing"), anthropic_models=llm.ANTHROPIC_MODELS,
+                  w=settings.get("writing"),
                   sources=db.q("SELECT * FROM sources ORDER BY id"), source_kinds=sources.KINDS,
                   collect_bookmark=collect.bookmark(str(request.base_url)),
                   collect_sites=sorted({name for name, _ in collect.SITES.values()}),
@@ -1194,7 +1193,8 @@ def settings_page(request: Request):
                   steps=[{"key": k, "label": label, "tier": {"check": writer.check_tier()}.get(tier, tier),
                           "own": llm.step_settings(k), "usual_effort": STEP_USUAL_EFFORT.get(k, "")} for k, label, tier, _ in llm.STEPS],
                   model_groups=llm.model_choices(),
-                  claude_code_models=llm.CLAUDE_CODE_MODELS, redo_kinds=redo.KINDS, redo_counts={k: len(v) for k, v in redo.candidates().items()},
+                  claude_code_models=llm.plan.choices()[0], claude_code_earlier=llm.plan.choices()[1],
+                  claude_plan=llm.plan.status(), claude_plan_busy=tasks.active(ref="claude-models"), redo_kinds=redo.KINDS, redo_counts={k: len(v) for k, v in redo.candidates().items()},
                   models_used=redo.models_used(), backup=bk, backup_busy=tasks.active(ref="backup"), backup_error=bk_error)
 
 
@@ -1245,28 +1245,10 @@ async def settings_steps(request: Request):
     return go("/settings#steps", msg="Saved. Each step uses its model and effort from the next task on.")
 
 
-@app.post("/settings/key")
-async def settings_key(request: Request):
-    f = await form(request)
-    name = {"anthropic": llm.ANTHROPIC_KEY, "openai": llm.OPENAI_KEY}.get(f.get("provider", ""))
-    key = f.get("key", "")
-    if not name:
-        return go("/settings#models", err="Unknown provider.")
-    if f.get("delete"):
-        keychain.delete(name)
-        return go("/settings#models", msg="Key removed.")
-    if len(key) < 20:
-        return go("/settings#models", err="That doesn't look like an API key.")
-    try:
-        keychain.set(name, key)
-    except Exception as e:  # noqa: BLE001
-        return go("/settings#models", err=f"Couldn't store the key in Keychain: {e}")
-    if name == llm.ANTHROPIC_KEY:
-        cfg = settings.get("llm")
-        if not (cfg.get("writing") or {}).get("provider") or f.get("use_claude"):
-            settings.update("llm", {"writing": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"},
-                                    "analysis": {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "medium"}})
-    return go("/settings#models", msg="Key saved in your macOS Keychain.")
+@app.post("/settings/claude-models")
+async def settings_claude_models(request: Request):
+    tasks.enqueue("check_claude_models", {}, ref="claude-models")
+    return go("/settings#claude-code", msg="Checking which Claude models your plan offers. It takes a minute or two.")
 
 
 @app.post("/settings/test/{tier}")

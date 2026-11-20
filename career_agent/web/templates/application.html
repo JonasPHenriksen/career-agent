@@ -46,7 +46,7 @@
 {% elif not a.letter and tab == 'letter' %}
 <section class="card" style="max-width:46rem">
   <h2>No draft yet</h2>
-  <p class="text-2">Write it with Claude.ai (free or Pro, no API key), or let the local model write it in the background.</p>
+  <p class="text-2">Write it with Claude.ai (free or Pro), or let the local model write it in the background.</p>
   <div class="row"><a class="btn primary" href="?tab=claude">Write with Claude.ai</a>
     <form method="post" action="/applications/{{ a.id }}/redraft" class="inline row">{{ model_picker() }}<button class="btn" data-busy="Starting…">Write it in the app</button></form></div>
 </section>

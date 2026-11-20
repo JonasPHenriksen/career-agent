@@ -315,7 +315,7 @@ def test_fact_check_model_choice(fake):
     from career_agent import settings
     settings.update("llm", {"writing": {"provider": "ollama", "model": "big"}, "check_with": "auto"})
     assert writer.check_tier() == "analysis", "locally the faster model checks"
-    settings.update("llm", {"writing": {"provider": "anthropic", "model": "claude-opus-5-5"}})
+    settings.update("llm", {"writing": {"provider": "claude_code", "model": "claude-opus-5-5"}})
     assert writer.check_tier() == "writing", "with Claude writing, Claude checks"
     settings.update("llm", {"check_with": "analysis"})
     assert writer.check_tier() == "analysis"

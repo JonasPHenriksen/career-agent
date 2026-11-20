@@ -25,16 +25,33 @@
 </div>
 {%- endmacro %}
 
+{#- Effort options that fit the model: five levels for Claude, thinking on/off for a local model, none for a model
+    on another server. static/app.js rebuilds them the same way when you pick another model. -#}
+{% macro effort_options(kind, current='', usual=None, suffix='') -%}
+{%- if kind == 'none' -%}<option value="">no effort setting</option>
+{%- else -%}
+{%- if usual is not none %}<option value="">{{ usual }}</option>{% endif -%}
+{%- if kind == 'local' -%}
+<option value="low" {{ 'selected' if current and current not in ('high', 'xhigh', 'max') }}>thinking off</option><option value="high" {{ 'selected' if current in ('high', 'xhigh', 'max') }}>thinking on</option>
+{%- else -%}
+{%- for e in ['low', 'medium', 'high', 'xhigh', 'max'] %}<option value="{{ e }}" {{ 'selected' if current == e }}>{{ e }}{{ suffix }}</option>{% endfor -%}
+{%- endif -%}
+{%- endif -%}
+{%- endmacro %}
+
+{% macro usual_label(kind, effort) -%}
+{%- if kind == 'local' %}usual (thinking {{ 'on' if effort in ('high', 'xhigh', 'max') else 'off' }}){% elif effort %}usual ({{ effort }}){% else %}usual{% endif -%}
+{%- endmacro %}
+
 {% macro model_picker() -%}
 {%- set groups = model_choices() -%}
 {%- if groups -%}
-<select name="model" class="model-picker" aria-label="Which model to use" title="Leave it on your settings, or pick another model to redo this with">
+<select name="model" class="model-picker" aria-label="Which model to use" title="Leave it on your settings, or pick another model to redo this with" autocomplete="off" data-effort-select>
   <option value="">with your settings</option>
   {%- for group, items in groups %}<optgroup label="{{ group }}">{% for value, label in items %}<option value="{{ value }}">with {{ label }}</option>{% endfor %}</optgroup>{% endfor %}
 </select>
-<select name="effort" class="model-picker" aria-label="How much effort" title="How carefully the model works: higher is slower and uses more of your plan. Applies to Claude models; on a local model, high or above switches thinking on.">
-  <option value="">usual effort</option>
-  {%- for e in ['low', 'medium', 'high', 'xhigh', 'max'] %}<option value="{{ e }}">{{ e }} effort</option>{% endfor %}
+<select name="effort" class="model-picker" aria-label="How much effort" title="For Claude: how carefully it works (higher is slower and uses more of your plan). For a local model: whether it thinks first." autocomplete="off" data-usual-claude="usual effort" data-usual-local="usual thinking" data-suffix=" effort">
+  {{ effort_options('claude', usual='usual effort', suffix=' effort') }}
 </select>
 {%- endif -%}
 {%- endmacro %}

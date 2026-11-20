@@ -27,13 +27,13 @@ def test_a_full_redo_queues_every_step_in_the_order_it_depends_on(fake):
     assert found["screen"] == [f"job:{kept}", f"job:{dropped}"], "listings from a source that you haven't acted on"
     assert found["ads"] == [f"job:{kept}", f"job:{by_hand}", f"job:{pasted}"] and f"job:{mine}" not in found["jobs"]
 
-    counts = redo.enqueue(["jobs", "ads", "screen"], model="claude_code|sonnet|high")
+    counts = redo.enqueue(["jobs", "ads", "screen"], model="claude_code|claude-sonnet-5-5|high")
     assert counts == {"screen": 2, "ads": 3, "jobs": 0}, "an ad that is read again is scored as part of that"
     queued = [(t["kind"], json.loads(t["payload"])) for t in db.q("SELECT kind, payload FROM tasks ORDER BY id")]
-    assert queued[0] == ("rescreen_jobs", {"model": "claude_code|sonnet|high"}), "screening comes first, as one task"
-    assert queued[1:] == [("parse_job", {"job_id": kept, "model": "claude_code|sonnet|high"}),
-                          ("parse_job", {"job_id": by_hand, "model": "claude_code|sonnet|high"}),
-                          ("parse_job", {"job_id": pasted, "use_text": True, "model": "claude_code|sonnet|high"})]
+    assert queued[0] == ("rescreen_jobs", {"model": "claude_code|claude-sonnet-5-5|high"}), "screening comes first, as one task"
+    assert queued[1:] == [("parse_job", {"job_id": kept, "model": "claude_code|claude-sonnet-5-5|high"}),
+                          ("parse_job", {"job_id": by_hand, "model": "claude_code|claude-sonnet-5-5|high"}),
+                          ("parse_job", {"job_id": pasted, "use_text": True, "model": "claude_code|claude-sonnet-5-5|high"})]
     assert tasks.TASK_LABELS["rescreen_jobs"] and "rescreen_jobs" in tasks.TASK_STEPS
 
 

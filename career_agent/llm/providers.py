@@ -1,5 +1,5 @@
-"""Model providers: Anthropic (Claude, cloud), Ollama (local), and any OpenAI-compatible server
-(LM Studio, mlx_lm.server, llama.cpp...). Each exposes complete(system, user, schema, max_tokens)."""
+"""Model providers: Claude through Claude Code (your subscription), Ollama (local), and any OpenAI-compatible
+server (LM Studio, mlx_lm.server, llama.cpp...). Each exposes complete(system, user, schema, max_tokens)."""
 from __future__ import annotations
 
 import re
@@ -27,88 +27,6 @@ class ProviderReply:
 def is_local_url(url: str) -> bool:
     host = (urlparse(url).hostname or "").lower()
     return host in ("localhost", "127.0.0.1", "::1") or host.endswith(".local")
-
-
-# ----------------------------------------------------------------------------------------
-# Anthropic
-# ----------------------------------------------------------------------------------------
-
-# Models that accept server-side refusal fallbacks (`fallbacks: "default"`).
-_FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-2", "claude-fable-5-1", "claude-sonnet-5-5"}
-_EFFORT_RE = re.compile(r"^claude-(opus|sonnet|haiku|fable|mythos)-(5|[6-9])|^claude-opus-4-[5-9]|^claude-sonnet-4-6")
-
-
-class AnthropicProvider:
-    name = "anthropic"
-    is_cloud = True
-
-    def __init__(self, model: str, api_key: str, effort: str = "medium"):
-        import anthropic
-
-        self._anthropic = anthropic
-        self.model = model
-        self.effort = effort
-        self.client = anthropic.Anthropic(api_key=api_key, max_retries=3)
-
-    def complete(self, system: str, user: str, schema: dict | None, max_tokens: int) -> ProviderReply:
-        a = self._anthropic
-        output_config: dict = {}
-        if _EFFORT_RE.match(self.model) and self.effort:
-            effort = self.effort
-            if self.model.startswith("claude-opus-4-5") and effort in ("xhigh", "max"):
-                effort = "high"
-            output_config["effort"] = effort
-        if schema is not None:
-            output_config["format"] = {"type": "json_schema", "schema": schema}
-        kwargs: dict = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            # The system prompt carries the stable context (profile, style guide, examples),
-            # so cache it: repeated drafts reuse it at a fraction of the price.
-            "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            "messages": [{"role": "user", "content": user}],
-        }
-        if output_config:
-            kwargs["output_config"] = output_config
-        try:
-            if self.model in _FALLBACK_MODELS:
-                ctx = self.client.beta.messages.stream(
-                    **kwargs, betas=["server-side-fallback-2026-07-01"], fallbacks="default"
-                )
-            else:
-                ctx = self.client.messages.stream(**kwargs)
-            with ctx as stream:
-                msg = stream.get_final_message()
-        except a.AuthenticationError as e:
-            raise LLMConfigError("Anthropic rejected the API key. Check it in Settings → AI models.") from e
-        except a.PermissionDeniedError as e:
-            raise LLMConfigError(f"The API key can't use {self.model}: {e.message}") from e
-        except a.NotFoundError as e:
-            raise LLMConfigError(f"Model '{self.model}' was not found. Pick another model in Settings.") from e
-        except a.RateLimitError as e:
-            raise LLMError("Anthropic rate limit reached. The task can be retried in a minute.") from e
-        except a.BadRequestError as e:
-            raise LLMError(f"Anthropic rejected the request: {e.message}") from e
-        except a.APIStatusError as e:
-            raise LLMError(f"Anthropic API error {e.status_code}: {e.message}") from e
-        except a.APIConnectionError as e:
-            raise LLMError("Couldn't reach the Anthropic API. Check your internet connection.") from e
-
-        if msg.stop_reason == "refusal":
-            details = getattr(msg, "stop_details", None)
-            why = getattr(details, "explanation", None) or "no explanation given"
-            raise LLMRefusal(f"The model declined this request ({why}).")
-        text = "".join(getattr(blk, "text", "") for blk in msg.content if blk.type == "text")
-        u = msg.usage
-        return ProviderReply(
-            text=text,
-            input_tokens=getattr(u, "input_tokens", 0) or 0,
-            output_tokens=getattr(u, "output_tokens", 0) or 0,
-            cache_read=getattr(u, "cache_read_input_tokens", 0) or 0,
-            cache_write=getattr(u, "cache_creation_input_tokens", 0) or 0,
-            truncated=msg.stop_reason == "max_tokens",
-            model=str(getattr(msg, "model", self.model)),
-        )
 
 
 # ----------------------------------------------------------------------------------------
@@ -197,12 +115,52 @@ class OllamaProvider:
 
 
 def list_ollama_models(base_url: str) -> list[dict]:
+    """The models a running Ollama serves ([] when it isn't running)."""
     try:
         r = httpx2.get(f"{base_url.rstrip('/')}/api/tags", timeout=3)
         r.raise_for_status()
         return r.json().get("models") or []
     except (httpx2.HTTPError, ValueError):
         return []
+
+
+def installed_ollama_models(models_dir: str | None = None) -> list[dict]:
+    """The models Ollama has on this Mac, read from its model folder (OLLAMA_MODELS, else ~/.ollama/models) in the
+    shape /api/tags gives, so the list is right while Ollama isn't running too. A model you pull or remove shows up
+    or disappears at once."""
+    import json
+    import os
+
+    root = os.path.expanduser(models_dir or os.environ.get("OLLAMA_MODELS") or "~/.ollama/models")
+    manifests = os.path.join(root, "manifests")
+    out = []
+    for dirpath, _, files in os.walk(manifests):
+        for tag in files:
+            parts = os.path.relpath(os.path.join(dirpath, tag), manifests).split(os.sep)
+            if len(parts) != 4 or tag.startswith("."):
+                continue
+            host, namespace, model, tag = parts
+            name = (f"{model}:{tag}" if namespace == "library" else f"{namespace}/{model}:{tag}") \
+                if host == "registry.ollama.ai" else f"{host}/{namespace}/{model}:{tag}"
+            try:
+                with open(os.path.join(dirpath, tag), encoding="utf-8") as fh:
+                    manifest = json.load(fh)
+                config = {}
+                digest = ((manifest.get("config") or {}).get("digest") or "").replace(":", "-")
+                if digest:
+                    with open(os.path.join(root, "blobs", digest), encoding="utf-8") as fh:
+                        config = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            out.append({"name": name, "size": sum(int(layer.get("size") or 0) for layer in manifest.get("layers") or []),
+                        "details": {"family": config.get("model_family") or ""},
+                        "capabilities": config.get("capabilities") or []})
+    return sorted(out, key=lambda m: m["name"])
+
+
+def ollama_models(base_url: str) -> list[dict]:
+    """The models you can pick: what a running Ollama serves, else what's installed (for Ollama on this Mac)."""
+    return list_ollama_models(base_url) or (installed_ollama_models() if is_local_url(base_url) else [])
 
 
 # ----------------------------------------------------------------------------------------
@@ -260,7 +218,39 @@ class OpenAICompatProvider:
 # Claude through Claude Code (your Claude subscription, no API key)
 # ----------------------------------------------------------------------------------------
 
-CLAUDE_CODE_MODELS = [("sonnet", "Claude Sonnet"), ("opus", "Claude Opus"), ("haiku", "Claude Haiku")]
+# Exact versions, so you always know which model did the work: the ones a Claude subscription runs through Claude
+# Code. Checked 2026-11-20 by asking each one: Mythos isn't on the plan, and Opus 4.1 and Fable 5 are left out
+# because another model answers in their place (Opus 5.5 and Opus 4.8).
+CLAUDE_CODE_MODELS = [
+    ("claude-opus-5-5", "Claude Opus 5.5 (best writing)"),
+    ("claude-sonnet-5-5", "Claude Sonnet 5.5 (fast, for analysis)"),
+    ("claude-haiku-5-5", "Claude Haiku 5.5 (fastest, lightest on your plan)"),
+    ("claude-fable-5-2", "Claude Fable 5.2 (most capable)"),
+]
+CLAUDE_CODE_EARLIER = [
+    ("claude-fable-5-1", "Claude Fable 5.1"),
+    ("claude-opus-5", "Claude Opus 5"),
+    ("claude-sonnet-5", "Claude Sonnet 5"),
+    ("claude-opus-4-8", "Claude Opus 4.8"),
+    ("claude-opus-4-7", "Claude Opus 4.7"),
+    ("claude-opus-4-6", "Claude Opus 4.6"),
+    ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+    ("claude-opus-4-5", "Claude Opus 4.5"),
+    ("claude-sonnet-4-5", "Claude Sonnet 4.5"),
+    ("claude-haiku-4-5", "Claude Haiku 4.5"),
+]
+
+
+def claude_name(model: str) -> str:
+    """ "claude-opus-4-8" → "Claude Opus 4.8"; anything else as it is."""
+    m = re.match(r"^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?$", model)
+    if not m:
+        return model
+    return f"Claude {m.group(1).capitalize()} {m.group(2)}{'.' + m.group(3) if m.group(3) else ''}"
+# The short names Claude Code also accepts follow whatever is newest. Older settings and queued tasks may still
+# hold one; they run on the version each stood for when the app switched to exact versions.
+CLAUDE_CODE_ALIASES = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5",
+                       "fable": "claude-fable-5-2"}
 
 
 def find_claude_binary(configured: str | None = None) -> str | None:
@@ -294,6 +284,7 @@ class ClaudeCodeProvider:
     is_cloud = True
 
     def __init__(self, model: str, binary: str, token: str = "", effort: str | None = None, timeout: int = 1200):
+        model = CLAUDE_CODE_ALIASES.get(model, model)
         self.model, self.binary, self.token, self.effort, self.timeout = model, binary, token, effort, timeout
 
     def args(self, system_file: str, schema: dict | None) -> list[str]:

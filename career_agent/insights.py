@@ -92,8 +92,16 @@ def company_rankings() -> dict:
 
 
 def spend(days: int = 30) -> dict:
+    """Model calls per model: Claude through your subscription counts against your plan's limits, local models are free."""
+    from . import llm
+
     rows = db.q("SELECT provider, model, COUNT(*) AS calls, SUM(input_tokens) AS inp, SUM(output_tokens) AS outp, "
-                "SUM(cache_read_tokens) AS cached, SUM(cost_usd) AS cost FROM llm_calls WHERE created_at >= ? "
-                "GROUP BY provider, model ORDER BY cost DESC", (db.days_ago(days),))
-    total = sum((r["cost"] or 0) for r in rows)
-    return {"rows": rows, "total": round(total, 2), "days": days}
+                "SUM(cache_read_tokens) AS cached FROM llm_calls WHERE created_at >= ? "
+                "GROUP BY provider, model ORDER BY calls DESC", (db.days_ago(days),))
+    merged: dict[str, dict] = {}  # one row per model, also when older records name it differently
+    for r in rows:
+        label = llm.model_label(r["provider"], r["model"])
+        m = merged.setdefault(label, {"label": label, "provider": r["provider"], "calls": 0, "inp": 0, "outp": 0, "cached": 0})
+        for k in ("calls", "inp", "outp", "cached"):
+            m[k] += r[k] or 0
+    return {"rows": sorted(merged.values(), key=lambda m: -m["calls"]), "days": days}
