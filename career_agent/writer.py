@@ -687,9 +687,19 @@ def check_claims(letter: str, cv: str, tier: str | None = None) -> dict:
 
 
 def run_checks(app_id: int) -> dict:
+    """The voice numbers and the fact check, here; the read for your voice is queued as its own small step, and
+    only when the letter changed since it was last read."""
+    from . import tasks
+
     app = db.q1("SELECT * FROM applications WHERE id = ?", (app_id,))
     v = voice.check(app["letter"] or "", app["language"])
+    kept = voice.read_notes(app)
+    kept = kept if kept and not kept.get("skipped") else None  # skipped (no style guide then): try again
+    if kept:
+        v["read"] = kept
     db.update("applications", app_id, {"voice": db.jdump(v)})
+    if (app["letter"] or "").strip() and not kept:
+        tasks.enqueue("read_voice", {"application_id": app_id}, ref=f"app:{app_id}")
     if not (app["letter"] or app["cv"]):
         return {"voice": v["score"]}
     d = check_claims(app["letter"] or "", app["cv"] or "")

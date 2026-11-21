@@ -459,7 +459,8 @@ def application(request: Request, app_id: int, tab: str = ""):
     prompt = writer.manual_prompt(app_id) if tab == "claude" else ""
     ref = f"app:{app_id}"
     made = {"letter": llm.made_by(ref, ("write_letter", "revise_letter")), "cv": llm.made_by(ref, ("write_cv", "revise_cv")),
-            "check": llm.made_by(ref, ("claim_check",)), "prep": llm.made_by(ref, ("interview_prep",))}
+            "check": llm.made_by(ref, ("claim_check",)), "prep": llm.made_by(ref, ("interview_prep",)),
+            "voice": llm.made_by(ref, ("voice_read",))}
     cv_data = db.jload(a.get("cv_data"), None)
     cv_pages, cv_error = 0, ""
     if cv_data and tab in ("cv", "review"):
@@ -471,7 +472,7 @@ def application(request: Request, app_id: int, tab: str = ""):
                   cv_data=cv_data, cv_json=json.dumps(cv_data, ensure_ascii=False, indent=2) if cv_data else "",
                   cv_pages=cv_pages, cv_error=cv_error, cv_base=cvdata.base_for(a["language"]), look=look,
                   prompt=prompt, prompt_words=len(prompt.split()),
-                  v=db.jload(a["voice"], {}) or {}, notes=db.jload(a["writer_notes"], []) or [],
+                  v=db.jload(a["voice"], {}) or {}, read=voice.read_notes(a), notes=db.jload(a["writer_notes"], []) or [],
                   busy=tasks.active(ref=f"app:{app_id}"), error=tasks.last_error(f"app:{app_id}"),
                   versions=db.q("SELECT * FROM app_versions WHERE application_id = ? ORDER BY id DESC", (app_id,)),
                   timeline=tracker.timeline(app_id), statuses=tracker.APP_STATUSES, event_types=tracker.EVENT_TYPES,
@@ -510,7 +511,11 @@ async def application_save(request: Request, app_id: int):
     db.insert("app_versions", {"application_id": app_id, "label": "Before your edit", "subject": a["subject"],
                                "letter": a["letter"], "cv": a["cv"], "cv_data": a["cv_data"], "created_at": db.now()})
     db.update("applications", app_id, patch)
-    db.update("applications", app_id, {"voice": db.jdump(voice.check(patch.get("letter", a["letter"]) or "", a["language"]))})
+    v = voice.check(patch.get("letter", a["letter"]) or "", a["language"])
+    kept = voice.read_notes({**a, **patch})  # the read for your voice stays while the letter is the one it read
+    if kept:
+        v["read"] = kept
+    db.update("applications", app_id, {"voice": db.jdump(v)})
     return go(f"/applications/{app_id}?tab={tab}", msg="Saved. Run the fact check again when you're done editing.")
 
 
@@ -525,6 +530,23 @@ async def application_revise(request: Request, app_id: int):
                   ref=f"app:{app_id}")
     tab = "review" if f.get("from") == "review" else ("cv" if part == "cv" else "letter")
     return go(f"/applications/{app_id}?tab={tab}", msg=with_model_msg(f, "Revising") + "…")
+
+
+@app.post("/applications/{app_id}/voice-revise")
+async def application_voice_revise(request: Request, app_id: int):
+    """The sentences you ticked on the Voice tab, rewritten the plainer way the voice read suggested."""
+    f = await form(request)
+    a = need(db.q1("SELECT * FROM applications WHERE id = ?", (app_id,)))
+    read = voice.read_notes(a)
+    chosen = [n for n in (read or {}).get("notes") or [] if f.get(f"use_{n['n']}")]
+    if not chosen:
+        return go(f"/applications/{app_id}?tab=voice", err="Tick at least one sentence first.")
+    instructions = ("Change only these sentences, so they sound like the candidate. Use the plainer wording, or "
+                    "something close to it that fits the letter; keep every fact and add none:\n"
+                    + "\n".join(f"- “{n['text']}” → “{n['plainer']}”" for n in chosen))
+    tasks.enqueue("revise_application", {"application_id": app_id, "instructions": instructions, "part": "letter",
+                                         **chosen_model(f)}, ref=f"app:{app_id}", dedupe=False)
+    return go(f"/applications/{app_id}?tab=voice", msg=with_model_msg(f, "Revising") + "…")
 
 
 @app.post("/applications/{app_id}/answers")

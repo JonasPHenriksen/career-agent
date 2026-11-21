@@ -120,7 +120,7 @@
         <p class="small">{% if cnt.get('unsupported') %}<span class="pill bad">{{ cnt.unsupported }} unsupported</span> {% endif %}{% if cnt.get('partly') %}<span class="pill warn">{{ cnt.partly }} stretched</span> {% endif %}<span class="pill good">{{ cnt.get('supported', 0) }} backed by facts</span></p>
         <a class="small" href="?tab=check">See the fact check →</a>
       {% else %}<p class="small text-2">No fact check yet.</p>{% endif %}
-      {% if v %}<p class="small" style="margin-top:.6rem">Voice match <strong>{{ v.score }}</strong>/100 · <a href="?tab=voice">details</a></p>{% endif %}
+      {% if v %}<p class="small" style="margin-top:.6rem">Voice match <strong>{{ v.score }}</strong>/100{% if read and read.notes %} · {{ read.notes|length }} sentence{{ 's' if read.notes|length != 1 }} not in your voice{% endif %} · <a href="?tab=voice">details</a></p>{% endif %}
       <form method="post" action="/applications/{{ a.id }}/check" class="row">{{ model_picker() }}<button class="btn small" data-busy="Checking…">Run fact check again</button></form>
       <p style="margin:.4rem 0 0">{{ made_by(made.check, 'Checked') }}</p>
     </section>
@@ -163,7 +163,8 @@
     <div class="letter-text">{{ look.letter_html|safe }}</div>
     {% set cnt = claims.get('counts', {}) %}
     <p class="small" style="margin-top:.8rem">{% if claims %}{% if cnt.get('unsupported') %}<span class="pill bad">{{ cnt.unsupported }} not backed</span> {% endif %}{% if cnt.get('partly') %}<span class="pill warn">{{ cnt.partly }} stretched</span> {% endif %}<span class="pill good">{{ cnt.get('supported', 0) }} backed</span>{% else %}<span class="text-2">Not fact-checked yet.</span>{% endif %}
-      {% if v.get('score') is not none %} <span class="pill">Voice {{ v.score }}</span>{% endif %}</p>
+      {% if v.get('score') is not none %} <span class="pill">Voice {{ v.score }}</span>{% endif %}
+      {% if read and read.notes %} <a class="pill accent" href="?tab=voice" title="Dotted underline in the letter. Hover over one for a plainer version">{{ read.notes|length }} not in your voice</a>{% endif %}</p>
     <div class="row" style="margin-top:.6rem"><a class="btn small" href="?tab=letter">Edit the letter</a><a class="btn small ghost" href="/applications/{{ a.id }}/export/letter.pdf?view=1" target="_blank">PDF</a><a class="btn small ghost" href="?tab=check">Fact check</a></div>
   </section>
   <section class="card pane" aria-label="The CV">
@@ -315,6 +316,29 @@
 
 {% elif tab == 'voice' %}
 <div class="split">
+  <div class="stack">
+  <section class="card" id="voice-read">
+    <div class="card-head"><h2>Sentences that don't sound like you</h2>{{ made_by(made.voice, 'Read') }}</div>
+    {% if busy|selectattr('kind', 'equalto', 'read_voice')|list %}<p><span class="spinner" aria-hidden="true"></span> Reading the letter with your style guide…</p>
+    {% elif read %}
+      {% if read.summary %}<p>{{ read.summary }}</p>{% endif %}
+      {% if read.notes %}
+      <form method="post" action="/applications/{{ a.id }}/voice-revise">
+        <ul class="voice-notes">
+          {% for n in read.notes %}
+          <li><label class="check"><input type="checkbox" name="use_{{ n.n }}" value="1" checked> <span><q>{{ n.text }}</q></span></label>
+            <div class="problem small text-2">{{ n.problem }}</div>
+            <div class="plainer small">Plainer: <q>{{ n.plainer }}</q></div></li>
+          {% endfor %}
+        </ul>
+        <div class="row">{{ model_picker() }}<button class="btn small primary" data-busy="Revising…">Rewrite the ticked ones</button></div>
+      </form>
+      {% elif read.skipped %}<p class="text-2">Not read: {{ read.skipped }}.</p>
+      {% else %}<p class="empty">Every sentence sounds like you.</p>{% endif %}
+    {% elif a.letter %}<p class="text-2">This version hasn't been read yet. It's read with the fact check, so run the fact check to read it.</p>
+    {% else %}<p class="text-2">No letter yet.</p>{% endif %}
+    <p class="small muted" style="margin-top:.8rem">A model reads the letter next to your style guide and judges only how each sentence is said, not what it says. The fact check covers that.</p>
+  </section>
   <section class="card">
     <div class="fit-head">{{ score(v.get('score'), True) }}<div><h2 style="margin:0">Voice match</h2><div class="text-2">{% if v.get('basis') == 'targets' %}How this letter measures against the targets in your style guide.{% else %}How this letter compares with {{ v.get('baseline_samples') or 'none' }} of your own applications.{% endif %}</div></div></div>
     {% if v.get('metrics') %}
@@ -325,6 +349,7 @@
     {% endif %}
     {% for n in v.get('notes', []) %}<p class="small text-2" style="margin-top:.8rem">{{ n }}</p>{% endfor %}
   </section>
+  </div>
   <section class="card">
     <h2>Phrases that don't sound like you</h2>
     {% if v.get('phrases') %}

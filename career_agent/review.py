@@ -51,9 +51,18 @@ def questions(app: dict) -> list[dict]:
 
 
 def marked(text: str, app: dict, where: str = "letter") -> str:
-    """The text as HTML with the sentences the fact check flagged marked, each with its reason."""
+    """The text as HTML with the sentences the fact check flagged marked, each with its reason; in the letter also
+    the sentences that don't sound like you (dotted), each with a plainer version."""
+    from . import voice
+
     claims = (db.jload(app.get("claims"), {}) or {}).get("claims") or []
     html = escape(text or "")
+    read = voice.read_notes(app) if where == "letter" else None
+    for note in (read or {}).get("notes") or []:
+        sentence = escape(note["text"])
+        tip = escape(f"{note['problem']}. Plainer: {note['plainer']}", quote=True)
+        if sentence and sentence in html:
+            html = html.replace(sentence, f'<mark class="flag voice" title="{tip}">{sentence}</mark>', 1)
     for c in claims:
         if c.get("status") not in FLAGGED or (c.get("where") or "letter") != where:
             continue

@@ -212,3 +212,60 @@ def test_base_cv_lines_the_database_does_not_back_are_settled_once(fake):
     assert [t["kind"] for t in tasks.active(ref="cv-base-check")] == ["check_cv_base"]
     assert "1 new fact to check under Recently added." in c.get("/profile?tab=cv").text
     db.ex("DELETE FROM tasks")
+
+
+def test_the_letter_is_read_for_your_voice_and_the_sentences_you_tick_are_rewritten(fake):
+    from career_agent import voice
+
+    settings.set("style_guide", "## Voice in brief\nPlain and a little dry.")
+    a = _draft()
+    assert [t["kind"] for t in tasks.active(ref=f"app:{a['id']}")].count("read_voice") == 1, "queued by the check"
+    _run("read_voice")
+    a = tracker.app_with_job(a["id"])
+    read = voice.read_notes(a)
+    assert read["summary"] == "Mostly plain; the opener is a pitch."
+    assert [(n["n"], n["text"], n["plainer"]) for n in read["notes"]] == [
+        (2, "Jeg søger stillingen som product owner hos FinPay.", "Jeg vil gerne være product owner hos FinPay.")]
+    system, user = next((sy, u) for sy, u, sc in reversed(fake.calls) if sc is voice.READ_SCHEMA)
+    assert "Plain and a little dry." in system and "[1] Kære Mette\n\n[2] Jeg søger" in user, "paragraphs kept, sentences numbered"
+    assert not any("Kære Mette" in u for sy, u, sc in fake.calls if sc is voice.READ_SCHEMA and "CAREER DATABASE" in sy), \
+        "the read doesn't carry the career database"
+
+    c = TestClient(app)
+    page = c.get(f"/applications/{a['id']}").text
+    assert '<mark class="flag voice" title="a pitch opener. Plainer: Jeg vil gerne være product owner hos FinPay.">' in page
+    assert "1 not in your voice" in page
+    assert "1 sentence not in your voice" in c.get(f"/applications/{a['id']}?tab=letter").text
+    page = c.get(f"/applications/{a['id']}?tab=voice").text
+    assert "Mostly plain; the opener is a pitch." in page and 'name="use_2"' in page
+
+    db.ex("DELETE FROM tasks")
+    writer.run_checks(a["id"])  # checked again, same letter: the read is kept, not made again
+    assert not db.q1("SELECT 1 FROM tasks WHERE kind = 'read_voice'") and voice.read_notes(tracker.app_with_job(a["id"]))
+
+    r = c.post(f"/applications/{a['id']}/voice-revise", data={"use_2": "1", "effort": "high"}, follow_redirects=False)
+    assert r.status_code == 303
+    task = json.loads(db.q1("SELECT payload FROM tasks WHERE kind = 'revise_application'")["payload"])
+    assert task["part"] == "letter" and task["model"] == "||high"
+    assert "“Jeg søger stillingen som product owner hos FinPay.” → “Jeg vil gerne være product owner hos FinPay.”" in task["instructions"]
+    assert "Tick+at+least" in c.post(f"/applications/{a['id']}/voice-revise", data={}, follow_redirects=False).headers["location"]
+
+    db.update("applications", a["id"], {"letter": "Kære Mette\n\nNu står der noget helt andet i brevet.\n\nMed venlig hilsen\nSara Lund"})
+    a = tracker.app_with_job(a["id"])
+    assert voice.read_notes(a) is None, "a read of an older version isn't shown"
+    assert "This version hasn't been read yet" in c.get(f"/applications/{a['id']}?tab=voice").text
+    db.ex("DELETE FROM tasks")
+    writer.run_checks(a["id"])
+    assert db.q1("SELECT 1 FROM tasks WHERE kind = 'read_voice'"), "the new version is read at the next check"
+
+
+def test_without_a_style_guide_the_letter_is_not_read_and_is_tried_again_later(fake):
+    from career_agent import voice
+
+    a = _draft()
+    assert _run("read_voice")["status"] == "done"
+    assert not any(sc is voice.READ_SCHEMA for _, _, sc in fake.calls), "nothing to compare with: no model call"
+    assert voice.read_notes(tracker.app_with_job(a["id"]))["skipped"] == "no style guide yet"
+    db.ex("DELETE FROM tasks")
+    writer.run_checks(a["id"])
+    assert db.q1("SELECT 1 FROM tasks WHERE kind = 'read_voice'"), "tried again once there may be a guide"

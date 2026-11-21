@@ -13,7 +13,7 @@ os.environ.pop("ANTHROPIC_API_KEY", None)
 
 import pytest  # noqa: E402
 
-from career_agent import config, cvdata, db, jobs, llm, profile, review, settings, sources, tracker, writer  # noqa: E402
+from career_agent import config, cvdata, db, jobs, llm, profile, review, settings, sources, tracker, voice, writer  # noqa: E402
 from career_agent.llm.providers import ProviderReply  # noqa: E402
 
 from career_agent import fetch as _fetch  # noqa: E402
@@ -224,6 +224,15 @@ class FakeProvider:
                     r.update(category="skill", title=text)
                 results.append(r)
             return {"results": results}
+        if schema is voice.READ_SCHEMA:
+            # the opener is a pitch; a number that isn't a sentence, a repeat and an unchanged "plainer" are dropped
+            import re
+            n = int(re.search(r"^\[(\d+)\] Jeg søger", user, re.M).group(1))
+            return {"summary": "Mostly plain; the opener is a pitch.", "notes": [
+                {"n": n, "problem": "a pitch opener", "plainer": "Jeg vil gerne være product owner hos FinPay."},
+                {"n": n, "problem": "again", "plainer": "Something else."},
+                {"n": 999, "problem": "no such sentence", "plainer": "Nothing."},
+                {"n": 1, "problem": "unchanged", "plainer": "Kære Mette"}]}
         if schema is tracker.RESPONSE_SCHEMA:
             return {"type": "rejected_generic", "summary": "Standard rejection.", "feedback": "", "personalized": False,
                     "date": "", "interview_at": "", "next_step": ""}

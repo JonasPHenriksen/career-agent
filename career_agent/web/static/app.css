@@ -383,6 +383,10 @@ img.cv-page { width: 100%; height: auto; border: 1px solid var(--border); border
 .letter-text p { margin: 0 0 .8rem; line-height: 1.55; }
 mark.flag { background: var(--warn-soft); color: inherit; border-bottom: 2px solid var(--warn); border-radius: 2px; padding: 0 .1em; cursor: help; }
 mark.flag.unsupported { background: var(--bad-soft); border-bottom-color: var(--bad); }
+mark.flag.voice { background: none; border-bottom: 2px dotted var(--accent); }
+.voice-notes { list-style: none; padding: 0; margin: .4rem 0 .8rem; }
+.voice-notes li { margin-bottom: .8rem; }
+.voice-notes .problem, .voice-notes .plainer { margin-left: 1.6rem; }
 fieldset.question { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: .6rem .8rem .8rem; margin: 0 0 .8rem; }
 fieldset.question legend { font-weight: 600; font-size: .9rem; padding: 0 .3rem; }
 fieldset.question blockquote { margin: .3rem 0 .4rem; padding-left: .7rem; border-left: 3px solid var(--border); }

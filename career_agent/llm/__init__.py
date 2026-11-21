@@ -66,7 +66,7 @@ STEPS = [
     ("reply", "Read an employer's reply", "analysis", ("classify_response",)),
     ("letter", "Write and revise the letter", "writing", ("write_letter", "revise_letter", "followup")),
     ("cv", "Tailor and revise the CV", "writing", ("write_cv", "revise_cv", "cv_base")),
-    ("fact_check", "Fact-check a draft", "check", ("claim_check", "verify_claims")),
+    ("fact_check", "Fact-check a draft and read it for your voice", "check", ("claim_check", "verify_claims", "voice_read")),
     ("style", "Write your style guide", "writing", ("style_guide",)),
     ("prep", "Prepare you for an interview", "writing", ("interview_prep",)),
 ]

@@ -110,7 +110,10 @@ job sources ──► quick screening ──► read the ad ──► fit score 
   letter and CV as backed, stretched or unsupported, so you fix problems before an interviewer finds them.
 * **Your voice.** A style guide is written from your own texts, your best past applications are used
   as examples, and every draft is compared with your own sentence length, paragraphing and phrasing.
-  Stock phrases you never use ("passionate about", "brænder for", em dashes…) are flagged.
+  Stock phrases you never use ("passionate about", "brænder for", em dashes…) are flagged. With the fact
+  check, a model reads the letter next to your style guide and marks the sentences that don't sound like
+  you, each with a plainer version; tick the ones you want and the letter is revised with them. A letter
+  that hasn't changed isn't read again.
 * **Employers are graded too.** Paste a reply and it's classified (template rejection, real feedback,
   interview invite…). Silence is counted. Companies that ghost you or re-post the same job get a low
   grade, and you can block them from automatic drafting.
