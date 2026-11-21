@@ -261,6 +261,16 @@ def test_each_step_can_have_its_own_model_and_effort(fake, fake_claude, monkeypa
 
     assert llm.step_provider("score") == "claude_code" and llm.step_provider("read_ad") == "ollama"
     assert llm.step_provider("fact_check") == "claude_code", "a cloud writer also checks the facts"
+    assert built("writing", "voice_read", "medium") == ("ClaudeCode", "claude-opus-5-5", "medium"), \
+        "the voice read is its own step: left on the usual, the Writing model at medium"
+    cfg["steps"]["fact_check"] = {"provider": "claude_code", "model": "claude-sonnet-5-5"}
+    settings.set("llm", cfg)
+    assert built("check", "claim_check")[1] == "claude-sonnet-5-5" and built("writing", "voice_read")[1] == "claude-opus-5-5", \
+        "a model for the fact check isn't the voice read's"
+    cfg["steps"]["voice"] = {"provider": "claude_code", "model": "claude-sonnet-5-5", "effort": "high"}
+    settings.set("llm", cfg)
+    assert built("writing", "voice_read", "medium") == ("ClaudeCode", "claude-sonnet-5-5", "high")
+    assert tasks.needs({"kind": "read_voice", "payload": "{}"}) == {"claude_code"}
     assert llm.step_provider("read_ad", "claude_code|claude-haiku-5-5") == "claude_code"
     assert tasks.needs({"kind": "score_job", "payload": "{}"}) == {"claude_code"}
     assert tasks.needs({"kind": "parse_job", "payload": "{}"}) == {"ollama", "network"}
@@ -268,7 +278,8 @@ def test_each_step_can_have_its_own_model_and_effort(fake, fake_claude, monkeypa
     assert llm.parse_choice("claude_code|claude-opus-5-5|high") == {"provider": "claude_code", "model": "claude-opus-5-5", "effort": "high"}
     assert llm.parse_choice("||high") == {"effort": "high"} and llm.parse_choice("||silly") is None
     assert {p for _, _, _, ps in llm.STEPS for p in ps} >= {"triage", "parse_job", "fit_score", "write_letter", "write_cv",
-                                                            "claim_check", "style_guide", "interview_prep", "classify_response"}
+                                                            "claim_check", "style_guide", "interview_prep", "classify_response",
+                                                            "voice_read", "place_answers"}
 
 
 def test_effort_reaches_claude_and_can_be_picked_everywhere(fake, fake_claude, monkeypatch):

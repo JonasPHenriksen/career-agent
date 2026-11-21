@@ -1208,7 +1208,7 @@ def insights_page(request: Request):
 
 # The effort each step asks for when you haven't chosen one ("" = the Writing model's own effort setting).
 STEP_USUAL_EFFORT = {"screen": "low", "read_ad": "low", "score": "medium", "read_document": "medium", "reply": "low",
-                     "fact_check": "medium"}
+                     "fact_check": "medium", "voice": "medium"}
 
 
 @app.get("/settings")

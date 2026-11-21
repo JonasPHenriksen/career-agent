@@ -380,6 +380,7 @@ def build_style_guide() -> str:
 # detail instead of a claim, no polish. A model that has your style guide reads the letter as a whole and points
 # at the sentences that don't sound like you, each with a plainer version. It is its own small call: the fact
 # check's prompt is mostly your career database, which this doesn't need, and it judges sentence by sentence.
+# It's a step of its own in Settings ("voice"); left on the usual, it follows the Writing model.
 # ---------------------------------------------------------------------------------------
 
 READ_SYSTEM = """You know how one person writes: their style guide is below. Read their cover letter the way a \
@@ -434,7 +435,7 @@ def numbered(text: str) -> list[list[tuple[int, str]]]:
 
 def read(text: str, language: str | None) -> dict:
     """Read the letter for your voice. Returns {letter, summary, notes: [{n, text, problem, plainer}]}."""
-    from . import knowledge, writer
+    from . import knowledge
 
     lang = (language or "").lower()[:2]
     guide = knowledge.style_guide(lang) or settings.get("style_guide") or ""
@@ -443,7 +444,7 @@ def read(text: str, language: str | None) -> dict:
                 "summary": "", "notes": []}
     paras = numbered(text)
     shown = "\n\n".join("\n".join(f"[{n}] {s}" for n, s in block) for block in paras)
-    d = llm.run(writer.check_tier(), "voice_read", READ_SYSTEM.format(guide=guide),
+    d = llm.run(llm.STEP_TIER["voice"], "voice_read", READ_SYSTEM.format(guide=guide),
                 "LETTER, EACH SENTENCE NUMBERED (a blank line between paragraphs):\n\n" + shown,
                 READ_SCHEMA, max_tokens=4000, effort="medium").data
     by_n = {n: s for block in paras for n, s in block}
