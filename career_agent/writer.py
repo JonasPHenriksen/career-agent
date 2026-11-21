@@ -464,7 +464,7 @@ def import_manual(app_id: int, text: str) -> dict:
         patch["cv_data"] = None  # pasted as text: shown and exported as text
     if not app["language"]:
         patch["language"] = choose_language(jobs.get(app["job_id"]))
-    patch["review"] = db.jdump(_review({"main_gap": d["main_gap"]}, d["letter"]))
+    patch["review"] = db.jdump(_review({"main_gap": d["main_gap"]}, d["letter"], app.get("review")))
     notes = _gap_note({"main_gap": d["main_gap"], "gap_line": "", "letter": d["letter"]}) + d["notes"]
     patch["writer_notes"] = db.jdump(notes + ["Written in Claude.ai and fact-checked here."])
     db.update("applications", app_id, patch)
@@ -486,12 +486,31 @@ def _gap_note(letter: dict) -> list[str]:
     return [f"The writer noticed a gap ({gap}) but the letter doesn't mention it. If you want to, add: “{line}”"]
 
 
-def _review(letter: dict, text: str) -> dict:
-    """What the writer decided and assumed for this letter, kept as data so the review screen can ask you about it."""
+def _review(letter: dict, text: str, before: str | None = None) -> dict:
+    """What the writer decided and assumed for this letter, kept as data so the review screen can ask you about it.
+    `before` is the application's review so far: what you confirmed for this application stays confirmed."""
     gap, line = (letter.get("main_gap") or "").strip(), (letter.get("gap_line") or "").strip()
     said = bool(gap) and (not line or " ".join(line.lower().split())[:40] in " ".join((text or "").lower().split()))
-    return {"angle": (letter.get("angle") or "").strip(), "main_gap": gap, "gap_line": line, "gap_in_letter": said,
-            "assumed": [a.strip() for a in (letter.get("assumed") or []) if a and a.strip()][:6]}
+    confirmed = (db.jload(before, {}) or {}).get("confirmed") or []
+    out = {"angle": (letter.get("angle") or "").strip(), "main_gap": gap, "gap_line": line, "gap_in_letter": said,
+           "assumed": [a.strip() for a in (letter.get("assumed") or []) if a and a.strip()][:6]}
+    if confirmed:
+        out["confirmed"] = confirmed
+    return out
+
+
+def confirmed_note(app: dict) -> str:
+    """What you confirmed about yourself for this application, for the writer: it's true here, so it isn't assumed."""
+    confirmed = (db.jload(app.get("review"), {}) or {}).get("confirmed") or []
+    if not confirmed:
+        return ""
+    return ("The candidate confirmed these are true for this application (you may say them; don't list them under "
+            "assumed):\n" + "\n".join(f"- {c}" for c in confirmed))
+
+
+def _with_confirmed(instructions: str | None, app: dict) -> str | None:
+    note = confirmed_note(app)
+    return "\n\n".join(x for x in (instructions, note) if x) or None
 
 
 def _siblings_note(job: dict) -> str:
@@ -543,11 +562,11 @@ def draft(app_id: int, part: str = "both") -> dict:
     notes: list[str] = []
     words = len((app.get("letter") or "").split())
     if part in ("letter", "both"):
-        letter = llm.run("writing", "write_letter", system, _letter_task(job, language, app["instructions"]),
+        letter = llm.run("writing", "write_letter", system, _letter_task(job, language, _with_confirmed(app["instructions"], app)),
                          LETTER_SCHEMA, max_tokens=16000).data
         notes += fit_ceiling(letter, system, job, language)
         patch.update({"subject": letter["subject"], "letter": strip_citations(letter["letter"]),
-                      "review": db.jdump(_review(letter, letter["letter"]))})
+                      "review": db.jdump(_review(letter, letter["letter"], app.get("review")))})
         notes += _gap_note(letter) + _assumed_notes(letter) + letter["notes"]
         words = len(letter["letter"].split())
     if part in ("cv", "both"):
@@ -582,10 +601,10 @@ def revise(app_id: int, instructions: str, part: str = "letter") -> dict:
     if part in ("letter", "both"):
         task = (f"Revise the cover letter below following the candidate's instructions. Keep it true to the "
                 f"database and in the candidate's voice. Keep the language ({language}) unless told otherwise.\n\n"
-                f"INSTRUCTIONS:\n{instructions}\n\nCURRENT SUBJECT: {app['subject'] or ''}\n\nCURRENT LETTER:\n"
+                f"INSTRUCTIONS:\n{_with_confirmed(instructions, app)}\n\nCURRENT SUBJECT: {app['subject'] or ''}\n\nCURRENT LETTER:\n"
                 f"<letter>\n{app['letter'] or ''}\n</letter>\n\n" + _job_context(job, language, None))
         d = llm.run("writing", "revise_letter", system, task, LETTER_SCHEMA, max_tokens=16000, effort="medium").data
-        patch.update({"subject": d["subject"], "letter": strip_citations(d["letter"]), "review": db.jdump(_review(d, d["letter"]))})
+        patch.update({"subject": d["subject"], "letter": strip_citations(d["letter"]), "review": db.jdump(_review(d, d["letter"], app.get("review")))})
         notes = _assumed_notes(d) + d["notes"]
     current = db.jload(app.get("cv_data"), None) if part in ("cv", "both") else None
     if current:  # a CV kept as data is revised as data
@@ -642,8 +661,12 @@ def check_claims(letter: str, cv: str, tier: str | None = None) -> dict:
         return {"claims": [], "counts": {}, "summary": "Nothing to check."}
     # The writer is told the town you live in (Settings), so the check must know it too: it is your own word,
     # not something the career database records, and "I live in Horsens" was flagged as unbacked without it.
-    city = (settings.get("profile").get("city") or "").strip()
-    lives = f"\nThe candidate lives in {city}. They said so themselves, so it counts as backed.\n" if city else ""
+    # The same goes for when you can start (About you → Availability): "Jeg kan starte 1. februar 2027" was flagged,
+    # answered "true" and saved as a project before the check was told.
+    you = settings.get("profile")
+    city, available = (you.get("city") or "").strip(), (you.get("availability") or "").strip()
+    own = ([f"The candidate lives in {city}."] if city else []) + ([f"Their availability: {available}"] if available else [])
+    lives = f"\n{' '.join(own)} They said so themselves, so it counts as backed.\n" if own else ""
     system = (CHECK_SYSTEM + f"\n\nToday's date: {date.today().isoformat()}\n{lives}\nCAREER DATABASE:\n"
               + profile.facts_digest(budget, with_evidence=True, query=f"{letter}\n\n{cv}"))
     user = "APPLICATION, ONE ITEM PER NUMBER:\n" + "\n".join(f"[{n}] ({where}) {text}" for n, (where, text) in enumerate(items, 1))

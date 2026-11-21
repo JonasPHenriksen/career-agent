@@ -181,3 +181,21 @@ def test_facts_grouped_by_place_and_time():
         ("Brinkholm HTX", "2020 – 2021"), ("No place given", "")]  # spellings tied: the shortest names it
     assert [x["id"] for x in sections[1][2]] == [5, 4], "newest first within a place"
     assert profile.by_place([facts[8]], index) == [("Havbro ApS", "2024", [facts[8]])]
+
+
+def test_recently_added_lists_new_facts_and_where_they_came_from(fake):
+    from career_agent import ingest
+
+    doc_id, _ = ingest.import_bytes("cv.txt", b"Jonas, developer at Nordvik since 2026.")
+    _fact("Old one", created_at=db.days_ago(profile.RECENT_DAYS + 5))
+    _fact("From the CV", document_id=doc_id, source="extracted")
+    _fact("Starts 1 February", tags="your answer", source="manual")
+    _fact("Typed in by hand", source="manual")
+    added, total = profile.recently_added()
+    assert total == 3 and [f["title"] for f in added] == ["Typed in by hand", "Starts 1 February", "From the CV"]
+    assert [f["origin"] for f in added] == ["added by you", "your answer in a fact check", "from cv"]
+    page = TestClient(app).get("/profile?tab=facts").text
+    assert "Recently added" in page and "your answer in a fact check" in page
+    assert f'href="/documents/{doc_id}"' in page and page.index('id="added"') < page.index('id="deleted"')
+    added, total = profile.recently_added(limit=2)
+    assert (len(added), total) == (2, 3)

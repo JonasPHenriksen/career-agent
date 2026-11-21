@@ -42,6 +42,7 @@ TASK_LABELS = {
     "check_cv_base": "Checking your base CV against your career database",
     "backup": "Backing up your data",
     "check_claude_models": "Checking which Claude models your plan offers",
+    "place_answers": "Putting your answers in your career database",
 }
 
 _wake = threading.Event()
@@ -114,6 +115,7 @@ def _handlers() -> dict:
         "pull_model": lambda p: _pull_model(p["model"]),
         "build_cv_base": lambda p: _then_check_base(cvdata.build_base(p["doc_id"])),
         "check_cv_base": lambda p: review.check_base(p.get("base_id")),
+        "place_answers": review.place_task,
         "rescreen_jobs": lambda p: sources.rescreen(p.get("job_ids")),
         "backup": lambda p: _backup(),
         "check_claude_models": lambda p: llm_plan.check(),
@@ -210,6 +212,7 @@ TASK_STEPS = {
     "check_application": ("fact_check",), "interview_prep": ("prep",), "followup": ("letter",), "build_style": ("style",),
     "build_cv_base": ("cv",), "check_cv_base": ("fact_check",), "rescreen_jobs": ("screen",), "parse_job": ("read_ad",), "score_job": ("score",), "poll_source": ("screen",), "collect_jobs": ("screen",),
     "analyze_document": ("read_document",), "consolidate_facts": ("read_document",), "classify_response": ("reply",),
+    "place_answers": ("read_document",),
 }
 FETCH_TASKS = {"poll_source", "parse_job", "collect_jobs"}
 NEED_LABELS = {"ollama": "Ollama (the local models)", "network": "an internet connection",

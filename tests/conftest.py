@@ -13,7 +13,7 @@ os.environ.pop("ANTHROPIC_API_KEY", None)
 
 import pytest  # noqa: E402
 
-from career_agent import config, cvdata, db, jobs, llm, profile, settings, sources, tracker, writer  # noqa: E402
+from career_agent import config, cvdata, db, jobs, llm, profile, review, settings, sources, tracker, writer  # noqa: E402
 from career_agent.llm.providers import ProviderReply  # noqa: E402
 
 from career_agent import fetch as _fetch  # noqa: E402
@@ -204,6 +204,26 @@ class FakeProvider:
                 else:
                     verdicts.append({"n": int(n), "kind": "fact", "status": "supported", "fact_ids": [1, 99999], "problem": ""})
             return {"verdicts": verdicts}
+        if schema is review.PLACE_SCHEMA:
+            # linked to a fact: a detail for it; a start date: not a career fact; "already" in your words: known;
+            # a gap you have: a new skill; anything else: a new project
+            import re
+            results = []
+            for n, body in re.findall(r"^\[(\d+)\] (.*?)(?=^\[\d+\] |\Z)", user.split("ITEMS:", 1)[1], re.S | re.M):
+                text = re.search(r"“(.*?)”", body).group(1)
+                linked = re.search(r"linked it to:\n\[#(\d+)\]", body)
+                r = {"n": int(n), "action": "new", "fact_id": 0, "addition": "", "category": "project", "title": "Confirmed fact",
+                     "organization": "", "start_date": "", "end_date": "", "detail": f"Confirmed: {text}", "why": ""}
+                if "starte" in text:
+                    r["action"] = "skip"
+                elif "already" in body and linked:
+                    r.update(action="known", fact_id=int(linked.group(1)))
+                elif linked:
+                    r.update(action="add_to", fact_id=int(linked.group(1)), addition=f"Also: {text}")
+                elif "says they have it" in body:
+                    r.update(category="skill", title=text)
+                results.append(r)
+            return {"results": results}
         if schema is tracker.RESPONSE_SCHEMA:
             return {"type": "rejected_generic", "summary": "Standard rejection.", "feedback": "", "personalized": False,
                     "date": "", "interview_at": "", "next_step": ""}

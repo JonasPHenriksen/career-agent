@@ -213,8 +213,9 @@
         <form method="post" action="/cv/base/{{ cv.main.id }}/check" class="inline"><button class="btn small" data-busy="Checking…">{{ 'Check again' if cv.checked else 'Check now' }}</button></form></div>
       {% if cv.checking %}<p><span class="spinner" aria-hidden="true"></span> Checking every line of your base CV…</p>
       {% elif cv.check_error %}<p class="small" style="color:var(--bad)">{{ cv.check_error.error }}</p>{% endif %}
+      {% if cv.placed %}<p class="small"><span class="pill good">Your last answers</span> {{ cv.placed }}</p>{% endif %}
       {% if cv.questions %}
-      <p class="small text-2">Every application's CV starts from this one, so a line your career database doesn't back is flagged in every application. Settle each line once here: say it's true and it becomes a fact, or write what the CV should say. Leave the box empty with “Not true” to take the line out.</p>
+      <p class="small text-2">Every application's CV starts from this one, so a line your career database doesn't back is flagged in every application. Settle each line once here: say it's true and it's put where it belongs in your career database, or write what the CV should say. Leave the box empty with “Not true” to take the line out.</p>
       <form method="post" action="/cv/base/{{ cv.main.id }}/answers">
         {% for q in cv.questions %}
         <fieldset class="question">
@@ -337,6 +338,17 @@
       <h2>How this works</h2>
       <p class="small text-2">Every fact comes from your own documents, with a quote as evidence. Applications may only use these facts, so check them: mark correct ones with ✓, fix mistakes, and hide anything you don't want used.</p>
       <form method="post" action="/facts/tidy" class="row">{{ model_picker() }}<button class="btn small" data-busy="Starting…">Merge duplicates</button></form>
+    </section>
+    <section class="card" id="added">
+      <div class="card-head"><h2>Recently added</h2>{% if added_total > added|length %}<span class="small muted">newest {{ added|length }} of {{ added_total }} in {{ recent_days }} days</span>{% endif %}</div>
+      {% if added %}
+      {% for f in added %}
+      <div class="fact {{ 'hidden-fact' if f.hidden }}">
+        <div class="ft"><a href="#fact-{{ f.id }}">{{ f.title }}</a>{% if f.verified %} <span class="verified-mark" title="Checked by you">✓</span>{% endif %}{% if f.hidden %} <span class="pill">hidden</span>{% endif %}</div>
+        <div class="fm">{{ f.kind_label }} · {% if f.document_id %}from <a href="/documents/{{ f.document_id }}">{{ f.doc_title or f.doc_filename }}</a>{% else %}<span title="{{ f.evidence or '' }}">{{ f.origin }}</span>{% endif %} · {{ f.created_at|ago }} · <span class="muted">#{{ f.id }}</span></div>
+      </div>
+      {% endfor %}
+      {% else %}<p class="small muted">Nothing added in the last {{ recent_days }} days. Facts read from documents you import, saved from your answers in a fact check, or added by hand show up here.</p>{% endif %}
     </section>
     <section class="card deleted-list" id="deleted">
       <div class="card-head"><h2>Recently deleted</h2><a class="small" href="/history?show=deleted">All deletions</a></div>

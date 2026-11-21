@@ -446,6 +446,7 @@ def application(request: Request, app_id: int, tab: str = ""):
             "ORDER BY CASE WHEN j.deadline IS NULL THEN 1 ELSE 0 END, j.deadline, a.updated_at DESC")]
         at = waiting.index(app_id) if app_id in waiting else -1
         look = {"base_open": len(review.base_questions(cvdata.base_for(a["language"]))), "questions": review.questions(a), "letter_html": review.marked(a["letter"], a),
+                "placed": review.last_placed(f"app:{app_id}"),
                 "decided": db.jload(a.get("review"), {}) or {},
                 "siblings": db.q("SELECT a.id, j.title, a.status FROM applications a JOIN jobs j ON j.id = a.job_id "
                                  "WHERE j.company_id = ? AND a.id != ? ORDER BY a.id DESC", (a["company_id"], app_id)) if a["company_id"] else [],
@@ -528,15 +529,24 @@ async def application_revise(request: Request, app_id: int):
 
 @app.post("/applications/{app_id}/answers")
 async def application_answers(request: Request, app_id: int):
-    """Your answers to the review screen's questions: saved as facts, and the draft revised to match."""
+    """Your answers to the review screen's questions: what you confirmed is placed in your career database, and the
+    draft is revised to match."""
     f = await form(request)
     a = need(tracker.app_with_job(app_id))
     answers = {q["id"]: {"verdict": f.get(f"v_{q['id']}") or "", "text": f.get(f"t_{q['id']}") or ""} for q in review.questions(a)}
     result = review.apply_answers(a, answers, chosen_model(f))
-    if not result["facts"] and not result["revised"]:
+    if not (result["placing"] or result["confirmed"] or result["revised"]):
         return go(f"/applications/{app_id}?tab=review", err="Answer at least one question first.")
-    saved = f"{result['facts']} answer{'s' if result['facts'] != 1 else ''} saved to your career database. " if result["facts"] else ""
-    return go(f"/applications/{app_id}?tab=review", msg=saved + ("Revising the draft to match…" if result["revised"] else "Checking the facts again…"))
+    n = result["placing"]
+    said = []
+    if n:
+        said.append(f"Putting {n} answer{'s' if n != 1 else ''} in your career database, then "
+                    + ("revising the draft to match…" if result["revised"] else "checking the facts again…"))
+    elif result["revised"]:
+        said.append("Revising the draft to match…")
+    if result["confirmed"]:
+        said.append(f"{result['confirmed']} kept as true for this application only.")
+    return go(f"/applications/{app_id}?tab=review", msg=" ".join(said))
 
 
 @app.post("/applications/{app_id}/redraft")
@@ -646,20 +656,21 @@ def cv_base_check(base_id: int):
 
 @app.post("/cv/base/{base_id}/answers")
 async def cv_base_answers(request: Request, base_id: int):
-    """Your answers about base CV lines the career database doesn't back: a fact is added, or the CV is changed."""
+    """Your answers about base CV lines the career database doesn't back: placed in the database, or the CV is changed."""
     f = await form(request)
     base = need(cvdata.base(base_id))
     answers = {q["id"]: {"verdict": f.get(f"v_{q['id']}") or "", "text": f.get(f"t_{q['id']}") or ""}
                for q in review.base_questions(base)}
     result = review.apply_base_answers(base, answers)
-    if not (result["facts"] or result["changed"] or result["missed"]):
+    if not (result["placing"] or result["changed"] or result["missed"]):
         return go(f"/profile?tab=cv&base={base_id}#cv-check", err="Answer at least one question first.")
     said = []
-    if result["facts"]:
-        said.append(f"{result['facts']} saved as fact{'s' if result['facts'] != 1 else ''}")
+    if result["placing"]:
+        said.append(f"{result['placing']} being put in your career database")
     if result["changed"]:
         said.append(f"{result['changed']} line{'s' if result['changed'] != 1 else ''} changed in the base CV")
-    msg = (", ".join(said).capitalize() + ". Checking again…") if said else None
+    line = ", ".join(said)
+    msg = (line[:1].upper() + line[1:] + ". Checking again…") if said else None
     err = ("Couldn't find this in the CV data, so change it by hand under Correct the base CV: "
            + "; ".join(t[:80] for t in result["missed"])) if result["missed"] else None
     return go(f"/profile?tab=cv&base={base_id}#cv-check", msg=msg, err=err)
@@ -901,6 +912,7 @@ def profile_page(request: Request, tab: str = "about"):
         sections = profile.by_area(items) if c == "skill" else profile.by_place(items, index)
         grouped.append((c, label, items, sections if len(sections) > 1 else [("", "", items)]))
     deleted = history.recently_deleted("facts", 20) if tab == "facts" else []
+    added, added_total = profile.recently_added() if tab == "facts" else ([], 0)
     active_rows = db.q("SELECT kind FROM tasks WHERE kind IN ('analyze_document', 'build_style', 'consolidate_facts') "
                        "AND status IN ('queued', 'running')")
     n_docs = sum(1 for r in active_rows if r["kind"] == "analyze_document")
@@ -927,11 +939,13 @@ def profile_page(request: Request, tab: str = "about"):
               "busy": tasks.active(ref="cv-base"), "task_error": tasks.last_error("cv-base"),
               "questions": review.base_questions(main), "checked": db.jload((main or {}).get("claims"), None),
               "checking": tasks.active(ref="cv-base-check"), "check_error": tasks.last_error("cv-base-check"),
+              "placed": review.last_placed("cv-base-check"),
               "open_drafts": len(review.open_drafts())}
     return render(request, "profile.html", tab=tab, n_docs=n_docs, style_busy=style_busy, levels=profile.LEVELS, cv=cv,
                   job_kinds=jobkinds.KINDS, kinds_wanted=jobkinds.wanted_kinds(),
                   made_style=llm.made_by("style", ("style_guide",)),
                   tidy_busy=any(r["kind"] == "consolidate_facts" for r in active_rows), p=settings.get("profile"), docs=docs, grouped=grouped, deleted=deleted,
+                  added=added, added_total=added_total, recent_days=profile.RECENT_DAYS,
                   kinds=profile.KINDS, kind_labels=profile.KIND_LABELS, outcomes=profile.OUTCOMES,
                   categories=profile.CATEGORIES, areas=profile.AREAS, depths=profile.DEPTHS, depth_labels=profile.DEPTH_LABELS,
                   style_guide=settings.get("style_guide"),

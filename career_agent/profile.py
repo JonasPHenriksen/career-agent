@@ -487,6 +487,25 @@ def by_area(items: list[dict]) -> list[tuple[str, str, list[dict]]]:
             for a in [*AREAS, ""] if a in groups]
 
 
+RECENT_DAYS = 30
+
+
+def recently_added(limit: int = 10, days: int = RECENT_DAYS) -> tuple[list[dict], int]:
+    """The facts added in the last `days` days, newest first, each with where it came from; and how many that is in all."""
+    since = db.days_ago(days)
+    rows = db.q("SELECT f.*, d.title AS doc_title, d.filename AS doc_filename FROM facts f "
+                "LEFT JOIN documents d ON d.id = f.document_id WHERE f.created_at >= ? "
+                "ORDER BY f.created_at DESC, f.id DESC LIMIT ?", (since, limit))
+    for f in rows:
+        tags = {t.strip() for t in (f.get("tags") or "").split(",")}
+        f["kind_label"] = CATEGORY_LABELS.get(f["category"], f["category"])
+        f["origin"] = (f"from {f['doc_title'] or f['doc_filename']}" if f.get("document_id")
+                       else "your answer in a fact check" if "your answer" in tags
+                       else "from a document since deleted" if f.get("source") == "extracted"
+                       else "added by you")
+    return rows, db.scalar("SELECT COUNT(*) FROM facts WHERE created_at >= ?", (since,)) or 0
+
+
 def visible_facts() -> list[dict]:
     order = {c: n for n, (c, _) in enumerate(CATEGORIES)}
     rows = db.q("SELECT * FROM facts WHERE hidden = 0")

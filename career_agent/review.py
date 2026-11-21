@@ -1,23 +1,31 @@
 """Reviewing a draft: what to ask you about it, and what happens with your answers.
 
 A draft raises questions only you can answer: is the gap the writer named real, is what it assumed about you
-true, is a sentence the fact check couldn't back actually true? Your answers become facts in your career database
-(so the next draft knows), and the draft is revised to match them.
+true, is a sentence the fact check couldn't back actually true? What you confirm about your career is put where
+it belongs in your career database (so the next draft knows): added to the fact it's part of, as a new fact for you
+to tick, or not at all when the database already says it or it isn't about your career. Corrections only change
+the draft, and what the writer assumed about your motives is confirmed for that application alone: a line written
+for one employer isn't evidence of who you are.
 """
 from __future__ import annotations
 
-from datetime import date
 from html import escape
 
-from . import db, tasks
+from . import db, profile, tasks
+from .llm import jsonutil as J
 
 FLAGGED = ("partly", "unsupported")
+
+
+def _same(a: str, b: str) -> bool:
+    return " ".join((a or "").lower().split()) == " ".join((b or "").lower().split())
 
 
 def questions(app: dict) -> list[dict]:
     """The open questions about a draft, most important first: the gap, what was assumed, what isn't backed."""
     review = db.jload(app.get("review"), {}) or {}
     claims = (db.jload(app.get("claims"), {}) or {}).get("claims") or []
+    confirmed = review.get("confirmed") or []
     out = []
     if review.get("main_gap"):
         told = ("The letter says so plainly." if review.get("gap_in_letter") else "The letter doesn't mention it.")
@@ -26,13 +34,16 @@ def questions(app: dict) -> list[dict]:
                     "detail": f"{told}" + (f" Suggested sentence: “{review['gap_line']}”" if review.get("gap_line") and not review.get("gap_in_letter") else ""),
                     "yes": "I do have this", "no": "Right, it's new to me"})
     for n, text in enumerate(review.get("assumed") or []):
+        if any(_same(text, c) for c in confirmed):
+            continue
         out.append({"id": f"assumed:{n}", "kind": "assumed", "where": "letter", "text": text,
-                    "ask": "The writer assumed this about you. Is it true?", "detail": "",
+                    "ask": "The writer assumed this about you. Is it true?",
+                    "detail": "Your answer counts for this application only; it isn't saved in your career database.",
                     "yes": "True", "no": "Not true"})
     for n, c in enumerate(claims):
         if c.get("status") in FLAGGED:
             out.append({"id": f"claim:{n}", "kind": "claim", "where": c.get("where") or "letter", "text": c["text"],
-                        "status": c["status"],
+                        "status": c["status"], "fact_ids": c.get("fact_ids") or [],
                         "ask": ("Your career database doesn't back this. Is it true?" if c["status"] == "unsupported"
                                 else "Part of this goes beyond your career database. Is it true as written?"),
                         "detail": c.get("note") or "", "yes": "True as written", "no": "Not true"})
@@ -53,19 +64,167 @@ def marked(text: str, app: dict, where: str = "letter") -> str:
     return "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in html.split("\n\n") if p.strip())
 
 
-def _fact(category: str, title: str, detail: str, job_title: str, about: str | None = None) -> int:
-    said = detail or f"Confirmed by you on {date.today().isoformat()}"
-    return db.insert("facts", {"category": category, "title": title[:300], "detail": detail[:1500] or None,
-                               "evidence": f"Your answer when reviewing {about or 'the application for ' + job_title}: {said}"[:600],
-                               "source": "manual", "verified": 1, "tags": "your answer", "created_at": db.now()})
+# ---------------------------------------------------------------------------------------------------------------
+# Putting what you confirmed where it belongs
+#
+# A confirmed sentence is the letter's (or the CV's) wording, written for one job. Saved as it stands it became a
+# "project" with no place, in Danish and the first person, next to the fact that already said it. So a model reads
+# it against the facts the fact check linked it to and the rest of the database, and adds only what's new: to the
+# fact it's part of, or as a new fact you tick yourself.
+# ---------------------------------------------------------------------------------------------------------------
+
+PLACE_SYSTEM = """You keep a candidate's career database: the facts their job applications may use. The candidate \
+has just confirmed some things while reviewing an application. Decide for each one where it goes.
+
+For each numbered item choose one action:
+- known: the database already says this (maybe in other words). Give that fact's id in fact_id.
+- add_to: it adds a detail to one fact that's already there (usually a job, project or education the fact check \
+linked it to). Give that fact's id in fact_id, and in addition only what the fact doesn't say yet.
+- new: it's about the candidate's career (experience, a project, a skill, education, a certificate or a language) \
+and no fact covers it. Fill in the new fact. Use the category "about" only for how the candidate works or what they \
+value when their own words below the item say so; a line from the letter alone is written for one employer.
+- skip: it isn't a fact about the candidate's career: when they can start or their notice period, salary, why they \
+want this one job or what they'd do first there, an opinion about the employer, a motive or value only the letter \
+states, a greeting or a closing line, or a remark that only corrects the wording.
+
+Rules:
+- Use only what the item and the candidate's own words say. Never add employers, titles, dates, numbers or tools.
+- Write in English, the way the database does: no first person, no "I", no sentence copied from the letter.
+- A title is a few words naming the thing (like the database's titles), never a whole sentence.
+- organization is the employer, school or place as the database names it; empty when there's none.
+- When in doubt between known and add_to, choose known. When in doubt between new and skip, choose skip."""
+
+PLACE_SCHEMA = J.obj(results=J.arr(J.obj(
+    n=J.i("The item's number"),
+    action=J.s("Where it goes", enum=["known", "add_to", "new", "skip"]),
+    fact_id=J.i("known or add_to: the fact's id. Otherwise 0"),
+    addition=J.s("add_to: one or two sentences in English with only what the fact doesn't say yet. Otherwise empty"),
+    category=J.s("new: one of " + ", ".join(c for c, _ in profile.CATEGORIES) + ". Otherwise empty"),
+    title=J.s("new: a short title in English. Otherwise empty"),
+    organization=J.s("new: the employer, school or place, as the database names it; empty if none"),
+    start_date=J.s("new: YYYY or YYYY-MM when the item says so; otherwise empty"),
+    end_date=J.s("new: YYYY, YYYY-MM or present when the item says so; otherwise empty"),
+    detail=J.s("new: one to three sentences in English with what the candidate confirmed. Otherwise empty"),
+    why=J.s("A few words in English: why this choice"),
+)))
+
+
+def _item(q: dict, said: str) -> dict:
+    """A confirmed question, as it goes to `place`."""
+    return {"kind": q["kind"], "text": q["text"], "said": said, "fact_ids": q.get("fact_ids") or []}
+
+
+def _linked(ids: list[int]) -> str:
+    rows = [db.q1("SELECT * FROM facts WHERE id = ?", (i,)) for i in dict.fromkeys(ids)]
+    return "\n".join(f"[#{f['id']}] {f['title']}" + (f" ({f['organization']})" if f.get("organization") else "")
+                     + (f": {f['detail']}" if f.get("detail") else "") for f in rows if f)
+
+
+def place(items: list[dict], about: str) -> dict:
+    """Put what you confirmed where it belongs in your career database (see PLACE_SYSTEM). Returns what was done,
+    with a line saying so for the page."""
+    from . import llm
+
+    if not items:
+        return {"added_to": [], "new": [], "known": 0, "skipped": 0, "said": ""}
+    blocks = []
+    for n, it in enumerate(items, 1):
+        what = {"gap": "The job ad asks for this and the candidate says they have it",
+                "claim": "The candidate confirmed this sentence from the application is true",
+                "cv_line": "The candidate confirmed this line from their own CV is true"}.get(it["kind"], "The candidate confirmed this")
+        block = f"[{n}] {what}:\n“{it['text']}”"
+        if it.get("said"):
+            block += f"\nThe candidate's own words about it: “{it['said']}”"
+        linked = _linked(it.get("fact_ids") or [])
+        if linked:
+            block += f"\nFacts the fact check linked it to:\n{linked}"
+        blocks.append(block)
+    query = "\n".join(f"{it['text']} {it.get('said') or ''}" for it in items)
+    system = PLACE_SYSTEM + "\n\nCAREER DATABASE:\n" + profile.facts_digest(profile.limits()["facts_chars_analysis"], query=query)
+    d = llm.run("analysis", "place_answers", system, "ITEMS:\n\n" + "\n\n".join(blocks), PLACE_SCHEMA,
+                max_tokens=4000, effort="medium").data
+    by_n = {r["n"]: r for r in d["results"] if 1 <= r["n"] <= len(items)}
+    categories = {c for c, _ in profile.CATEGORIES}
+    added_to: list[str] = []
+    new: list[str] = []
+    known = skipped = 0
+    for n, it in enumerate(items, 1):
+        r = by_n.get(n) or {"action": "skip"}
+        evidence = (f"Your answer when reviewing {about}: “{it['text']}”" + (f" ({it['said']})" if it.get("said") else ""))[:600]
+        target = db.q1("SELECT * FROM facts WHERE id = ?", (r.get("fact_id") or 0,)) if r["action"] in ("known", "add_to") else None
+        if r["action"] == "add_to" and target and (r.get("addition") or "").strip():
+            detail = " ".join(x for x in ((target.get("detail") or "").strip(), r["addition"].strip()) if x)
+            db.update("facts", target["id"], {"detail": detail, "updated_at": db.now()})
+            added_to.append(target["title"])
+        elif r["action"] == "known" and target:
+            known += 1
+        elif r["action"] == "new" and (r.get("title") or "").strip():
+            db.insert("facts", {
+                "category": r["category"] if r.get("category") in categories else "project",
+                "title": r["title"].strip()[:300], "organization": (r.get("organization") or "").strip()[:200] or None,
+                "start_date": (r.get("start_date") or "").strip()[:10] or None, "end_date": (r.get("end_date") or "").strip()[:10] or None,
+                "detail": (r.get("detail") or "").strip()[:1500] or None, "evidence": evidence,
+                "source": "manual", "verified": 0, "tags": "your answer", "created_at": db.now()})
+            new.append(r["title"].strip())
+        else:
+            skipped += 1
+    return {"added_to": added_to, "new": new, "known": known, "skipped": skipped,
+            "said": placed_line(added_to, new, known, skipped)}
+
+
+def placed_line(added_to: list[str], new: list[str], known: int, skipped: int) -> str:
+    parts = [f"added to “{t}”" for t in added_to]
+    if new:
+        parts.append(f"{len(new)} new fact{'s' if len(new) != 1 else ''} to check under Recently added")
+    if known:
+        parts.append(f"{known} your career database already had")
+    if skipped:
+        parts.append(f"{skipped} not about your career, so not saved")
+    line = "; ".join(parts)
+    return line[:1].upper() + line[1:] + "." if line else ""
+
+
+def place_task(payload: dict) -> dict:
+    """The queued step: place the answers, then start what has to wait for them (the revision, or the check)."""
+    result = place(payload.get("items") or [], payload.get("about") or "an application")
+    then = payload.get("then")
+    if then:
+        tasks.enqueue(then["kind"], then["payload"], ref=then.get("ref"), dedupe=then["kind"] != "revise_application")
+    return result
+
+
+def last_placed(ref: str) -> str:
+    """What happened to your latest answers, once they've been placed (shown where you answered)."""
+    import json
+
+    row = db.q1("SELECT * FROM tasks WHERE kind = 'place_answers' AND ref = ? AND finished_at >= ? ORDER BY id DESC LIMIT 1",
+                (ref, db.days_ago(2)))
+    if not row or row["status"] != "done" or not row.get("progress"):
+        return ""
+    try:
+        return json.loads(row["progress"]).get("said") or ""
+    except ValueError:
+        return ""
+
+
+def _queue(items: list[dict], about: str, ref: str, then: tuple[str, dict] | None) -> None:
+    """Place the answers first when there are any: the revision and the check must see where they went."""
+    follow = {"kind": then[0], "payload": then[1], "ref": ref} if then else None
+    if items:
+        tasks.enqueue("place_answers", {"items": items, "about": about, "then": follow}, ref=ref, dedupe=False)
+    elif follow:
+        tasks.enqueue(follow["kind"], follow["payload"], ref=ref, dedupe=follow["kind"] != "revise_application")
 
 
 def apply_answers(app: dict, answers: dict[str, dict], model: dict | None = None) -> dict:
-    """Save what you confirmed or explained as facts, and revise the draft where you said something isn't true or
-    told it more. `answers` is {question id: {"verdict": "yes" | "no" | "", "text": your words}}."""
+    """What you confirmed is placed in your career database, and the draft is revised where you said something
+    isn't true or told it more. `answers` is {question id: {"verdict": "yes" | "no" | "", "text": your words}}."""
     asked = {q["id"]: q for q in questions(app)}
     job_title = app.get("job_title") or "this job"
-    facts, instructions, parts = 0, [], set()
+    place_items: list[dict] = []
+    confirmed: list[str] = []
+    instructions: list[str] = []
+    parts: set[str] = set()
     for qid, answer in answers.items():
         q = asked.get(qid)
         verdict, text = (answer.get("verdict") or "").strip(), (answer.get("text") or "").strip()
@@ -73,39 +232,40 @@ def apply_answers(app: dict, answers: dict[str, dict], model: dict | None = None
             continue
         if q["kind"] == "gap":
             if verdict == "yes" or (text and verdict != "no"):
-                _fact("skill", q["text"], text, job_title)
-                facts += 1
+                place_items.append(_item(q, text))
                 instructions.append(f"The candidate does have “{q['text']}”" + (f": {text}" if text else "")
-                                    + ". It is in the career database now. Don't present it as a gap; use it where it helps.")
+                                    + ". Don't present it as a gap; use it where it helps.")
             else:
                 instructions.append(f"“{q['text']}” really is new to the candidate" + (f" ({text})" if text else "")
                                     + ". Say so in one plain sentence next to the closest real experience, if the letter doesn't already.")
             parts.add("letter")
             continue
-        category = "about" if q["kind"] == "assumed" else "project"  # move it into the entry it belongs to when you tidy
-        if verdict == "no":
-            if text:  # what is true instead is worth keeping
-                _fact(category, text, "", job_title)
-                facts += 1
+        if verdict == "no":  # a correction changes the draft; it isn't a fact about you
             instructions.append(f"This is not true, so take it out or put the truth in its place: “{q['text']}”"
                                 + (f". What is true: {text}" if text else "."))
             parts.add(q["where"])
-        else:  # true, with or without more detail
-            _fact(category, q["text"], text, job_title)
-            facts += 1
-            if text:
-                instructions.append(f"About “{q['text']}” the candidate adds: {text}. It is in the career database now; use it if it makes the text better.")
-                parts.add(q["where"])
-    extra = model or {}
+            continue
+        if q["kind"] == "assumed":  # true for this application; one letter's motive isn't put in About me
+            confirmed.append(q["text"])
+        else:
+            place_items.append(_item(q, text))
+        if text:
+            instructions.append(f"About “{q['text']}” the candidate adds: {text}. Use it if it makes the text better.")
+            parts.add(q["where"])
+    if confirmed:
+        review = db.jload(app.get("review"), {}) or {}
+        review["confirmed"] = [*(review.get("confirmed") or []), *confirmed]
+        db.update("applications", app["id"], {"review": db.jdump(review)})
+    then = None
     if instructions:
         part = "both" if parts >= {"letter", "cv"} else ("cv" if parts == {"cv"} else "letter")
-        tasks.enqueue("revise_application", {"application_id": app["id"], "part": part, **extra,
-                                             "instructions": "The candidate answered questions about this draft. Change only what "
-                                                             "their answers require:\n- " + "\n- ".join(instructions)},
-                      ref=f"app:{app['id']}", dedupe=False)
-    elif facts:  # only confirmations: the text stays, the fact check now has the facts to find
-        tasks.enqueue("check_application", {"application_id": app["id"], **extra}, ref=f"app:{app['id']}")
-    return {"facts": facts, "revised": bool(instructions)}
+        then = ("revise_application", {"application_id": app["id"], "part": part, **(model or {}),
+                                       "instructions": "The candidate answered questions about this draft. Change only what "
+                                                       "their answers require:\n- " + "\n- ".join(instructions)})
+    elif place_items:  # only confirmations: the text stays, the fact check then finds them in the database
+        then = ("check_application", {"application_id": app["id"], **(model or {})})
+    _queue(place_items, f"the application for {job_title}", f"app:{app['id']}", then)
+    return {"placing": len(place_items), "confirmed": len(confirmed), "revised": bool(instructions)}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -133,6 +293,7 @@ def base_questions(base: dict | None) -> list[dict]:
     """The base CV's lines the career database doesn't back, as questions for you."""
     claims = (db.jload((base or {}).get("claims"), {}) or {}).get("claims") or []
     return [{"id": f"base:{n}", "kind": "claim", "where": "cv", "text": c["text"], "status": c["status"],
+             "fact_ids": c.get("fact_ids") or [],
              "ask": ("Your career database doesn't back this line. Is it true?" if c["status"] == "unsupported"
                      else "Part of this line goes beyond, or against, your career database. Is it true as written?"),
              "detail": c.get("note") or "", "yes": "True as written", "no": "Not true: change the CV"}
@@ -190,13 +351,14 @@ def replace_in_cv(data: dict, old: str, new: str) -> bool:
 
 
 def apply_base_answers(base: dict, answers: dict[str, dict]) -> dict:
-    """Your answers about the base CV. True as written: saved as a fact. Not true: the CV says your words instead
-    (or the line is taken out when you write nothing). Then the base is checked again."""
+    """Your answers about the base CV. True as written: placed in your career database (see `place`). Not true: the
+    CV says your words instead (or the line is taken out when you write nothing). Then the base is checked again."""
     from . import cvdata
 
     asked = {q["id"]: q for q in base_questions(base)}
     data = base["data"]
-    facts = changed = 0
+    place_items: list[dict] = []
+    changed = 0
     missed: list[str] = []
     for qid, answer in answers.items():
         q = asked.get(qid)
@@ -204,17 +366,16 @@ def apply_base_answers(base: dict, answers: dict[str, dict]) -> dict:
         if not q or verdict not in ("yes", "no"):
             continue
         if verdict == "yes":
-            _fact("project", q["text"], text, "", about="your base CV")
-            facts += 1
+            place_items.append(_item({**q, "kind": "cv_line"}, text))
         elif replace_in_cv(data, q["text"], text):
             changed += 1
         else:
             missed.append(q["text"])
     if changed:
         cvdata.save_base(base["id"], data)
-    if facts or changed:
-        tasks.enqueue("check_cv_base", {"base_id": base["id"]}, ref="cv-base-check")
-    return {"facts": facts, "changed": changed, "missed": missed}
+    if place_items or changed:
+        _queue(place_items, "your base CV", "cv-base-check", ("check_cv_base", {"base_id": base["id"]}))
+    return {"placing": len(place_items), "changed": changed, "missed": missed}
 
 
 def open_drafts() -> list[int]:

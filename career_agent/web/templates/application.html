@@ -179,8 +179,9 @@
 <div class="grid-2" style="margin-top:1rem">
   <section class="card" id="questions">
     <h2>Questions for you</h2>
+    {% if look.placed %}<p class="small"><span class="pill good">Your last answers</span> {{ look.placed }}</p>{% endif %}
     {% if look.questions %}
-    <p class="small text-2">Only you know these. Your answers are saved as facts in your career database, so later drafts know them too, and this draft is revised to match.</p>
+    <p class="small text-2">Only you know these. What you confirm about your career is put where it belongs in your career database, so later drafts know it too. Corrections only change this draft.</p>
     {% if look.base_open and look.questions|selectattr('where', 'equalto', 'cv')|list %}<p class="small"><span class="pill warn">CV</span> {{ look.base_open }} line{{ 's' if look.base_open != 1 }} in your base CV disagree with your career database, so they come back in every application. <a href="/profile?tab=cv{% if cv_base %}&base={{ cv_base.id }}{% endif %}#cv-check">Settle them once under Profile → Your CV</a>.</p>{% endif %}
     <form method="post" action="/applications/{{ a.id }}/answers">
       {% for q in look.questions %}

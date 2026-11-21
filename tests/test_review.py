@@ -1,12 +1,12 @@
-"""The review screen: job post, letter and CV side by side, the questions only you can answer, and your answers
-becoming facts and a revised draft."""
+"""The review screen: job post, letter and CV side by side, the questions only you can answer, and your answers:
+what you confirm put where it belongs in your career database, and a revised draft."""
 from __future__ import annotations
 
 import json
 
 from fastapi.testclient import TestClient
 
-from career_agent import db, jobs, review, tracker, writer
+from career_agent import db, jobs, review, settings, tasks, tracker, writer
 from career_agent.web.app import app
 
 from .conftest import JOB_TEXT
@@ -36,7 +36,15 @@ def test_questions_come_from_the_gap_the_assumptions_and_the_fact_check(fake):
     assert qs[0]["detail"] == "The letter doesn't mention it. Suggested sentence: “Kubernetes har jeg ikke arbejdet med endnu.”"
 
 
-def test_your_answers_become_facts_and_the_draft_is_revised(fake):
+def _run(kind: str) -> dict:
+    """Run the oldest queued task of this kind, the way the queue does."""
+    row = db.q1("SELECT * FROM tasks WHERE kind = ? AND status = 'queued' ORDER BY id", (kind,))
+    assert row, f"no {kind} queued"
+    tasks.run_task(row)
+    return db.q1("SELECT * FROM tasks WHERE id = ?", (row["id"],))
+
+
+def test_corrections_and_assumptions_change_the_draft_but_not_your_career_database(fake):
     a = _draft()
     qs = {q["kind"]: q for q in review.questions(a)}
     before = db.scalar("SELECT COUNT(*) FROM facts")
@@ -44,24 +52,74 @@ def test_your_answers_become_facts_and_the_draft_is_revised(fake):
     r = c.post(f"/applications/{a['id']}/answers", follow_redirects=False, data={
         f"v_{qs['gap']['id']}": "no", f"t_{qs['gap']['id']}": "",
         f"v_{qs['assumed']['id']}": "yes", f"t_{qs['assumed']['id']}": "Betalinger er det, jeg helst vil arbejde med.",
-        f"v_{qs['claim']['id']}": "no", f"t_{qs['claim']['id']}": "Teamet var på 8 udviklere.", "effort": "high"})
-    assert "2+answers+saved" in r.headers["location"] and "Revising" in r.headers["location"]
-    new = db.q("SELECT category, title, detail, verified, source, evidence FROM facts ORDER BY id DESC LIMIT ?",
-               (db.scalar("SELECT COUNT(*) FROM facts") - before,))
-    assert [(f["category"], f["title"]) for f in new] == [("project", "Teamet var på 8 udviklere."),
-                                                         ("about", "You want to work with payments again.")]
-    assert new[1]["detail"].startswith("Betalinger er det") and all(f["verified"] and f["source"] == "manual" for f in new)
+        f"v_{qs['claim']['id']}": "no", f"t_{qs['claim']['id']}": "not my biggest i would say", "effort": "high"})
+    assert "Revising" in r.headers["location"] and "1+kept+as+true+for+this+application+only" in r.headers["location"]
+    assert db.scalar("SELECT COUNT(*) FROM facts") == before, "a correction or a motive for one job is no career fact"
+    assert not db.q1("SELECT 1 FROM tasks WHERE kind = 'place_answers'"), "nothing to place"
     task = json.loads(db.q1("SELECT payload FROM tasks WHERE kind = 'revise_application' ORDER BY id DESC")["payload"])
     assert task["part"] == "letter" and task["model"] == "||high"
     assert "really is new to the candidate" in task["instructions"] and "This is not true" in task["instructions"]
-    assert "What is true: Teamet var på 8 udviklere." in task["instructions"] and "Betalinger er det" in task["instructions"]
+    assert "What is true: not my biggest i would say" in task["instructions"] and "Betalinger er det" in task["instructions"]
+
+    a = tracker.app_with_job(a["id"])
+    assert db.jload(a["review"], {})["confirmed"] == ["You want to work with payments again."]
+    assert "assumed" not in [q["kind"] for q in review.questions(a)], "a confirmed assumption isn't asked again"
+    writer.revise(a["id"], "Shorter.")  # the writer assumes the same again: it stays confirmed, and the writer is told
+    a = tracker.app_with_job(a["id"])
+    assert "assumed" not in [q["kind"] for q in review.questions(a)]
+    prompt = next(user for system, user, schema in reversed(fake.calls) if schema is writer.LETTER_SCHEMA)
+    assert "confirmed these are true for this application" in prompt and "You want to work with payments again." in prompt
 
     r = c.post(f"/applications/{a['id']}/answers", follow_redirects=False, data={})
     assert "Answer+at+least+one" in r.headers["location"]
+
+
+def test_what_you_confirm_is_placed_before_the_draft_is_checked_again(fake):
+    a = _draft()
     db.ex("DELETE FROM tasks")
-    result = review.apply_answers(a, {qs["claim"]["id"]: {"verdict": "yes", "text": ""}})
-    assert result == {"facts": 1, "revised": False}, "a plain confirmation only needs the facts checked again"
-    assert db.q1("SELECT kind FROM tasks")["kind"] == "check_application"
+    q = next(q for q in review.questions(a) if q["kind"] == "claim")
+    r = TestClient(app).post(f"/applications/{a['id']}/answers", follow_redirects=False,
+                             data={f"v_{q['id']}": "yes", f"t_{q['id']}": ""})
+    assert "Putting+1+answer+in+your+career+database" in r.headers["location"]
+    assert [t["kind"] for t in db.q("SELECT kind FROM tasks")] == ["place_answers"], "the check waits for the placing"
+    before = db.scalar("SELECT COUNT(*) FROM facts")
+    done = _run("place_answers")
+    assert done["status"] == "done" and db.q1("SELECT kind FROM tasks WHERE status = 'queued'")["kind"] == "check_application"
+    new = db.q1("SELECT * FROM facts ORDER BY id DESC LIMIT 1")
+    assert db.scalar("SELECT COUNT(*) FROM facts") == before + 1 and new["title"] == "Confirmed fact"
+    assert (new["verified"], new["tags"], new["source"]) == (0, "your answer", "manual"), "a new fact waits for your tick"
+    assert "the application for Product Owner" in new["evidence"] and q["text"] in new["evidence"]
+    assert review.last_placed(f"app:{a['id']}") == "1 new fact to check under Recently added."
+    assert "1 new fact to check under Recently added." in TestClient(app).get(f"/applications/{a['id']}?tab=review").text
+
+
+def test_placing_adds_to_the_fact_it_belongs_to_and_leaves_out_what_isnt_your_career(fake):
+    _draft()
+    po = db.q1("SELECT * FROM facts WHERE title = 'Product Owner'")
+    db.update("facts", po["id"], {"verified": 1})
+    result = review.place([
+        {"kind": "claim", "text": "Jeg byggede betalingsflowet i mobilbanken.", "said": "", "fact_ids": [po["id"]]},
+        {"kind": "claim", "text": "Jeg har ansvaret for betalingerne.", "said": "already in there", "fact_ids": [po["id"]]},
+        {"kind": "claim", "text": "Så jeg kan starte 1. februar 2027.", "said": "", "fact_ids": []},
+        {"kind": "gap", "text": "Kubernetes", "said": "Ran our test cluster", "fact_ids": []},
+    ], "the application for Product Owner")
+    after = db.q1("SELECT * FROM facts WHERE id = ?", (po["id"],))
+    assert after["detail"] == f"{po['detail']} Also: Jeg byggede betalingsflowet i mobilbanken." and after["verified"] == 1
+    assert (result["added_to"], result["new"], result["known"], result["skipped"]) == (["Product Owner"], ["Kubernetes"], 1, 1)
+    k8s = db.q1("SELECT * FROM facts WHERE title = 'Kubernetes'")
+    assert k8s["category"] == "skill" and not k8s["verified"] and "(Ran our test cluster)" in k8s["evidence"]
+    assert not db.q1("SELECT 1 FROM facts WHERE title LIKE '%starte%' OR detail LIKE '%starte%'")
+    assert result["said"] == ("Added to “Product Owner”; 1 new fact to check under Recently added; "
+                              "1 your career database already had; 1 not about your career, so not saved.")
+    sent = next(user for system, user, schema in reversed(fake.calls) if schema is review.PLACE_SCHEMA)
+    assert f"[#{po['id']}] Product Owner (Danske Bank)" in sent, "the facts the check linked are shown in full"
+
+
+def test_the_fact_check_knows_when_you_can_start(fake):
+    settings.update("profile", {"availability": "From 1 February 2027"})
+    writer.check_claims("Jeg kan starte 1. februar 2027.", "")
+    system = next(system for system, user, schema in reversed(fake.calls) if schema is writer.CHECK_SCHEMA)
+    assert "The candidate lives in København. Their availability: From 1 February 2027 They said so themselves" in system
 
 
 def test_other_applications_to_the_same_employer_are_shown_and_avoided(fake):
@@ -140,13 +198,17 @@ def test_base_cv_lines_the_database_does_not_back_are_settled_once(fake):
     assert "Does your CV agree with your career database?" in page and qs[0]["text"] in page
 
     facts = db.scalar("SELECT COUNT(*) FROM facts")
+    db.ex("DELETE FROM tasks")
     r = c.post(f"/cv/base/{base['id']}/answers", follow_redirects=False, data={
         f"v_{qs[0]['id']}": "yes", f"t_{qs[0]['id']}": "", f"v_{qs[1]['id']}": "no", f"t_{qs[1]['id']}": "What is true instead"})
-    assert r.status_code == 303 and "saved+as+fact" in r.headers["location"] and "changed" in r.headers["location"]
-    assert db.scalar("SELECT COUNT(*) FROM facts") == facts + 1
-    added = db.q1("SELECT title, evidence, verified FROM facts ORDER BY id DESC LIMIT 1")
-    assert added["title"] == qs[0]["text"] and added["verified"] == 1 and "your base CV" in added["evidence"]
+    assert r.status_code == 303 and "being+put+in+your+career+database" in r.headers["location"] and "changed" in r.headers["location"]
     text = cvdata.to_markdown(cvdata.base()["data"])
     assert "What is true instead" in text and qs[1]["text"] not in text
-    assert tasks.active(ref="cv-base-check"), "the base is checked again after your answers"
+    assert [t["kind"] for t in tasks.active(ref="cv-base-check")] == ["place_answers"], "placed first, then checked again"
+    _run("place_answers")
+    assert db.scalar("SELECT COUNT(*) FROM facts") == facts + 1
+    added = db.q1("SELECT title, evidence, verified FROM facts ORDER BY id DESC LIMIT 1")
+    assert added["title"] == "Confirmed fact" and not added["verified"] and "your base CV" in added["evidence"]
+    assert [t["kind"] for t in tasks.active(ref="cv-base-check")] == ["check_cv_base"]
+    assert "1 new fact to check under Recently added." in c.get("/profile?tab=cv").text
     db.ex("DELETE FROM tasks")
