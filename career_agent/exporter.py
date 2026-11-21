@@ -47,8 +47,26 @@ def letter_date(language: str | None, city: str | None) -> str:
     return f"{city}, {txt}" if city else txt
 
 
+def short_url(url: str) -> str:
+    """The address as it reads on paper: no https://, no www., no trailing slash."""
+    return re.sub(r"^https?://(www\.)?", "", url.strip()).rstrip("/")
+
+
+def contact_groups(p: dict) -> list[list[tuple[str, str]]]:
+    """(text, link) pairs: how to reach you first, then your links (shown short, but still clickable)."""
+    reach = [(p["email"].strip(), f"mailto:{p['email'].strip()}")] if (p.get("email") or "").strip() else []
+    reach += [(p[k].strip(), "") for k in ("phone", "city") if (p.get(k) or "").strip()]
+    links = []
+    for k in ("linkedin", "website"):
+        url = (p.get(k) or "").strip()
+        if url:
+            links.append((short_url(url), url if re.match(r"^[a-z]+:", url, re.I) else f"https://{url}"))
+    return [g for g in (reach, links) if g]
+
+
 def contact_line(p: dict) -> str:
-    return "  ·  ".join(x for x in (p.get("email"), p.get("phone"), p.get("city"), p.get("linkedin"), p.get("website")) if x)
+    """For Word: each item's own spaces are non-breaking, so a line only wraps between items."""
+    return "  ·  ".join(text.replace(" ", " ") for group in contact_groups(p) for text, _ in group)
 
 
 def filename(kind: str, ext: str, company: str | None, language: str | None) -> str:
@@ -201,15 +219,41 @@ class _PDF:
         self.pdf.line(self.pdf.l_margin, y, self.pdf.w - self.pdf.r_margin, y)
         self.pdf.set_y(y + gap)
 
-    def header(self, name: str, sub: str | None, contact: str) -> None:
+    def header(self, name: str, sub: str | None, contact: list[list[tuple[str, str]]]) -> None:
         self.font("B", 19, (20, 20, 20))
         self.pdf.cell(0, 9, self.t(name), new_x="LMARGIN", new_y="NEXT")
         if sub:
             self.font("", 11.5, self.accent)
-            self.pdf.multi_cell(0, 6, self.t(sub), new_x="LMARGIN", new_y="NEXT")
+            self.pdf.multi_cell(0, 6, self.t(sub), align="L", new_x="LMARGIN", new_y="NEXT")
         if contact:
-            self.font("", 9, (95, 95, 95))
-            self.pdf.multi_cell(0, 5, self.t(contact), new_x="LMARGIN", new_y="NEXT")
+            self.contact(contact)
+
+    def contact(self, groups: list[list[tuple[str, str]]], lh: float = 5) -> None:
+        """Left-aligned and wrapped only between items, never inside a phone number or an address.
+        When it doesn't all fit on one line, the links start the second line."""
+        self.font("", 9, (95, 95, 95))
+        pad = 2 * self.pdf.c_margin
+
+        def width(s: str) -> float:
+            return self.pdf.get_string_width(self.t(s)) + pad
+
+        sep = "·"
+        sep_w = width(sep)
+        items = [text for group in groups for text, _ in group]
+        one_line = sum(map(width, items)) + sep_w * (len(items) - 1) <= self.pdf.epw
+        left, right = self.pdf.l_margin, self.pdf.w - self.pdf.r_margin
+        for g, group in enumerate(groups):
+            if g and not one_line:
+                self.pdf.ln(lh)
+            for text, url in group:
+                w = width(text)
+                if self.pdf.get_x() > left + 0.01:  # something is already on this line
+                    if self.pdf.get_x() + sep_w + w > right:
+                        self.pdf.ln(lh)
+                    else:
+                        self.pdf.cell(sep_w, lh, sep)
+                self.pdf.cell(w, lh, self.t(text), link=url)
+        self.pdf.ln(lh)
 
     def bytes(self) -> bytes:
         return bytes(self.pdf.output())
@@ -218,7 +262,7 @@ class _PDF:
 def letter_pdf(app: dict) -> bytes:
     p = settings.get("profile")
     doc = _PDF()
-    doc.header(p.get("name") or "", None, contact_line(p))
+    doc.header(p.get("name") or "", None, contact_groups(p))
     doc.pdf.ln(9)
     lang = _lang(app.get("language"))
     y = doc.pdf.get_y()
@@ -226,7 +270,7 @@ def letter_pdf(app: dict) -> bytes:
     recipient = [app.get("company_name") or ""]
     if app.get("contact_name"):
         recipient.append(f"{DOC_WORDS['att'].get(lang, 'Attn.')} {app['contact_name']}")
-    doc.pdf.multi_cell(doc.pdf.epw * 0.6, 5, doc.t("\n".join(r for r in recipient if r)), new_x="LMARGIN", new_y="NEXT")
+    doc.pdf.multi_cell(doc.pdf.epw * 0.6, 5, doc.t("\n".join(r for r in recipient if r)), align="L", new_x="LMARGIN", new_y="NEXT")
     after_recipient = doc.pdf.get_y()
     doc.pdf.set_xy(doc.pdf.l_margin, y)
     doc.pdf.cell(0, 5, doc.t(letter_date(lang, p.get("city"))), align="R")
@@ -255,7 +299,7 @@ def cv_pdf(app: dict) -> bytes:
     blocks = parse_cv(app.get("cv") or "")
     headline = next((t for k, t in blocks if k == "h1"), p.get("headline") or "")
     doc = _PDF()
-    doc.header(p.get("name") or "", headline, contact_line(p))
+    doc.header(p.get("name") or "", headline, contact_groups(p))
     doc.rule(2.5)
     for kind, text in blocks:
         if kind == "h1":

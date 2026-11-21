@@ -194,6 +194,17 @@ def test_cv_markdown_parsing():
     assert exporter.inline_runs("a **b** c *d*") == [("a ", False, False), ("b", True, False), (" c ", False, False), ("d", False, True)]
 
 
+def test_contact_header_links_short_and_unbroken():
+    p = {"email": "a@b.dk", "phone": "+45 12 34 56 78", "city": "Horsens",
+         "linkedin": "https://www.linkedin.com/in/someone/", "website": "github.com/someone"}
+    reach, links = exporter.contact_groups(p)
+    assert reach[0] == ("a@b.dk", "mailto:a@b.dk") and reach[1] == ("+45 12 34 56 78", "")
+    assert links == [("linkedin.com/in/someone", "https://www.linkedin.com/in/someone/"),
+                     ("github.com/someone", "https://github.com/someone")], "shown short, still clickable"
+    assert "+45 12 34 56 78" in exporter.contact_line(p), "Word may only wrap between items"
+    assert exporter.contact_groups({"email": "a@b.dk"}) == [[("a@b.dk", "mailto:a@b.dk")]]
+
+
 def test_fact_hygiene(fake):
     text = "Projektleder hos Novo Nordisk 2018 - 2021. I dag product owner."
     f = profile._clean_dates({"start_date": "2019", "end_date": "present"}, text)
