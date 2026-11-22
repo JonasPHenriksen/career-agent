@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline %}
+{% from "_macros.html" import score, grade, deadline, when_due %}
 {% block title %}Jobs{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -42,9 +42,7 @@
   <input type="search" name="q" value="{{ q }}" placeholder="Search title, company, place" style="max-width:280px">
   <label class="sr-only" for="sort">Sort</label>
   <select id="sort" name="sort" data-autosubmit style="width:auto">
-    <option value="score" {{ 'selected' if sort == 'score' }}>Best fit first</option>
-    <option value="newest" {{ 'selected' if sort == 'newest' }}>Newest first</option>
-    <option value="deadline" {{ 'selected' if sort == 'deadline' }}>Deadline first</option>
+    {% for k, l in sorts %}<option value="{{ k }}" {{ 'selected' if sort == k }}>{{ l }}</option>{% endfor %}
   </select>
   <button class="btn" data-no-busy="1">Search</button>
 </form>
@@ -60,11 +58,12 @@
         {% if j.company_name %}<span class="key">{{ j.company_name }} {{ grade(j.badge) }}</span>{% endif %}
         {% if j.location %}<span>{{ j.location }}</span>{% endif %}
         {% if j.work_mode and j.work_mode != 'unknown' %}<span>{{ j.work_mode }}</span>{% endif %}
-        {% if j.deadline %}{{ deadline(j.deadline) }}{% endif %}
+        {{ when_due(j) }}
         {% if j.parse_status in ('pending', 'parsing') %}<span class="pill accent">reading…</span>{% elif j.parse_status == 'error' %}<span class="pill bad" title="{{ j.parse_error }}">couldn't read</span>{% elif j.parse_status == 'parsed' and j.fit_score is none %}<span class="pill">not scored</span>{% endif %}
         {% if j.reposted %}<span class="pill warn" title="This company posted the same job before">re-posted</span>{% endif %}
         {% if j.app_id %}<a class="pill st-{{ j.app_status }}" href="/applications/{{ j.app_id }}">application: {{ j.app_status }}</a>{% endif %}
       </div>
+      {% if j.rank and j.rank.points %}<div class="small muted">Ranked {{ j.rank.score if j.rank.score is not none else 'lower' }}{% for n, why in j.rank.points %}{{ ':' if loop.first else ',' }} −{{ n }} {{ why }}{% endfor %}</div>{% endif %}
       {% if j.f.get('summary') %}<div class="why">{{ j.f.summary }}</div>{% elif j.status == 'filtered' and j.notes %}<div class="why">{{ j.notes }}</div>{% endif %}
     </div>
     <div class="acts">

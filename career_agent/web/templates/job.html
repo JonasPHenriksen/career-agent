@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline, progress, model_picker, made_by %}
+{% from "_macros.html" import score, grade, deadline, when_due, progress, model_picker, made_by %}
 {% block title %}{{ job.title or 'Job' }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/jobs">Jobs</a>{% if source %} · found by {{ source.name }}{% endif %} · added {{ job.created_at|ago }}</div>
@@ -9,8 +9,9 @@
     <p class="sub">
       {% if job.company_id %}<a href="/companies/{{ job.company_id }}">{{ job.company_name }}</a> {{ grade(badge) }}{% elif job.company_name %}{{ job.company_name }}{% endif %}
       {% if job.location %} · {{ job.location }}{% if job.reach and job.reach.town %} <span class="text-2" title="Straight line from {{ job.reach.home }}, measured by the app; roughly {{ job.reach.road_km }} km by road">({{ job.reach.km }} km)</span>{% endif %}{% endif %}{% if job.work_mode and job.work_mode != 'unknown' %} · {{ job.work_mode }}{% endif %}
-      {% if job.deadline %} · {{ deadline(job.deadline) }}{% elif job.d.get('deadline_note') %} · deadline: {{ job.d.deadline_note }}{% endif %}
+      · {{ when_due(job) }}{% if not job.deadline and job.d.get('deadline_note') %} <span class="text-2">{{ job.d.deadline_note }}</span>{% endif %}
     </p>
+    {% if job.rank.points %}<p class="small muted" style="margin:.2rem 0 0">Ranked {{ job.rank.score if job.rank.score is not none else 'lower' }} in your list{% for n, why in job.rank.points %}{{ ':' if loop.first else ',' }} −{{ n }} {{ why }}{% endfor %}. <a href="/profile?tab=about">Change how jobs are ranked</a></p>{% endif %}
   </div>
   <div class="row">
     {% if app %}
@@ -65,7 +66,7 @@
 </section>
 {% endif %}
 
-{% if expired and not app %}<div class="flash err">The deadline for this job has passed.</div>{% endif %}
+{% if expired and not app %}<div class="flash err">{% if job.deadline %}The deadline for this job has passed.{% else %}The listing for this job has come down.{% endif %}</div>{% endif %}
 {% if job.ai_notice %}
 <div class="card warn" role="alert" style="margin-bottom:1rem">
   <strong>This ad says something about AI-written applications.</strong>

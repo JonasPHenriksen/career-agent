@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .. import (backup, collect, companies, config, cvdata, cvrender, db, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
-                profile, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
+                profile, rank, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
 HERE = Path(__file__).parent
@@ -53,6 +53,7 @@ async def lifespan(_app: FastAPI):
     with history.op("Starting the app"):
         llm.bootstrap()
         tasks.recover()
+        jobs.tidy_after_update()
         tasks.catch_up()
         llm.backfill_refs()
         retrieval.backfill_chunks()
@@ -199,17 +200,20 @@ def today(request: Request):
         {"done": n_sources > 0 or n_jobs > 0, "title": "Add jobs", "text": "Paste a job link, or add a job-search feed to watch.", "href": "/jobs"},
     ]
     threshold = int(settings.get("automation").get("auto_draft_threshold") or 80)
-    drafts = db.q("SELECT a.*, j.title AS job_title, j.company_name, j.fit_score, j.deadline FROM applications a "
-                  "JOIN jobs j ON j.id = a.job_id WHERE a.status IN ('drafting', 'draft', 'ready') ORDER BY "
-                  "CASE WHEN j.deadline IS NULL THEN 1 ELSE 0 END, j.deadline, a.updated_at DESC")
+    drafts = rank.urgent_first(db.q(
+        "SELECT a.*, j.title AS job_title, j.company_name, j.fit_score, j.deadline, j.details, j.posted_at, "
+        "j.created_at AS job_created_at FROM applications a JOIN jobs j ON j.id = a.job_id "
+        "WHERE a.status IN ('drafting', 'draft', 'ready') ORDER BY a.updated_at DESC"))
     for a in drafts:
         a["claims_d"] = db.jload(a["claims"], {}) or {}
         a["voice_d"] = db.jload(a["voice"], {}) or {}
-    matches = db.q(
+    matches = [j for j in rank.best_first(db.q(
         "SELECT j.* FROM jobs j WHERE j.fit_score >= ? AND j.status IN ('new', 'shortlisted') "
         "AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.job_id = j.id) "
-        "AND (j.deadline IS NULL OR j.deadline >= ?) ORDER BY j.fit_score DESC LIMIT 8",
-        (max(threshold - 15, 50), date.today().isoformat()))
+        f"AND {jobs.open_sql()}", (max(threshold - 15, 50), date.today().isoformat())))
+        if j["rank"]["score"] >= max(threshold - 15, 50)][:8]
+    for j in matches:
+        j["urgency"] = rank.urgency(j)
     interviews = db.q("SELECT a.*, j.title AS job_title, j.company_name FROM applications a JOIN jobs j ON j.id = a.job_id "
                       "WHERE a.status IN ('interview', 'offer') ORDER BY a.last_event_at DESC")
     errors = db.q("SELECT * FROM tasks WHERE status = 'error' AND finished_at >= ? ORDER BY id DESC LIMIT 5",
@@ -280,12 +284,19 @@ async def jobs_add(request: Request):
     return go(back(request, "/jobs"), err="Paste a job link (https://…) or the full text of the ad.")
 
 
+JOB_SORTS = [("best", "Best for you first"), ("score", "Best fit first"), ("urgent", "Most urgent first"),
+             ("newest", "Newest first")]
+
+
 @app.get("/jobs")
-def jobs_list(request: Request, view: str = "inbox", sort: str = "score", q: str = ""):
+def jobs_list(request: Request, view: str = "inbox", sort: str = "best", q: str = ""):
     where, params = [], []
     today_s = date.today().isoformat()
+    sort = {"deadline": "urgent"}.get(sort, sort)
+    if sort not in dict(JOB_SORTS):
+        sort = "best"
     if view == "inbox":
-        where.append("j.status IN ('new', 'shortlisted') AND a.id IS NULL AND (j.deadline IS NULL OR j.deadline >= ?)")
+        where.append(f"j.status IN ('new', 'shortlisted') AND a.id IS NULL AND {jobs.open_sql()}")
         params.append(today_s)
     elif view == "shortlisted":
         where.append("j.status = 'shortlisted'")
@@ -295,25 +306,28 @@ def jobs_list(request: Request, view: str = "inbox", sort: str = "score", q: str
         where.append("j.status = ?")
         params.append(view)
     elif view == "expired":
-        where.append("j.deadline < ? AND a.id IS NULL")
+        where.append(f"NOT {jobs.open_sql()} AND a.id IS NULL")
         params.append(today_s)
     if q:
         where.append("(j.title LIKE ? OR j.company_name LIKE ? OR j.location LIKE ?)")
         params += [f"%{q}%"] * 3
-    order = {"score": "j.fit_score IS NULL, j.fit_score DESC, j.id DESC", "newest": "j.id DESC",
-             "deadline": "j.deadline IS NULL, j.deadline"}.get(sort, "j.id DESC")
+    order = {"score": "j.fit_score IS NULL, j.fit_score DESC, j.id DESC"}.get(sort, "j.id DESC")
     sql = ("SELECT j.*, a.id AS app_id, a.status AS app_status FROM jobs j LEFT JOIN applications a ON a.job_id = j.id"
-           + (" WHERE " + " AND ".join(where) if where else "") + f" ORDER BY {order} LIMIT 300")
-    rows = db.q(sql, params)
+           + (" WHERE " + " AND ".join(where) if where else "") + f" ORDER BY {order}")
+    rows = db.q(sql, params)  # ranked here, not in SQL: distance and employer size count too (rank.py)
+    rows = (rank.best_first(rows) if sort == "best" else rank.urgent_first(rows) if sort == "urgent"
+            else rank.annotate(rows))[:300]
+    today_d = date.today()
     grades: dict = {}
     for r in rows:
+        r["urgency"] = r.get("urgency") or rank.urgency(r, today_d)
         if r["company_id"] and r["company_id"] not in grades:
             grades[r["company_id"]] = companies.badge(r["company_id"])
         r["badge"] = grades.get(r["company_id"])
         r["f"] = db.jload(r["fit"], {}) or {}
     counts = {
         "inbox": db.scalar("SELECT COUNT(*) FROM jobs j LEFT JOIN applications a ON a.job_id = j.id WHERE j.status IN ('new','shortlisted') "
-                           "AND a.id IS NULL AND (j.deadline IS NULL OR j.deadline >= ?)", (today_s,)),
+                           f"AND a.id IS NULL AND {jobs.open_sql()}", (today_s,)),
         "shortlisted": db.scalar("SELECT COUNT(*) FROM jobs WHERE status = 'shortlisted'"),
         "applying": db.scalar("SELECT COUNT(*) FROM applications"),
         "filtered": db.scalar("SELECT COUNT(*) FROM jobs WHERE status = 'filtered'"),
@@ -323,7 +337,7 @@ def jobs_list(request: Request, view: str = "inbox", sort: str = "score", q: str
     busy = db.scalar("SELECT COUNT(*) FROM tasks WHERE kind IN ('parse_job', 'score_job', 'poll_source', 'collect_jobs') "
                      "AND status IN ('queued', 'running')") or 0
     return render(request, "jobs.html", rows=rows, view=view, sort=sort, q=q, counts=counts, busy=busy,
-                  sources=db.q("SELECT * FROM sources ORDER BY id"))
+                  sources=db.q("SELECT * FROM sources ORDER BY id"), sorts=JOB_SORTS)
 
 
 @app.get("/jobs/progress")
@@ -338,6 +352,8 @@ def jobs_progress(request: Request, n: int = 0):
 @app.get("/jobs/{job_id}")
 def job_detail(request: Request, job_id: int):
     job = need(jobs.get(job_id))
+    rank.annotate([job])
+    job["urgency"] = rank.urgency(job)
     app_row = db.q1("SELECT * FROM applications WHERE job_id = ?", (job_id,))
     company = db.q1("SELECT * FROM companies WHERE id = ?", (job["company_id"],)) if job["company_id"] else None
     fact_ids = {i for m in (job["f"].get("matched") or []) for i in (m.get("fact_ids") or [])}
@@ -441,9 +457,10 @@ def application(request: Request, app_id: int, tab: str = ""):
         tab = "review" if (a["letter"] or a["cv"]) else "letter"
     look = {}
     if tab == "review":
-        waiting = [r["id"] for r in db.q(  # the same order as Today's "Waiting for your review": nearest deadline first
-            "SELECT a.id FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.status IN ('draft', 'ready') AND a.letter IS NOT NULL "
-            "ORDER BY CASE WHEN j.deadline IS NULL THEN 1 ELSE 0 END, j.deadline, a.updated_at DESC")]
+        waiting = [r["id"] for r in rank.urgent_first(db.q(  # the same order as Today's "Waiting for your review"
+            "SELECT a.id, a.updated_at, j.title AS job_title, j.fit_score, j.deadline, j.details, j.posted_at, "
+            "j.created_at AS job_created_at FROM applications a JOIN jobs j ON j.id = a.job_id "
+            "WHERE a.status IN ('draft', 'ready') AND a.letter IS NOT NULL ORDER BY a.updated_at DESC"))]
         at = waiting.index(app_id) if app_id in waiting else -1
         look = {"base_open": len(review.base_questions(cvdata.base_for(a["language"]))), "questions": review.questions(a), "letter_html": review.marked(a["letter"], a),
                 "placed": review.last_placed(f"app:{app_id}"),
@@ -903,7 +920,8 @@ def company_page(request: Request, company_id: int):
                             "ON a.job_id = j.id WHERE j.company_id = ? ORDER BY j.id DESC", (company_id,)),
                   events=db.q("SELECT e.*, j.title AS job_title FROM events e JOIN applications a ON a.id = e.application_id "
                               "JOIN jobs j ON j.id = a.job_id WHERE e.company_id = ? ORDER BY e.occurred_at DESC", (company_id,)),
-                  event_labels=tracker.EVENT_LABELS, status_labels=tracker.STATUS_LABELS)
+                  event_labels=tracker.EVENT_LABELS, status_labels=tracker.STATUS_LABELS,
+                  sizes=companies.SIZES, size_labels=companies.SIZE_LABELS)
 
 
 @app.post("/companies/{company_id}")
@@ -915,6 +933,13 @@ async def company_save(request: Request, company_id: int):
         "user_rating": int(rating) if rating and rating.isdigit() else None,
         "blocked": 1 if f.get("blocked") else 0,
     })
+    c = db.q1("SELECT size, size_by FROM companies WHERE id = ?", (company_id,))
+    size = f.get("size") or None
+    if size and (c["size_by"] != "you" or c["size"] != size):
+        companies.set_size(company_id, size)
+    elif not size and c["size_by"] == "you":
+        companies.set_size(company_id, None)
+        tasks.enqueue("size_companies", ref="companies")
     return go(f"/companies/{company_id}", msg="Saved.")
 
 
@@ -993,7 +1018,7 @@ def profile_progress(request: Request):
 
 
 PROFILE_FIELDS = ["name", "email", "phone", "city", "linkedin", "website", "headline", "level", "target_roles",
-                  "target_industries", "locations", "max_km", "min_salary", "availability", "deal_breakers",
+                  "target_industries", "locations", "max_km", "preferred_km", "big_employers", "min_salary", "availability", "deal_breakers",
                   "always_mention", "never_mention", "about"]
 
 
@@ -1001,11 +1026,15 @@ PROFILE_FIELDS = ["name", "email", "phone", "city", "linkedin", "website", "head
 async def profile_about(request: Request):
     data = await request.form()
     patch = {k: (data.get(k) or "").strip() for k in PROFILE_FIELDS}
+    if patch["big_employers"] not in ("off", "moderate", "strong"):
+        patch["big_employers"] = "moderate"
     patch["work_modes"] = [m for m in ("onsite", "hybrid", "remote") if data.get(f"mode_{m}")]
     patch["job_kinds"] = {k: bool(data.get(f"kind_{k}")) for k, _ in jobkinds.KINDS}
     current = settings.get("profile")
     current.update(patch)
     settings.set("profile", current)
+    if companies.sizes_wanted() and companies.unsized():  # just switched on: judge the employers already here
+        tasks.enqueue("size_companies", ref="companies")
     return go("/profile?tab=about", msg="Saved.")
 
 

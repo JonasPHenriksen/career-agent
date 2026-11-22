@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 
 # (name, region, latitude, longitude, postal codes, other spellings). Regions: J = Jylland, F = Fyn, Z = Sjælland.
 _TOWNS: list[tuple[str, str, float, float, tuple[int, ...], tuple[str, ...]]] = [
@@ -203,6 +204,26 @@ _NAME_RX = re.compile(r"(?<![\w])(" + "|".join(re.escape(n) for n in sorted(_BY_
 _ABROAD_RX = re.compile(r"(?<![\w])(" + "|".join(re.escape(_norm(n)) for n in sorted(_ABROAD, key=len, reverse=True))
                         + r")(?![\w])")
 _SPLIT = re.compile(r"[,/;()|]| eller | or | og | and | & | – | - | også | also |\+", re.I)
+
+
+def _fold(text: str | None) -> str:
+    """Text the way job titles are compared (companies.norm_name): lower case, accents gone, å as a."""
+    s = unicodedata.normalize("NFKD", (text or "").lower())
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return re.sub(r"[^\w]+", " ", s).strip()
+
+
+_FOLDED_RX = re.compile(r"(?<![\w])(" + "|".join(re.escape(n) for n in sorted(
+    {_fold(n) for t in _TOWNS for n in (t[0], *t[5])} | {_fold(n) for n in _ABROAD}, key=len, reverse=True) if n)
+    + r")(?![\w])")
+_PLACE_JOINERS = {"or", "eller", "and", "og", "also", "ogsa", "near", "naer", "nær", "i", "in", "ved"}
+
+
+def only_places(text: str | None) -> bool:
+    """True when the text names places and nothing else: 'Copenhagen, Aarhus or Aalborg', 'Lystrup'."""
+    folded = _fold(text)
+    rest = _FOLDED_RX.sub(" ", folded)
+    return rest != folded and all(w in _PLACE_JOINERS or w in _NOT_A_PLACE for w in rest.split())
 
 
 def _line(a: tuple[float, float], b: tuple[float, float]) -> float:

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, deadline %}
+{% from "_macros.html" import score, deadline, when_due %}
 {% block title %}Today{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -109,7 +109,7 @@
       <li>
         <div class="grow">
           <a class="title" href="/applications/{{ a.id }}">{{ a.job_title or 'Untitled job' }}</a>
-          <span class="meta">{{ a.company_name or '' }}{% if a.deadline %} · {{ deadline(a.deadline) }}{% endif %}</span>
+          <span class="meta">{{ a.company_name or '' }} {{ when_due(a) }}</span>
           <div class="row small" style="margin-top:.2rem">
             {% if a.status == 'drafting' %}<span class="pill st-drafting">Writing…</span>
             {% elif a.status == 'ready' %}<span class="pill st-ready">Ready to send</span>
@@ -134,7 +134,7 @@
       {% for j in matches %}
       <li>
         {{ score(j.fit_score) }}
-        <div class="grow"><a class="title" href="/jobs/{{ j.id }}">{{ j.title }}</a><span class="meta">{{ j.company_name or '' }}{% if j.location %} · {{ j.location }}{% endif %}{% if j.deadline %} · {{ deadline(j.deadline) }}{% endif %}</span></div>
+        <div class="grow"><a class="title" href="/jobs/{{ j.id }}">{{ j.title }}</a><span class="meta">{{ j.company_name or '' }}{% if j.location %} · {{ j.location }}{% endif %} {{ when_due(j) }}</span>{% if j.rank.points %}<span class="small muted">Ranked {{ j.rank.score }}{% for n, why in j.rank.points %}{{ ':' if loop.first else ',' }} −{{ n }} {{ why }}{% endfor %}</span>{% endif %}</div>
         <form method="post" action="/jobs/{{ j.id }}/write" class="inline"><button class="btn small" data-busy="Starting…">Write</button></form>
       </li>
       {% endfor %}

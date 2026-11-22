@@ -52,6 +52,8 @@
       <div class="field"><label for="notes">Notes <span class="hint">· used when writing applications to them</span></label><textarea id="notes" name="notes" rows="6" placeholder="People you know there, what you've heard, how the process went…">{{ c.notes or '' }}</textarea></div>
       <div class="field"><label for="rating">How they treated you</label>
         <select id="rating" name="user_rating"><option value="">Not rated</option>{% for n in range(1, 6) %}<option value="{{ n }}" {{ 'selected' if c.user_rating == n }}>{{ '★' * n }} {{ ['Terrible','Poor','OK','Good','Excellent'][n-1] }}</option>{% endfor %}</select></div>
+      <div class="field"><label for="size">How big and well known <span class="hint">· big names get the most applicants, so their jobs rank a little lower{% if c.size_by == 'model' %}. Judged by the model{% if c.size_note %}: {{ c.size_note }}{% endif %}{% endif %}</span></label>
+        <select id="size" name="size"><option value="" {{ 'selected' if c.size_by != 'you' }}>{% if c.size_by == 'model' and c.size %}Let the model judge ({{ size_labels.get(c.size, c.size)|lower }}){% else %}Let the model judge{% endif %}</option>{% for k, l in sizes %}<option value="{{ k }}" {{ 'selected' if c.size_by == 'you' and c.size == k }}>{{ l }}</option>{% endfor %}</select></div>
       <label class="check"><input type="checkbox" name="blocked" value="1" {{ 'checked' if c.blocked }}> <span>Don't draft applications to this company automatically</span></label>
       <div class="row end" style="margin-top:.6rem"><button class="btn primary">Save</button></div>
     </form>

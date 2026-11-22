@@ -323,7 +323,7 @@ def test_drafting_does_nothing_while_other_jobs_are_still_being_read(fake):
     assert jobs.maybe_auto_draft(job_id) is True
 
 
-def test_drafting_ties_go_to_the_nearest_deadline_and_respect_what_is_left_of_the_limit(fake):
+def test_drafting_ties_go_to_the_most_urgent_and_respect_what_is_left_of_the_limit(fake):
     _facts()
     settings.update("automation", {"auto_draft": True, "auto_draft_daily_cap": 3})
     ids = _scored_jobs(fake, [90, 90, 90, 85])
@@ -333,7 +333,8 @@ def test_drafting_ties_go_to_the_nearest_deadline_and_respect_what_is_left_of_th
     db.update("jobs", ids[2], {"deadline": None})
     first = jobs.create_application(ids[3], auto=True, draft=False)  # one of today's three is already used
     assert first
-    assert jobs.draft_best() == [ids[1], ids[0]], "the two left: nearest deadline first, no deadline last"
+    assert jobs.draft_best() == [ids[2], ids[1]], \
+        "the two left: the one without a date (apply as soon as possible) first, then the nearest deadline"
     assert jobs.draft_best() == [], "the limit is used up"
 
 

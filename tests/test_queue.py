@@ -155,7 +155,7 @@ def test_a_new_session_picks_up_what_the_last_one_could_not_finish(fake):
     tasks.recover()
     found = tasks.catch_up()
 
-    assert found == {"jobs_to_read": 1, "jobs_to_score": 1, "documents": 0, "drafts": 0, "sources": 1}
+    assert found == {"jobs_to_read": 1, "jobs_to_score": 1, "documents": 0, "drafts": 0, "sources": 1, "employers": 0}
     queued = {(t["kind"], t["ref"]) for t in db.q("SELECT kind, ref FROM tasks WHERE status = 'queued'")}
     assert queued == {("parse_job", f"job:{unread}"), ("score_job", f"job:{unscored}"), ("score_job", f"job:{scored}")}
     assert db.q1("SELECT parse_status, parse_error FROM jobs WHERE id = ?", (unread,)) == {"parse_status": "pending", "parse_error": None}
@@ -166,7 +166,7 @@ def test_a_new_session_picks_up_what_the_last_one_could_not_finish(fake):
     assert not db.q1("SELECT 1 FROM tasks WHERE id = ?", (too_late,)), "an expired job's failed scoring is cleared"
     assert db.q1("SELECT last_run_at FROM sources WHERE id = ?", (sid,))["last_run_at"] is None
     assert db.q1("SELECT status, run_after FROM tasks WHERE id = ?", (waiting,)) == {"status": "queued", "run_after": None}
-    assert tasks.catch_up() == {"jobs_to_read": 0, "jobs_to_score": 0, "documents": 0, "drafts": 0, "sources": 0}
+    assert tasks.catch_up() == {"jobs_to_read": 0, "jobs_to_score": 0, "documents": 0, "drafts": 0, "sources": 0, "employers": 0}
 
 
 def test_on_hold_nothing_starts_on_its_own(fake):
@@ -175,7 +175,7 @@ def test_on_hold_nothing_starts_on_its_own(fake):
     sid = db.insert("sources", {"name": "Feed", "kind": "rss", "url": "https://example.com/feed", "created_at": db.now()})
     settings.update("automation", {"on_hold": True})
     try:
-        assert tasks.catch_up() == {"jobs_to_read": 0, "jobs_to_score": 0, "documents": 0, "drafts": 0, "sources": 0}
+        assert tasks.catch_up() == {"jobs_to_read": 0, "jobs_to_score": 0, "documents": 0, "drafts": 0, "sources": 0, "employers": 0}
         assert tasks.queue_due() == 0
         assert not tasks.active()
         page = TestClient(app).get("/jobs")

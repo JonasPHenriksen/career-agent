@@ -14,6 +14,16 @@
 {% if d %}{% set n = d|days_until %}<span class="{{ 'deadline-past' if n is not none and n < 0 else ('deadline-soon' if n is not none and n <= 5) }}">{{ d|deadline_text }}</span>{% endif %}
 {%- endmacro %}
 
+{# A job's deadline; or, for one without a date, that it closes when they find someone (see rank.urgency) #}
+{% macro when_due(j) -%}
+{% set u = j.urgency %}
+{% if j.deadline %}{{ deadline(j.deadline) }}{% if u and u.due and u.due|string < j.deadline %} <span class="pill warn" title="{{ u.note }}">interviews as they apply</span>{% endif %}
+{% elif u and u.kind == 'rolling' %}<span class="pill warn" title="{{ u.note or 'The ad gives no date. Jobs like this close when they find someone.' }}{% if u.listing_ends %} The listing comes down on {{ u.listing_ends|nice_date }}.{% endif %}">rolling · apply soon</span>
+{% elif u and u.kind == 'stale' %}<span class="pill" title="No date in the ad, and it was posted {{ (u.age_days / 7)|round|int }} weeks ago: it may be filled already, or they hire all year round.{% if u.note %} The ad says: {{ u.note }}{% endif %}">posted {{ (u.age_days / 7)|round|int }} weeks ago</span>
+{% elif u and u.kind == 'open' %}<span class="pill" title="An unsolicited application: no job to close.">open application</span>
+{% endif %}
+{%- endmacro %}
+
 {% macro progress(busy, labels, url) -%}
 <div class="progress" data-poll="{{ url }}" data-interval="3000" role="status">
   <span class="spinner" aria-hidden="true"></span>

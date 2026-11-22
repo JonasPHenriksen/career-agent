@@ -352,6 +352,13 @@ MIGRATIONS: list[str] = [
     """
     UPDATE settings SET value = json_remove(value, '$.openai_base_url') WHERE key = 'llm' AND json_valid(value);
     """,
+    # 13: how big and well known an employer is (small | medium | large | very_large | unknown), who said so
+    # ("model" or "you") and the model's few words on why; jobs at big employers rank a little lower
+    """
+    ALTER TABLE companies ADD COLUMN size TEXT;
+    ALTER TABLE companies ADD COLUMN size_by TEXT;
+    ALTER TABLE companies ADD COLUMN size_note TEXT;
+    """,
 ]
 
 

@@ -281,11 +281,19 @@ def parse(job_id: int, use_text: bool = False) -> dict:
 
     title = d["title"] or (jsonld or {}).get("title") or job["title"] or page_title
     company = d["company"] or (jsonld or {}).get("company") or job["company_name"]
-    # An ad that states no dates keeps the ones its results page gave.
-    deadline = _iso_date(d["deadline"]) or _iso_date((jsonld or {}).get("validThrough")) or job["deadline"]
+    # An ad that states no dates keeps the ones its results page gave. The page's own "valid through" date is
+    # when the job board takes the listing down, not a deadline; so is a date the ad never states when it says
+    # "snarest" or "løbende" (see listing_date).
+    deadline = _iso_date(d["deadline"]) or job["deadline"]
+    listing_ends = _iso_date((jsonld or {}).get("validThrough"))
+    if deadline and listing_date(deadline, d["deadline_note"], text + "\n" + ((jsonld or {}).get("description") or ""),
+                                 listing_ends):
+        listing_ends, deadline = listing_ends or deadline, None
     posted = _iso_date((jsonld or {}).get("datePosted")) or _iso_date(d["posted_at"]) or job["posted_at"]
     company_id = companies.upsert(company, website=d["company_website"] or (jsonld or {}).get("company_url"),
                                   description=d["company_blurb"], location=d["location"])
+    if company_id and companies.sizes_wanted() and not db.scalar("SELECT size FROM companies WHERE id = ?", (company_id,)):
+        tasks.enqueue("size_companies", ref="companies", delay=SIZE_WAIT)  # new employers judged together
     fp = fingerprint(company, title)
     reposted = 0
     if company_id:
@@ -294,6 +302,8 @@ def parse(job_id: int, use_text: bool = False) -> dict:
         reposted = 1 if earlier else 0
     details = {k: d[k] for k in ("responsibilities", "requirements", "nice_to_have", "benefits", "keywords",
                                  "company_blurb", "red_flags", "deadline_note")}
+    if listing_ends:
+        details["listing_ends"] = listing_ends
     # Kept only when the ad mentions AI at all: a model that makes a policy up must not raise a warning.
     details["ai_policy"] = (d.get("ai_policy") or "").strip()[:600] if _AI_WORD.search(text) else ""
     description = (jsonld or {}).get("description") or text
@@ -335,6 +345,82 @@ def parse(job_id: int, use_text: bool = False) -> dict:
     if settings.get("automation").get("auto_score", True):
         tasks.enqueue("score_job", {"job_id": job_id}, ref=f"job:{job_id}")
     return {"title": title, "company": company}
+
+
+# --- Deadlines -------------------------------------------------------------------------------------------------
+# Most ads without a date say "snarest" or "løbende": they close when the right person is found. Job boards still
+# give every listing a date (Jobindex's "valid through"), which is when the listing comes down, not a deadline.
+ROLLING = re.compile(r"snarest|hurtigst|løbende|lobende|as soon as|asap|ongoing|rolling|continuous|"
+                     r"when the right|når (?:vi har fundet|den rette)|until filled", re.I)
+SIZE_WAIT = 120  # seconds: new employers found meanwhile are judged in the same model call
+_MONTHS = [("januar", "january"), ("februar", "february"), ("marts", "march"), ("april", "april"), ("maj", "may"),
+           ("juni", "june"), ("juli", "july"), ("august", "august"), ("september", "september"),
+           ("oktober", "october"), ("november", "november"), ("december", "december")]
+
+
+def rolling_note(note: str | None) -> bool:
+    """The ad's deadline wording says to apply soon / that applications are read as they come."""
+    return bool(note and ROLLING.search(note))
+
+
+def date_in_text(iso: str, text: str | None) -> bool:
+    """Whether the ad text states this date (1. december, 1/12, December 1, 2030-12-01 …)."""
+    try:
+        _, m, d = (int(x) for x in iso.split("-"))
+    except ValueError:
+        return False
+    da, en = _MONTHS[m - 1]
+    t = (text or "").lower()
+    names = "|".join({da, da[:3], en, en[:3]})
+    return any(re.search(p, t) for p in (rf"\b0?{d}\.?\s*(?:{names})", rf"\b(?:{names})\.?\s*0?{d}(?:st|nd|rd|th)?\b",
+                                         rf"\b0?{d}\s*[./-]\s*0?{m}\b", re.escape(iso)))
+
+
+def listing_date(deadline: str, note: str | None, text: str | None, listing_ends: str | None = None) -> bool:
+    """True when a date we have for the job is when the listing comes down rather than the ad's deadline: the ad
+    never states it, and either says to apply as soon as possible or the date is the page's "valid through"."""
+    if date_in_text(deadline, text):
+        return False
+    return rolling_note(note) or deadline == listing_ends
+
+
+def closes_on(job: dict) -> str | None:
+    """The day the job is gone: its deadline, or else the day the listing comes down."""
+    d = job.get("d") or db.jload(job.get("details"), {}) or {}
+    return job.get("deadline") or d.get("listing_ends")
+
+
+def open_sql(alias: str = "j") -> str:
+    """SQL that's true for a job still open on the day given as its one parameter."""
+    a = f"{alias}." if alias else ""
+    return f"COALESCE({a}deadline, json_extract({a}details, '$.listing_ends'), '9999-12-31') >= ?"
+
+
+def move_listing_dates() -> int:
+    """Jobs read before listing dates were told apart: a date the ad never states, on an ad that says to apply
+    soon, becomes the day the listing comes down."""
+    n = 0
+    for r in db.q("SELECT id, deadline, details, description FROM jobs WHERE deadline IS NOT NULL "
+                  "AND parse_status = 'parsed'"):
+        d = db.jload(r["details"], {}) or {}
+        if rolling_note(d.get("deadline_note")) and not date_in_text(r["deadline"], r["description"]):
+            d["listing_ends"] = d.get("listing_ends") or r["deadline"]
+            db.update("jobs", r["id"], {"deadline": None, "details": db.jdump(d)})
+            n += 1
+    return n
+
+
+TIDY_VERSION = 1
+
+
+def tidy_after_update() -> dict:
+    """Once after an update that changes how jobs are told apart: listing dates that were taken for deadlines,
+    and repeats that slipped through before titles written two ways were matched."""
+    if (settings.get("state").get("jobs_tidied") or 0) >= TIDY_VERSION:
+        return {}
+    out = {"listing_dates": move_listing_dates(), "repeats": mark_existing_repeats()}
+    settings.update("state", {"jobs_tidied": TIDY_VERSION})
+    return out
 
 
 def _filter_out(job_id: int, note: str) -> None:
@@ -394,26 +480,74 @@ def company_core(name: str | None) -> str:
 
 
 def same_key(company: str | None, title: str | None) -> str | None:
-    c, t = company_core(company), title_key(title)
+    c, t = company_core(company), title_key(title).replace(" ", "")
     if c in _NO_COMPANY or not t:
         return None
     return f"{c}|{t}"
 
 
+_NOT_A_SHORT_NAME = re.compile(r"^\s*(?:via|for|on behalf|recruit|rekrutt|ansat|hired|through|gennem)", re.I)
+
+
+def company_names(name: str | None) -> list[list[str]]:
+    """The words of a company's core name, and of a short name in brackets as a second name: "Kristelig
+    Fagbevægelse (KRIFA)" is also "Krifa". Brackets naming a recruiter ("via Moment") don't count."""
+    names = [company_core(name).split()]
+    for inner in re.findall(r"\(([^)]*)\)", name or ""):
+        words = [w for w in companies.norm_name(inner).split() if w not in _COMPANY_NOISE]
+        if not _NOT_A_SHORT_NAME.match(inner) and 1 <= len(words) <= 3:
+            names.append(words)
+    return [n for n in names if n]
+
+
+def _cut_short(name: str | None) -> bool:
+    """A results page that ran out of room: "Brdr. A&O J..."."""
+    return (name or "").rstrip().endswith(("...", "…"))
+
+
+def _starts(short: list[str], long: list[str], cut: bool) -> bool:
+    if not short or len(short) > len(long):
+        return False
+    if cut:
+        return long[:len(short) - 1] == short[:-1] and long[len(short) - 1].startswith(short[-1])
+    return long[:len(short)] == short
+
+
 def same_company(a: str | None, b: str | None) -> bool:
     """One company when the core names match, or one is the start of the other ("Energinet" and "Energinet
-    Eltransmission A/S", "Knowit" and "Knowit Solutions Danmark A/S")."""
-    ca, cb = company_core(a), company_core(b)
-    if ca in _NO_COMPANY or cb in _NO_COMPANY:
+    Eltransmission A/S", "Knowit" and "Knowit Solutions Danmark A/S"), or one is the other's short name in brackets
+    ("Krifa" and "Kristelig Fagbevægelse (KRIFA)")."""
+    if company_core(a) in _NO_COMPANY or company_core(b) in _NO_COMPANY:
         return False
-    short, long = sorted((ca.split(), cb.split()), key=len)
-    return long[:len(short)] == short
+    cut_a, cut_b = _cut_short(a), _cut_short(b)
+    return any(_starts(na, nb, cut_a) or _starts(nb, na, cut_b) for na in company_names(a) for nb in company_names(b))
+
+
+_TITLE_JOINERS = {"til", "at", "for", "hos", "i", "in", "or", "eller", "og", "and", "ved", "pa", "på", "near", "nær",
+                  "naer", "also", "også", "ogsa"}
+
+
+def same_title(title_a: str | None, title_b: str | None, company_a: str | None = None,
+               company_b: str | None = None) -> bool:
+    """One job title written two ways: the same words, hyphens and spaces aside ("Backend-udvikler" and
+    "Backendudvikler"), or one is the other plus only where or for whom ("Linux Operations Engineer: Copenhagen,
+    Aarhus or Aalborg", "AI-udvikler / AI Engineer til Krifa", "Platform Engineer at Whiteaway Group")."""
+    a, b = title_key(title_a).split(), title_key(title_b).split()
+    if not a or not b:
+        return False
+    if "".join(a) == "".join(b):
+        return True
+    short, long = sorted((a, b), key=len)
+    if long[:len(short)] != short:
+        return False
+    whose = {w for c in (company_a, company_b) for n in company_names(c) for w in n} | _COMPANY_NOISE
+    rest = [w for w in long[len(short):] if w not in _TITLE_JOINERS and w not in whose]
+    return not rest or places.only_places(" ".join(rest))
 
 
 def same_name(company_a: str | None, title_a: str | None, company_b: str | None, title_b: str | None) -> bool:
     """Same title from the same company: the first test for two listings being one job."""
-    t = title_key(title_a)
-    return bool(t) and t == title_key(title_b) and same_company(company_a, company_b)
+    return same_company(company_a, company_b) and same_title(title_a, title_b, company_a, company_b)
 
 
 def _places(location: str | None) -> set[str]:
@@ -499,19 +633,20 @@ def mark_existing_repeats() -> int:
     then one that's been read, then the first) and the copies within three weeks of it from other places become
     repeats (from the same place, only when the ad text is almost the same). Jobs you shortlisted, dismissed, kept
     or applied to are never touched."""
-    groups: dict[str, list[dict]] = {}
+    groups: dict[str, list[dict]] = {}  # titles that start alike; one title written two ways starts alike too
     for r in db.q("SELECT id, title, company_name, location, status, parse_status, source_id, link_locked, keep, "
                   "description, created_at FROM jobs WHERE duplicate_of IS NULL AND status != 'dismissed' "
                   "AND title IS NOT NULL AND company_name IS NOT NULL"):
-        if same_key(r["company_name"], r["title"]):
-            groups.setdefault(title_key(r["title"]), []).append(r)
+        key = same_key(r["company_name"], r["title"])
+        if key:
+            groups.setdefault(key.split("|", 1)[1][:5], []).append(r)
     n = 0
     for rows in groups.values():
         rows.sort(key=lambda r: (not _protected(r), r["status"] == "filtered", r["parse_status"] != "parsed",
                                  r["link_locked"], r["id"]))
         while len(rows) > 1:  # one title can be several companies' jobs: one root per company
             root, rest = rows[0], rows[1:]
-            copies = [r for r in rest if same_company(root["company_name"], r["company_name"])]
+            copies = [r for r in rest if same_name(root["company_name"], root["title"], r["company_name"], r["title"])]
             rows = [r for r in rest if r not in copies]
             n += _set_aside_copies(root, copies)
     return n
@@ -634,15 +769,17 @@ def draft_best() -> list[int]:
         "SELECT COUNT(*) FROM applications WHERE auto_drafted = 1 AND created_at >= ?", (_utc_midnight(),)) or 0)
     if left <= 0:
         return []
+    from . import rank
+
     threshold = int(a.get("auto_draft_threshold") or 80)
-    # nearest deadline first on ties; jobs without a deadline go last
-    rows = db.q("SELECT j.id, j.title, j.company_name, j.fit_score FROM jobs j "
-                "WHERE j.status NOT IN ('dismissed', 'filtered') AND j.fit_score >= ? "
-                "AND NOT EXISTS (SELECT 1 FROM applications ap WHERE ap.job_id = j.id) "
-                "AND (j.company_id IS NULL OR NOT COALESCE((SELECT blocked FROM companies c WHERE c.id = j.company_id), 0)) "
-                "AND (j.deadline IS NULL OR j.deadline >= ?) "
-                "ORDER BY j.fit_score DESC, j.deadline IS NULL, j.deadline, j.id DESC LIMIT ?",
-                (threshold, date.today().isoformat(), left))
+    # The threshold is for the ranked score (fit, less the points for distance and a big employer); the most
+    # urgent first on ties.
+    rows = rank.urgent_first([j for j in rank.annotate(db.q(
+        "SELECT j.* FROM jobs j WHERE j.status NOT IN ('dismissed', 'filtered') AND j.fit_score >= ? "
+        "AND NOT EXISTS (SELECT 1 FROM applications ap WHERE ap.job_id = j.id) "
+        "AND (j.company_id IS NULL OR NOT COALESCE((SELECT blocked FROM companies c WHERE c.id = j.company_id), 0)) "
+        f"AND {open_sql()}", (threshold, date.today().isoformat()))) if j["rank"]["score"] >= threshold])
+    rows = sorted(rows, key=lambda j: -j["rank"]["score"])[:left]  # stable: the urgent order stays on ties
     for job in rows:
         create_application(job["id"], auto=True)
         notify.send("Strong match found", f"{job['title']} at {job['company_name'] or '?'} scored {job['fit_score']}. Drafting your application…")
@@ -675,4 +812,5 @@ def set_status(job_id: int, status: str) -> None:
 
 
 def is_expired(job: dict) -> bool:
-    return bool(job.get("deadline")) and job["deadline"] < date.today().isoformat()
+    gone = closes_on(job)
+    return bool(gone) and gone < date.today().isoformat()

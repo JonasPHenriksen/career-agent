@@ -21,6 +21,8 @@ DEFAULTS: dict[str, Any] = {
         "target_industries": "",
         "locations": "",
         "max_km": "",  # longest distance from `city` to on-site or hybrid work, measured in code (places.py); "" = no limit
+        "preferred_km": "",  # the distance you'd rather stay within; jobs between this and max_km rank lower (rank.py)
+        "big_employers": "moderate",  # off | moderate | strong: how much lower jobs at big, well-known employers rank
         "work_modes": ["onsite", "hybrid", "remote"],
         # kinds of job to look at (False = skip those ads without spending model calls); see jobkinds.py
         "job_kinds": {"student": True, "internship": True, "part_time": True, "temporary": True,

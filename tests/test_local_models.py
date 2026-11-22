@@ -112,6 +112,5 @@ def test_the_old_server_address_is_cleared(fake):
     cfg = settings.get("llm")
     cfg["openai_base_url"] = "http://localhost:1234/v1"
     settings.set("llm", cfg)
-    db.connect().execute("PRAGMA user_version = 11")
-    db.init()
+    db.connect().executescript(db.MIGRATIONS[11])  # migration 12 (later ones add columns, so can't run twice)
     assert "openai_base_url" not in settings.get("llm") and settings.get("llm")["writing"]["model"] == "fake"

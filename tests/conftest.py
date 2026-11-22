@@ -6,6 +6,8 @@ import os
 import tempfile
 
 os.environ["CAREER_AGENT_SECRETS"] = "file"
+# Every test runs in a throwaway data folder, even one without the `fake` fixture run on its own: never ./data.
+os.environ["CAREER_AGENT_DATA"] = tempfile.mkdtemp(prefix="career-agent-tests-")
 os.environ["CAREER_AGENT_NO_NOTIFY"] = "1"
 os.environ["CAREER_AGENT_NO_OLLAMA_START"] = "1"
 os.environ["OLLAMA_MODELS"] = tempfile.mkdtemp(prefix="no-ollama-models-")  # never the models on this Mac
@@ -13,7 +15,7 @@ os.environ.pop("ANTHROPIC_API_KEY", None)
 
 import pytest  # noqa: E402
 
-from career_agent import config, cvdata, db, jobs, llm, profile, review, settings, sources, tracker, voice, writer  # noqa: E402
+from career_agent import companies, config, cvdata, db, jobs, llm, profile, review, settings, sources, tracker, voice, writer  # noqa: E402
 from career_agent.llm.providers import ProviderReply  # noqa: E402
 
 from career_agent import fetch as _fetch  # noqa: E402
@@ -240,6 +242,14 @@ class FakeProvider:
             return {"keep": [{"n": 0, "reason": "fits"}]}
         if schema is sources.PAGE_SCHEMA:
             return {"jobs": [{"n": 0, "title": "Job A", "company": "X", "location": ""}]}
+        if schema is companies.SIZE_SCHEMA:  # Netcompany is famous, "Mellem" mid-sized, the rest small; #3 is skipped
+            import re
+            sizes = []
+            for n, name in re.findall(r"^(\d+)\. ([^|\n]*)", user, re.M):
+                if n != "3":
+                    size = "very_large" if "Netcompany" in name else "medium" if "Mellem" in name else "small"
+                    sizes.append({"n": int(n), "size": size, "note": f"{name.strip()}: a guess"})
+            return {"companies": sizes}
         if schema is writer.FOLLOWUP_SCHEMA:
             return {"subject": "Opfølgning", "body": "Hej Mette, jeg følger lige op."}
         if schema is None:

@@ -44,26 +44,33 @@ TASK_LABELS = {
     "check_claude_models": "Checking which Claude models your plan offers",
     "place_answers": "Putting your answers in your career database",
     "read_voice": "Reading the letter for your voice",
+    "size_companies": "Judging how big new employers are",
 }
 
 _wake = threading.Event()
 
 
-def enqueue(kind: str, payload: dict | None = None, ref: str | None = None, dedupe: bool = True) -> int:
+def enqueue(kind: str, payload: dict | None = None, ref: str | None = None, dedupe: bool = True,
+            delay: float = 0) -> int:
+    """Queue a task. With `delay` (seconds) it waits that long first, so work arriving meanwhile joins it."""
     payload = payload or {}
-    if dedupe:
-        existing = db.q1("SELECT id FROM tasks WHERE kind = ? AND payload = ? AND status IN ('queued', 'running')",
+    if dedupe:  # a running task has already taken its work, so a delayed one only joins a queued one
+        statuses = "('queued')" if delay else "('queued', 'running')"
+        existing = db.q1(f"SELECT id FROM tasks WHERE kind = ? AND payload = ? AND status IN {statuses}",
                          (kind, json.dumps(payload, sort_keys=True)))
         if existing:
             return existing["id"]
-    task_id = db.insert("tasks", {"kind": kind, "payload": json.dumps(payload, sort_keys=True), "ref": ref,
-                                  "status": "queued", "created_at": db.now()})
+    row = {"kind": kind, "payload": json.dumps(payload, sort_keys=True), "ref": ref, "status": "queued",
+           "created_at": db.now()}
+    if delay:
+        row["run_after"] = (datetime.now(timezone.utc) + timedelta(seconds=delay)).strftime("%Y-%m-%dT%H:%M:%S")
+    task_id = db.insert("tasks", row)
     _wake.set()
     return task_id
 
 
 def _handlers() -> dict:
-    from . import collect, cvdata, jobs, profile, retrieval, review, sources, tracker, voice, watch, writer
+    from . import collect, companies, cvdata, jobs, profile, retrieval, review, sources, tracker, voice, watch, writer
     from .llm import plan as llm_plan
 
     def wait_for_analyses() -> None:
@@ -121,6 +128,7 @@ def _handlers() -> dict:
         "rescreen_jobs": lambda p: sources.rescreen(p.get("job_ids")),
         "backup": lambda p: _backup(),
         "check_claude_models": lambda p: llm_plan.check(),
+        "size_companies": lambda p: companies.judge_sizes(),
     }
 
 
@@ -214,7 +222,7 @@ TASK_STEPS = {
     "check_application": ("fact_check",), "interview_prep": ("prep",), "followup": ("letter",), "build_style": ("style",),
     "build_cv_base": ("cv",), "check_cv_base": ("fact_check",), "rescreen_jobs": ("screen",), "parse_job": ("read_ad",), "score_job": ("score",), "poll_source": ("screen",), "collect_jobs": ("screen",),
     "analyze_document": ("read_document",), "consolidate_facts": ("read_document",), "classify_response": ("reply",),
-    "place_answers": ("read_document",), "read_voice": ("voice",),
+    "place_answers": ("read_document",), "read_voice": ("voice",), "size_companies": ("screen",),
 }
 FETCH_TASKS = {"poll_source", "parse_job", "collect_jobs"}
 NEED_LABELS = {"ollama": "Ollama (the local models)", "network": "an internet connection",
@@ -430,9 +438,9 @@ def queue_due() -> int:
 def catch_up() -> dict:
     """At start: pick up what an earlier session couldn't finish because the model wasn't running, the Mac was
     offline or asleep, or a usage limit was reached. The app isn't always on, so this is how work gets done."""
-    from . import profile
+    from . import companies, jobs, profile
 
-    found = {"jobs_to_read": 0, "jobs_to_score": 0, "documents": 0, "drafts": 0, "sources": 0}
+    found = {"jobs_to_read": 0, "jobs_to_score": 0, "documents": 0, "drafts": 0, "sources": 0, "employers": 0}
     if on_hold():
         return found
     # Failures that a later try of the same work made good are history, not something to look at.
@@ -450,11 +458,14 @@ def catch_up() -> dict:
     if settings.get("automation").get("auto_score", True) and profile.has_facts():
         today = datetime.now().date().isoformat()
         for j in db.q("SELECT id FROM jobs WHERE status IN ('new', 'shortlisted') AND parse_status = 'parsed' "
-                      "AND fit_score IS NULL AND (deadline IS NULL OR deadline >= ?) AND created_at >= ?", (today, recent)):
+                      f"AND fit_score IS NULL AND {jobs.open_sql('')} AND created_at >= ?", (today, recent)):
             found["jobs_to_score"] += _again("score_job", {"job_id": j["id"]}, f"job:{j['id']}")
         # A job whose deadline passed while it waited isn't scored any more: its failed try is history too.
         db.ex("DELETE FROM tasks WHERE kind = 'score_job' AND status = 'error' AND ref IN "
-              "(SELECT 'job:' || id FROM jobs WHERE fit_score IS NULL AND deadline < ?)", (today,))
+              f"(SELECT 'job:' || id FROM jobs WHERE fit_score IS NULL AND NOT {jobs.open_sql('')})", (today,))
+    if companies.sizes_wanted() and companies.unsized():  # employers whose size wasn't judged before the app stopped
+        found["employers"] = len(companies.unsized())
+        enqueue("size_companies", ref="companies")
     for d in db.q("SELECT id, status, error FROM documents WHERE status IN ('new', 'analyzing', 'error')"):
         if d["status"] == "error" and not is_passing(d["error"]):
             continue

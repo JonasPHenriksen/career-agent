@@ -332,13 +332,12 @@ def test_the_letter_or_the_cv_can_be_written_again_alone(fake):
     assert json.loads(db.q1("SELECT payload FROM tasks WHERE kind = 'revise_application'")["payload"])["model"] == "claude_code|claude-opus-5-5|low"
 
 
-def test_claude_code_models_saved_by_short_name_get_their_exact_version():
+def test_claude_code_models_saved_by_short_name_get_their_exact_version(fake):
     settings.update("llm", {"writing": {"provider": "claude_code", "model": "opus", "effort": "high"},
                             "analysis": {"provider": "claude_code", "model": "sonnet", "effort": "high"},
                             "steps": {"score": {"provider": "claude_code", "model": "haiku", "effort": "low"},
                                       "screen": {"provider": "ollama", "model": "opus", "effort": "low"}}})
-    db.connect().execute("PRAGMA user_version = 10")
-    db.init()
+    db.connect().executescript(db.MIGRATIONS[10])  # migration 11 (later ones add columns, so can't run twice)
     cfg = settings.get("llm")
     assert cfg["writing"]["model"] == "claude-opus-5-5" and cfg["analysis"]["model"] == "claude-sonnet-5-5"
     assert cfg["steps"]["score"]["model"] == "claude-haiku-5-5"
