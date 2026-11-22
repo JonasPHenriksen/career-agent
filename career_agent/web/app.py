@@ -595,6 +595,7 @@ async def application_voice_revise(request: Request, app_id: int):
     instructions = ("Change only these sentences, so they sound like the candidate. Use the plainer wording, or "
                     "something close to it that fits the letter; keep every fact and add none:\n"
                     + "\n".join(f"- “{n['text']}” → “{n['plainer']}”" for n in chosen))
+    voice.settle(app_id, [n["plainer"] for n in chosen])  # later reads leave these sentences alone
     tasks.enqueue("revise_application", {"application_id": app_id, "instructions": instructions, "part": "letter",
                                          **chosen_model(f)}, ref=f"app:{app_id}", dedupe=False)
     return go(f"/applications/{app_id}?tab=voice", msg=with_model_msg(f, "Revising") + "…")

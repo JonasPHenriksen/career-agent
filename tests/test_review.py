@@ -307,6 +307,35 @@ def test_the_letter_is_read_for_your_voice_and_the_sentences_you_tick_are_rewrit
     assert db.q1("SELECT 1 FROM tasks WHERE kind = 'read_voice'"), "the new version is read at the next check"
 
 
+def test_a_sentence_you_had_rewritten_for_your_voice_is_left_alone_by_later_reads(fake):
+    from career_agent import voice
+
+    settings.set("style_guide", "## Voice in brief\nPlain and a little dry.")
+    a = _draft()
+    _run("read_voice")
+    a = tracker.app_with_job(a["id"])
+    assert [n["n"] for n in voice.read_notes(a)["notes"]] == [2]
+    TestClient(app).post(f"/applications/{a['id']}/voice-revise", data={"use_2": "1"}, follow_redirects=False)
+    assert voice.settled_sentences(tracker.app_with_job(a["id"])) == ["Jeg vil gerne være product owner hos FinPay."]
+    writer.revise(a["id"], "Shorter.")  # a revision keeps the record
+    assert voice.settled_sentences(tracker.app_with_job(a["id"])) == ["Jeg vil gerne være product owner hos FinPay."]
+    voice.settle(a["id"], ["Det lavede jeg selv. Så jeg ville starte med at lære jeres."])  # two sentences: kept as two
+    assert voice.settled_sentences(tracker.app_with_job(a["id"]))[1:] == ["Det lavede jeg selv.", "Så jeg ville starte med at lære jeres."]
+
+    # The revision used "something close to" the plainer wording; the fake writer's letter stands in for that here.
+    voice.settle(a["id"], ["Jeg søger stillingen som product owner hos FinPay"])
+    db.ex("DELETE FROM tasks")
+    a = tracker.app_with_job(a["id"])
+    db.update("applications", a["id"], {"voice": db.jdump({"read": {**voice.read(a["letter"], "da"), "at": db.now()}})})
+    assert voice.read_notes(tracker.app_with_job(a["id"]))["notes"] == [], "a read made before is shown without it"
+    db.update("applications", a["id"], {"voice": None})
+    writer.run_checks(a["id"])
+    _run("read_voice")  # a new read is told, and its note is dropped
+    user = next(u for sy, u, sc in reversed(fake.calls) if sc is voice.READ_SCHEMA)
+    assert "Sentences [2] were already rewritten the plainer way" in user
+    assert voice.read_notes(tracker.app_with_job(a["id"]))["notes"] == []
+
+
 def test_without_a_style_guide_the_letter_is_not_read_and_is_tried_again_later(fake):
     from career_agent import voice
 

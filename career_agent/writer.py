@@ -488,13 +488,14 @@ def _gap_note(letter: dict) -> list[str]:
 
 def _review(letter: dict, text: str, before: str | None = None) -> dict:
     """What the writer decided and assumed for this letter, kept as data so the review screen can ask you about it.
-    `before` is the application's review so far: what you confirmed and how you answered the gap stay."""
+    `before` is the application's review so far: what you confirmed, how you answered the gap and the sentences you
+    had rewritten for your voice stay."""
     gap, line = (letter.get("main_gap") or "").strip(), (letter.get("gap_line") or "").strip()
     said = bool(gap) and (not line or " ".join(line.lower().split())[:40] in " ".join((text or "").lower().split()))
     kept = db.jload(before, {}) or {}
     out = {"angle": (letter.get("angle") or "").strip(), "main_gap": gap, "gap_line": line, "gap_in_letter": said,
            "assumed": [a.strip() for a in (letter.get("assumed") or []) if a and a.strip()][:6]}
-    for key in ("confirmed", "gap_answers"):
+    for key in ("confirmed", "gap_answers", "voice_kept"):
         if kept.get(key):
             out[key] = kept[key]
     return out

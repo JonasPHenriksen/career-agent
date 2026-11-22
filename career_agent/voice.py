@@ -433,8 +433,35 @@ def numbered(text: str) -> list[list[tuple[int, str]]]:
     return paras
 
 
-def read(text: str, language: str | None) -> dict:
-    """Read the letter for your voice. Returns {letter, summary, notes: [{n, text, problem, plainer}]}."""
+# A sentence you had rewritten the plainer way is settled. Each read starts afresh, so without this the next one
+# picked at its own suggestion ("I also use Claude Code every day the same way: …" was suggested, used, then flagged
+# for its "also" and its colon) and the same sentence came back on the Voice tab after every revision.
+
+def _close(a: str, b: str) -> bool:
+    """The same sentence, or the revision's take on it (it may use "something close to" the plainer wording)."""
+    from difflib import SequenceMatcher
+
+    x, y = " ".join((a or "").lower().split()), " ".join((b or "").lower().split())
+    return bool(x and y) and (x == y or SequenceMatcher(None, x, y).ratio() >= 0.85)
+
+
+def settled_sentences(app: dict) -> list[str]:
+    """The plainer versions you had the letter rewritten to, in this application."""
+    return (db.jload(app.get("review"), {}) or {}).get("voice_kept") or []
+
+
+def settle(app_id: int, plainer: list[str]) -> None:
+    """Remember the plainer versions you chose, so later reads leave those sentences alone. Kept sentence by sentence,
+    the way the letter is read: a plainer version is sometimes two ("…check the output. So I would start…")."""
+    a = db.q1("SELECT review FROM applications WHERE id = ?", (app_id,))
+    r = db.jload((a or {}).get("review"), {}) or {}
+    r["voice_kept"] = list(dict.fromkeys([*(r.get("voice_kept") or []), *(s for p in plainer for s in sentences(p))]))
+    db.update("applications", app_id, {"review": db.jdump(r)})
+
+
+def read(text: str, language: str | None, settled: list[str] | None = None) -> dict:
+    """Read the letter for your voice. Returns {letter, summary, notes: [{n, text, problem, plainer}]}. `settled`
+    are sentences you had rewritten the plainer way after an earlier read: they're left alone."""
     from . import knowledge
 
     lang = (language or "").lower()[:2]
@@ -444,11 +471,15 @@ def read(text: str, language: str | None) -> dict:
                 "summary": "", "notes": []}
     paras = numbered(text)
     shown = "\n\n".join("\n".join(f"[{n}] {s}" for n, s in block) for block in paras)
+    leave = sorted(n for block in paras for n, s in block if any(_close(s, k) for k in settled or []))
+    if leave:
+        shown += ("\n\nSentences " + ", ".join(f"[{n}]" for n in leave) + " were already rewritten the plainer way "
+                  "after an earlier reading, and the candidate kept them. Leave them alone and don't mention them.")
     d = llm.run(llm.STEP_TIER["voice"], "voice_read", READ_SYSTEM.format(guide=guide),
                 "LETTER, EACH SENTENCE NUMBERED (a blank line between paragraphs):\n\n" + shown,
                 READ_SCHEMA, max_tokens=4000, effort="medium").data
     by_n = {n: s for block in paras for n, s in block}
-    notes, seen = [], set()
+    notes, seen = [], set(leave)
     for note in d["notes"]:
         sentence = by_n.get(note["n"])
         plainer = (note.get("plainer") or "").strip()
@@ -461,13 +492,13 @@ def read(text: str, language: str | None) -> dict:
 
 def read_task(payload: dict) -> dict:
     """The queued step: read the application's letter as it is now, unless it was already read."""
-    app = db.q1("SELECT id, letter, language, voice FROM applications WHERE id = ?", (payload["application_id"],))
+    app = db.q1("SELECT id, letter, language, voice, review FROM applications WHERE id = ?", (payload["application_id"],))
     if not app or not (app["letter"] or "").strip():
         return {"skipped": "no letter"}
     done = read_notes(app)
     if done and not done.get("skipped"):
         return {"skipped": "already read"}
-    result = read(app["letter"], app["language"])
+    result = read(app["letter"], app["language"], settled_sentences(app))
     current = db.q1("SELECT letter, voice FROM applications WHERE id = ?", (app["id"],))
     if letter_key(current["letter"]) != result["letter"]:
         return {"skipped": "the letter changed while it was read"}
@@ -478,6 +509,12 @@ def read_task(payload: dict) -> dict:
 
 
 def read_notes(app: dict) -> dict | None:
-    """The reading of this letter as it is now, or None when there's none (or it was of an older version)."""
+    """The reading of this letter as it is now, or None when there's none (or it was of an older version). Sentences
+    you had rewritten the plainer way aren't shown, even in a read made before they were settled."""
     r = (db.jload(app.get("voice"), {}) or {}).get("read")
-    return r if r and r.get("letter") == letter_key(app.get("letter") or "") else None
+    if not r or r.get("letter") != letter_key(app.get("letter") or ""):
+        return None
+    settled = settled_sentences(app)
+    if settled and r.get("notes"):
+        r = {**r, "notes": [n for n in r["notes"] if not any(_close(n["text"], k) for k in settled)]}
+    return r
