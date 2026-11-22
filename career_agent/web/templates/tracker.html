@@ -9,7 +9,7 @@
 {% if followups %}
 <section class="card warn" style="margin-bottom:1rem">
   <strong>{{ followups|length }} application{{ 's' if followups|length > 1 }} without an answer for a while:</strong>
-  {% for a in followups %}<a href="/applications/{{ a.id }}?tab=timeline">{{ a.job_title }} ({{ a.company_name }})</a>{{ ', ' if not loop.last }}{% endfor %}.
+  {% for a in followups %}<a href="/applications/{{ a.id }}?tab=timeline#followup">{{ a.job_title }} ({{ a.company_name }})</a>{{ ', ' if not loop.last }}{% endfor %}.
 </section>
 {% endif %}
 

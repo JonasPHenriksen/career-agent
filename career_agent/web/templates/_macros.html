@@ -27,6 +27,37 @@
 {%- endmacro %}
 
 {# Whether the job's ad is still up (adcheck.py): a warning when it's gone, else one quiet line #}
+{# An email you send yourself (emails.py): who to, subject and text, each with a copy button. You can edit before
+   copying; nothing is saved or sent. `mail_action` adds an "Open in Mail" button. #}
+{% macro email_block(mail, key, mail_action=none) -%}
+<div class="email-ready">
+  <div class="field"><label for="{{ key }}-to">To</label>
+    {% if mail.to %}<div class="copy-line"><input id="{{ key }}-to" type="text" value="{{ mail.to }}" readonly><button type="button" class="btn small ghost" data-copy="#{{ key }}-to">Copy</button></div>
+      {% if mail.phone %}<div class="small text-2" style="margin-top:.3rem">Phone{% if mail.name %} ({{ mail.name }}){% endif %}: <a href="tel:{{ mail.phone|replace(' ', '') }}">{{ mail.phone }}</a></div>{% endif %}
+    {% else %}<p class="small text-2" style="margin:0">{{ mail.no_address }}{% if mail.link %} <a href="{{ mail.link }}" target="_blank" rel="noopener noreferrer">Open the ad</a>{% endif %}</p>{% endif %}
+  </div>
+  <div class="field"><label for="{{ key }}-subject">Subject</label>
+    <div class="copy-line"><input id="{{ key }}-subject" type="text" value="{{ mail.subject }}"><button type="button" class="btn small ghost" data-copy="#{{ key }}-subject">Copy</button></div>
+  </div>
+  <div class="field"><label for="{{ key }}-body">Text{% if mail.by_model %} <span class="small text-2">(written by a model in your voice)</span>{% endif %}</label>
+    {% set rows = namespace(n=1) %}{% for line in mail.body.split('\n') %}{% set rows.n = rows.n + (line|length // 48) + 1 %}{% endfor %}
+    <textarea id="{{ key }}-body" rows="{{ rows.n }}">{{ mail.body }}</textarea>
+  </div>
+  <div class="row">
+    <button type="button" class="btn small" data-copy="#{{ key }}-body">Copy text</button>
+    {% if mail_action %}<form method="post" action="{{ mail_action }}" class="inline"><button class="btn small ghost" data-busy="Opening Mail…">Open in Mail</button></form>{% endif %}
+    {{ caller() if caller }}
+  </div>
+</div>
+{%- endmacro %}
+
+{% macro ask_email(job, open=false) -%}
+<details class="ask-open" {{ 'open' if open }} style="margin-top:.6rem">
+  <summary>An email asking whether it's still open</summary>
+  {{ email_block(still_open_email(job), 'ask-%d'|format(job.id), '/jobs/%d/mail-ask'|format(job.id)) }}
+</details>
+{%- endmacro %}
+
 {% macro ad_state(job, app=none, next='/jobs') -%}
 {% if job.gone_at and not job.open_said_at %}
 <div class="card danger" role="alert" style="margin-bottom:1rem">
@@ -40,10 +71,14 @@
       <input type="hidden" name="next" value="{{ next }}"><button class="btn small danger">Remove{{ ' job and draft' if app else ' job' }}</button></form>
     {% endif %}
   </div>
+  {% if not app or app.status in ('drafting', 'draft', 'ready') %}{{ ask_email(job) }}{% endif %}
 </div>
 {% else %}
 <p class="small muted" style="margin:-.4rem 0 .8rem">{% if job.open_said_at %}You said the ad is still open ({{ job.open_said_at|ago }}); it isn't marked gone again.{% elif job.checked_at %}Ad checked {{ job.checked_at|ago }}: {{ job.check_note }}.{% else %}The ad hasn't been checked yet.{% endif %}
   <form method="post" action="/jobs/{{ job.id }}/check" class="inline"><button class="btn small ghost" data-busy="Checking…">Check now</button></form></p>
+{% if ad_uncertain(job) and not (job.urgency and job.urgency.long_running) and (not app or app.status in ('drafting', 'draft', 'ready')) %}
+<div class="small" style="margin:-.4rem 0 .9rem">{{ ask_email(job) }}</div>
+{% endif %}
 {% endif %}
 {%- endmacro %}
 
@@ -57,6 +92,7 @@
   {% if job.contact_name or job.contact_email or job.contact_phone %}{{ job.contact_name or '' }}{% if job.contact_email %} <a href="mailto:{{ job.contact_email }}">{{ job.contact_email }}</a>{% endif %}{% if job.contact_phone %} <a href="tel:{{ job.contact_phone|replace(' ', '') }}">{{ job.contact_phone }}</a>{% endif %}.
   {% else %}the ad names no contact, so use the employer's general address or phone.{% endif %}
   {% if job.url %}<a class="small" href="{{ job.url }}" target="_blank" rel="noopener noreferrer">Open the ad</a>{% endif %}
+  {{ ask_email(job, open=true) }}
 </div>
 {% endif %}
 {%- endmacro %}

@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import (adcheck, backup, collect, companies, config, cvdata, cvrender, db, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
+from .. import (adcheck, backup, collect, companies, config, cvdata, cvrender, db, emails, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
                 profile, rank, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
@@ -25,6 +25,8 @@ templates = Jinja2Templates(directory=str(HERE / "templates"))
 helpers.install(templates.env)
 templates.env.globals["model_choices"] = llm.model_choices  # for the "with which model" picker on redo buttons
 templates.env.globals["effort_kind"] = llm.effort_kind  # what effort means for a model: levels or thinking on/off
+templates.env.globals["still_open_email"] = emails.still_open  # the ad notices offer an email asking whether it's open
+templates.env.globals["ad_uncertain"] = adcheck.uncertain
 
 
 def chosen_model(f: dict) -> dict:
@@ -528,7 +530,9 @@ def application(request: Request, app_id: int, tab: str = ""):
                   versions=db.q("SELECT * FROM app_versions WHERE application_id = ? ORDER BY id DESC", (app_id,)),
                   timeline=tracker.timeline(app_id), statuses=tracker.APP_STATUSES, event_types=tracker.EVENT_TYPES,
                   event_labels=tracker.EVENT_LABELS, status_labels=tracker.STATUS_LABELS,
-                  badge=companies.badge(a["company_id"]), task_labels=tasks.TASK_LABELS, today=date.today().isoformat())
+                  badge=companies.badge(a["company_id"]), task_labels=tasks.TASK_LABELS, today=date.today().isoformat(),
+                  apply_mail=emails.application(a) if tab == "send" else None,
+                  followup_mail=emails.followup(a) if a["applied_at"] else None, followup_due=tracker.followup_due(a))
 
 
 @app.get("/applications/{app_id}/progress")
@@ -825,20 +829,35 @@ def cv_base_export(base_id: int, fmt: str):
 @app.post("/applications/{app_id}/mail")
 async def application_mail(request: Request, app_id: int):
     a = need(tracker.app_with_job(app_id))
-    p = settings.get("profile")
     paths = await asyncio.to_thread(exporter.save_exports, a)
-    lang = (a["language"] or "en")[:2]
-    greeting = f"Hej {a['contact_name'].split()[0]}" if lang == "da" and a.get("contact_name") else \
-        ("Hej" if lang == "da" else f"Dear {a['contact_name']}" if a.get("contact_name") else "Hello")
-    body_line = ("Hermed min ansøgning og mit CV til stillingen som" if lang == "da" else
-                 "Please find attached my application and CV for the position of")
-    sign = "Med venlig hilsen" if lang == "da" else "Best regards"
-    body = f"{greeting}\n\n{body_line} {a['job_title']}.\n\n{sign}\n{p.get('name') or ''}"
+    mail = emails.application(a)  # the same text the Send tab shows
     try:
-        await asyncio.to_thread(mailer.create_draft, a["subject"] or a["job_title"] or "", body, a.get("contact_email"), paths)
+        await asyncio.to_thread(mailer.create_draft, mail["subject"], mail["body"], mail["to"], paths)
     except mailer.MailError as e:
         return go(f"/applications/{app_id}?tab=send", err=str(e))
     return go(f"/applications/{app_id}?tab=send", msg="A draft is open in Mail with both PDFs attached. Check it and press Send yourself.")
+
+
+@app.post("/applications/{app_id}/mail-followup")
+async def application_mail_followup(request: Request, app_id: int):
+    """The follow-up email as a draft in Mail. You press Send, then "I sent it"."""
+    mail = emails.followup(need(tracker.app_with_job(app_id)))
+    try:
+        await asyncio.to_thread(mailer.create_draft, mail["subject"], mail["body"], mail["to"], [])
+    except mailer.MailError as e:
+        return go(f"/applications/{app_id}?tab=timeline", err=str(e))
+    return go(f"/applications/{app_id}?tab=timeline", msg="The follow-up is open in Mail. Check it, press Send yourself, then mark it as sent here.")
+
+
+@app.post("/jobs/{job_id}/mail-ask")
+async def job_mail_ask(request: Request, job_id: int):
+    """The email asking whether the job is still open, as a draft in Mail. You press Send."""
+    mail = emails.still_open(need(jobs.get(job_id)))
+    try:
+        await asyncio.to_thread(mailer.create_draft, mail["subject"], mail["body"], mail["to"], [])
+    except mailer.MailError as e:
+        return go(back(request, f"/jobs/{job_id}"), err=str(e))
+    return go(back(request, f"/jobs/{job_id}"), msg="The email is open in Mail. Check it and press Send yourself.")
 
 
 @app.post("/applications/{app_id}/status")

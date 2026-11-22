@@ -411,3 +411,8 @@ fieldset.question .row { gap: 1rem; margin: .3rem 0 .5rem; font-size: .9rem; }
 .place-head:first-of-type { margin-top: .5rem; }
 .place-head .period { color: var(--muted); font-weight: 500; font-size: .84rem; }
 .skills-cloud + .place-head { margin-top: .9rem; }
+
+/* An email ready to copy (emails.py): the address and subject each on a line with their copy button */
+.copy-line { display: flex; gap: .5rem; align-items: center; }
+.copy-line input { flex: 1; min-width: 0; }
+.email-ready textarea { min-height: 0; }

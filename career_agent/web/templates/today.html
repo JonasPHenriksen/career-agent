@@ -158,8 +158,8 @@
     {% if followups %}
     <ul class="list">
       {% for a in followups %}
-      <li><div class="grow"><a class="title" href="/applications/{{ a.id }}?tab=timeline">{{ a.job_title }}</a><span class="meta">{{ a.company_name or '' }} · sent {{ a.applied_at|ago }}, no answer yet</span></div>
-        <form method="post" action="/applications/{{ a.id }}/followup" class="inline"><button class="btn small" data-busy="Writing…">Draft follow-up</button></form></li>
+      <li><div class="grow"><a class="title" href="/applications/{{ a.id }}?tab=timeline#followup">{{ a.job_title }}</a><span class="meta">{{ a.company_name or '' }} · sent {{ a.applied_at|ago }}, no answer yet</span></div>
+        <a class="btn small" href="/applications/{{ a.id }}?tab=timeline#followup">Follow-up email</a></li>
       {% endfor %}
     </ul>
     {% else %}<p class="empty">No one to chase yet. After {{ followup_days }} days without an answer, applications show up here.</p>{% endif %}

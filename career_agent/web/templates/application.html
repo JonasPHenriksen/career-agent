@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline, progress, status, model_picker, made_by, ad_state, ask_first %}
+{% from "_macros.html" import score, grade, deadline, progress, status, model_picker, made_by, ad_state, ask_first, email_block %}
 {% block title %}{{ a.job_title or 'Application' }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/tracker">Applications</a> · <a href="/jobs/{{ a.job_id }}">job details</a>{% if a.auto_drafted %} · drafted automatically{% endif %}</div>
@@ -21,6 +21,15 @@
 </header>
 
 {% if job and a.status in ('drafting', 'draft', 'ready') %}{{ ad_state(job, a, '/') }}{{ ask_first(job) }}{% endif %}
+{% if followup_due %}
+<div class="card warn" role="note" style="margin-bottom:1rem">
+  <strong>Sent {{ followup_due }} days ago and no answer yet: time for a short follow-up.</strong>
+  <div class="row" style="margin-top:.5rem">
+    {% if tab != 'timeline' %}<a class="btn small primary" href="?tab=timeline#followup">The follow-up email is ready</a>{% else %}<span class="small text-2">The email is ready below.</span>{% endif %}
+    <form method="post" action="/applications/{{ a.id }}/followup-sent" class="inline"><button class="btn small ghost">I sent it</button></form>
+  </div>
+</div>
+{% endif %}
 {% if job and job.ai_notice %}
 <div class="card warn" role="alert" style="margin-bottom:1rem">
   <strong>Check before you send: this ad says something about AI-written applications.</strong>
@@ -392,6 +401,12 @@
       </div>
       <textarea id="lettertext" hidden>{{ a.letter or '' }}</textarea>
       {% if a.apply_method == 'email' and a.contact_email %}<p class="small text-2" style="margin:.4rem 0 0">The ad asks for applications by email.</p>{% endif %}
+      {% set by_email = a.apply_method == 'email' or (a.contact_email and not (a.apply_url or a.job_url)) %}
+      <details class="send-mail" {{ 'open' if by_email }} style="margin-top:.8rem">
+        <summary>{{ 'The email to send it with' if by_email else 'An email to send it with, if you apply by email' }}</summary>
+        {{ email_block(apply_mail, 'apply') }}
+        <p class="small muted" style="margin:.4rem 0 0">Attach the letter and CV PDFs from step 2. "Create email in Mail" above makes this email with both attached.</p>
+      </details>
     </li>
     <li><strong>Mark it as sent</strong> so I can track their response and remind you to follow up.
       {% if a.applied_at %}<p class="small" style="margin:.4rem 0 0"><span class="pill good">Sent {{ a.applied_at|local_date }}</span></p>
@@ -441,18 +456,15 @@
         <div class="row end"><button class="btn">Add</button></div>
       </form>
     </section>
-    {% if a.applied_at %}
-    <section class="card">
+    {% if a.applied_at and followup_mail %}
+    <section class="card" id="followup">
       <h2>Follow-up</h2>
-      {% if a.followup_draft %}
-        <div class="quote" id="fu">{{ a.followup_draft }}</div>
-        <div class="row"><button type="button" class="btn small" data-copy="#fu">Copy</button>
-          <form method="post" action="/applications/{{ a.id }}/followup-sent" class="inline"><button class="btn small">I sent it</button></form>
-          <form method="post" action="/applications/{{ a.id }}/followup" class="inline">{{ model_picker() }}<button class="btn small ghost" data-busy="Writing…">Rewrite</button></form></div>
-      {% else %}
-        <p class="small text-2">No answer after a while? A short, polite nudge in your own voice.</p>
-        <form method="post" action="/applications/{{ a.id }}/followup">{{ model_picker() }}<button class="btn small" data-busy="Writing…">Draft a follow-up email</button></form>
-      {% endif %}
+      {% set fu_sent = timeline|selectattr('type', 'equalto', 'followup_sent')|list %}
+      <p class="small text-2">{% if fu_sent %}You sent a follow-up {{ fu_sent[0].occurred_at|local_date }}.{% elif followup_due %}It's been {{ followup_due }} days without an answer: a short, polite nudge is fine now.{% else %}No answer after a while? Here's a short, polite nudge, ready for when it's time (it shows up on Today).{% endif %}</p>
+      {% call email_block(followup_mail, 'fu', '/applications/%d/mail-followup'|format(a.id)) %}
+        {% if not fu_sent %}<form method="post" action="/applications/{{ a.id }}/followup-sent" class="inline"><button class="btn small ghost">I sent it</button></form>{% endif %}
+      {% endcall %}
+      <form method="post" action="/applications/{{ a.id }}/followup" class="row" style="margin-top:.6rem">{{ model_picker() }}<button class="btn small ghost" data-busy="Writing…">{{ 'Write it again in your voice' if followup_mail.by_model else 'Write it in your voice instead' }}</button></form>
     </section>
     {% endif %}
   </div>

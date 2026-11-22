@@ -39,12 +39,24 @@
         const src = document.querySelector(btn.dataset.copy);
         if (!src) return;
         const text = "value" in src && src.value !== undefined ? src.value : src.innerText;
+        let ok = false;
         try {
           await navigator.clipboard.writeText(text);
-          const old = btn.textContent;
-          btn.textContent = "Copied ✓";
-          setTimeout(() => (btn.textContent = old), 1600);
-        } catch (e) { alert("Couldn't copy. Select the text and press ⌘C."); }
+          ok = true;
+        } catch (e) {  // some browsers refuse the clipboard API: the older way still works there
+          const t = document.createElement("textarea");
+          t.value = text;
+          t.setAttribute("readonly", "");
+          t.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+          document.body.appendChild(t);
+          t.select();
+          try { ok = document.execCommand("copy"); } catch (_) { ok = false; }
+          t.remove();
+        }
+        if (!ok) { alert("Couldn't copy. Select the text and press ⌘C."); return; }
+        const old = btn.textContent;
+        btn.textContent = "Copied ✓";
+        setTimeout(() => (btn.textContent = old), 1600);
       });
     });
 

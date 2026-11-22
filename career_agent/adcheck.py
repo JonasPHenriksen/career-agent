@@ -147,6 +147,12 @@ def is_gone(job: dict) -> bool:
     return bool(job.get("gone_at")) and not job.get("open_said_at")
 
 
+def uncertain(job: dict) -> bool:
+    """Checked, but neither seen up nor found gone: the page couldn't be read (blocked, built in the browser)."""
+    return (bool(job.get("checked_at")) and not job.get("gone_at") and not job.get("open_said_at")
+            and not (job.get("check_note") or "").startswith("up on"))
+
+
 def seen_recently(job: dict, hours: float) -> bool:
     at = db.parse_ts(job.get("checked_at"))
     return bool(at) and (db.parse_ts(db.now()) - at).total_seconds() < hours * 3600
