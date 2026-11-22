@@ -5,11 +5,12 @@ true, is a sentence the fact check couldn't back actually true? What you confirm
 it belongs in your career database (so the next draft knows): added to the fact it's part of, as a new fact for you
 to tick, or not at all when the database already says it or it isn't about your career. Corrections only change
 the draft, and what the writer assumed about your motives is confirmed for that application alone: a line written
-for one employer isn't evidence of who you are. A sentence you said is true isn't asked about again in that
-application, even when a revision rewords it or the database didn't take all of it.
+for one employer isn't evidence of who you are. A sentence you said is true, and a gap you've answered, aren't
+asked about again in that application, even when a revision rewords them or the database didn't take all of it.
 """
 from __future__ import annotations
 
+import re
 from html import escape
 
 from . import db, profile, tasks
@@ -22,13 +23,32 @@ def _same(a: str, b: str) -> bool:
     return " ".join((a or "").lower().split()) == " ".join((b or "").lower().split())
 
 
+_FILLER = {"and", "or", "the", "a", "an", "of", "in", "with", "for", "og", "eller", "i", "med", "af", "en", "et",
+           "domain", "experience", "knowledge", "erfaring", "viden"}
+
+
+def _same_gap(a: str, b: str) -> bool:
+    """The same gap, though each revision's writer names it a little differently: "XBRL, annual reports and
+    accounting" became "XBRL, annual reports and accounting domain" and was asked about again."""
+    x, y = ({w for w in re.findall(r"\w+", (s or "").lower()) if w not in _FILLER} for s in (a, b))
+    if not x or not y:
+        return _same(a, b)
+    return len(x & y) / min(len(x), len(y)) >= 0.6
+
+
+def answered_gap(review: dict) -> dict | None:
+    """Your answer to the gap this draft names, when you've answered it before in this application."""
+    gap = review.get("main_gap") or ""
+    return next((g for g in review.get("gap_answers") or [] if gap and _same_gap(gap, g.get("text") or "")), None)
+
+
 def questions(app: dict) -> list[dict]:
     """The open questions about a draft, most important first: the gap, what was assumed, what isn't backed."""
     review = db.jload(app.get("review"), {}) or {}
     claims = (db.jload(app.get("claims"), {}) or {}).get("claims") or []
     confirmed = review.get("confirmed") or []
     out = []
-    if review.get("main_gap"):
+    if review.get("main_gap") and not answered_gap(review):
         told = ("The letter says so plainly." if review.get("gap_in_letter") else "The letter doesn't mention it.")
         out.append({"id": "gap", "kind": "gap", "where": "letter", "text": review["main_gap"],
                     "ask": "The ad asks for this and your career database doesn't show it. Do you have it?",
@@ -247,6 +267,7 @@ def apply_answers(app: dict, answers: dict[str, dict], model: dict | None = None
     place_items: list[dict] = []
     confirmed: list[str] = []
     settled: list[str] = []  # sentences you said are true: placed, and not asked about again in this application
+    gaps: list[dict] = []  # what you said about the gap: the next draft names it again, but it isn't asked again
     instructions: list[str] = []
     parts: set[str] = set()
     for qid, answer in answers.items():
@@ -255,7 +276,9 @@ def apply_answers(app: dict, answers: dict[str, dict], model: dict | None = None
         if not q or not (verdict or text):
             continue
         if q["kind"] == "gap":
-            if verdict == "yes" or (text and verdict != "no"):
+            has = verdict == "yes" or bool(text and verdict != "no")
+            gaps.append({"text": q["text"], "has": has})
+            if has:
                 place_items.append(_item(q, text))
                 instructions.append(f"The candidate does have “{q['text']}”" + (f": {text}" if text else "")
                                     + ". Don't present it as a gap; use it where it helps.")
@@ -277,9 +300,13 @@ def apply_answers(app: dict, answers: dict[str, dict], model: dict | None = None
         if text:
             instructions.append(f"About “{q['text']}” the candidate adds: {text}. Use it if it makes the text better.")
             parts.add(q["where"])
-    if confirmed or settled:  # the writer and the fact check are told, so a revision doesn't raise them again
+    if confirmed or settled or gaps:  # the writer and the fact check are told, so a revision doesn't raise them again
         review = db.jload(app.get("review"), {}) or {}
-        review["confirmed"] = list(dict.fromkeys([*(review.get("confirmed") or []), *confirmed, *settled]))
+        if confirmed or settled:
+            review["confirmed"] = list(dict.fromkeys([*(review.get("confirmed") or []), *confirmed, *settled]))
+        if gaps:
+            kept = [g for g in review.get("gap_answers") or [] if not any(_same_gap(g["text"], n["text"]) for n in gaps)]
+            review["gap_answers"] = [*kept, *gaps]
         db.update("applications", app["id"], {"review": db.jdump(review)})
     then = None
     if instructions:

@@ -488,24 +488,36 @@ def _gap_note(letter: dict) -> list[str]:
 
 def _review(letter: dict, text: str, before: str | None = None) -> dict:
     """What the writer decided and assumed for this letter, kept as data so the review screen can ask you about it.
-    `before` is the application's review so far: what you confirmed for this application stays confirmed."""
+    `before` is the application's review so far: what you confirmed and how you answered the gap stay."""
     gap, line = (letter.get("main_gap") or "").strip(), (letter.get("gap_line") or "").strip()
     said = bool(gap) and (not line or " ".join(line.lower().split())[:40] in " ".join((text or "").lower().split()))
-    confirmed = (db.jload(before, {}) or {}).get("confirmed") or []
+    kept = db.jload(before, {}) or {}
     out = {"angle": (letter.get("angle") or "").strip(), "main_gap": gap, "gap_line": line, "gap_in_letter": said,
            "assumed": [a.strip() for a in (letter.get("assumed") or []) if a and a.strip()][:6]}
-    if confirmed:
-        out["confirmed"] = confirmed
+    for key in ("confirmed", "gap_answers"):
+        if kept.get(key):
+            out[key] = kept[key]
     return out
 
 
 def confirmed_note(app: dict) -> str:
-    """What you confirmed about yourself for this application, for the writer: it's true here, so it isn't assumed."""
-    confirmed = (db.jload(app.get("review"), {}) or {}).get("confirmed") or []
-    if not confirmed:
-        return ""
-    return ("The candidate confirmed these are true for this application (you may say them; don't list them under "
-            "assumed):\n" + "\n".join(f"- {c}" for c in confirmed))
+    """What you confirmed about yourself for this application, for the writer: it's true here, so it isn't assumed;
+    and what you said about the ad's must-haves the database doesn't show."""
+    review = db.jload(app.get("review"), {}) or {}
+    confirmed = review.get("confirmed") or []
+    gaps = review.get("gap_answers") or []
+    new, have = [g["text"] for g in gaps if not g.get("has")], [g["text"] for g in gaps if g.get("has")]
+    parts = []
+    if confirmed:
+        parts.append("The candidate confirmed these are true for this application (you may say them; don't list them "
+                     "under assumed):\n" + "\n".join(f"- {c}" for c in confirmed))
+    if new:
+        parts.append("The candidate said these, which the ad asks for, are new to them. Say so plainly next to the "
+                     "closest real experience; never claim them:\n" + "\n".join(f"- {g}" for g in new))
+    if have:
+        parts.append("The candidate said they do have these, which the ad asks for. Don't present them as gaps:\n"
+                     + "\n".join(f"- {g}" for g in have))
+    return "\n\n".join(parts)
 
 
 def _with_confirmed(instructions: str | None, app: dict) -> str | None:

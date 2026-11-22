@@ -119,6 +119,28 @@ def test_a_sentence_you_said_is_true_is_not_asked_about_again_after_a_revision(f
     assert "confirmed these are true when reviewing this application" in system and f"- {first['text']}" in system
 
 
+def test_a_gap_you_answered_is_not_asked_about_again_though_the_writer_names_it_again(fake):
+    assert review._same_gap("XBRL, annual reports and accounting", "XBRL, annual reports and accounting domain")
+    assert not review._same_gap("XBRL, annual reports and accounting", "Kubernetes")
+    a = _draft()
+    db.ex("DELETE FROM tasks")
+    TestClient(app).post(f"/applications/{a['id']}/answers", follow_redirects=False, data={"v_gap": "no", "t_gap": ""})
+    a = tracker.app_with_job(a["id"])
+    assert db.jload(a["review"], {})["gap_answers"] == [{"text": "Kubernetes", "has": False}]
+    assert "gap" not in [q["kind"] for q in review.questions(a)]
+
+    writer.revise(a["id"], "Shorter.")  # the writer names the same gap again
+    a = tracker.app_with_job(a["id"])
+    assert db.jload(a["review"], {})["main_gap"] == "Kubernetes" and "gap" not in [q["kind"] for q in review.questions(a)]
+    prompt = next(user for system, user, schema in reversed(fake.calls) if schema is writer.LETTER_SCHEMA)
+    assert "are new to them. Say so plainly" in prompt and "- Kubernetes" in prompt, "the writer is told"
+
+    rev = db.jload(a["review"], {})
+    for gap, asked in (("Kubernetes experience", False), ("Go and gRPC", True)):  # reworded: no; another gap: yes
+        db.update("applications", a["id"], {"review": db.jdump({**rev, "main_gap": gap})})
+        assert ("gap" in [q["kind"] for q in review.questions(tracker.app_with_job(a["id"]))]) is asked, gap
+
+
 def test_placing_adds_to_the_fact_it_belongs_to_and_leaves_out_what_isnt_your_career(fake):
     _draft()
     po = db.q1("SELECT * FROM facts WHERE title = 'Product Owner'")
