@@ -391,9 +391,11 @@ def closes_on(job: dict) -> str | None:
 
 
 def open_sql(alias: str = "j") -> str:
-    """SQL that's true for a job still open on the day given as its one parameter."""
+    """SQL that's true for a job still open on the day given as its one parameter: its ad wasn't found gone
+    (adcheck.py), and neither its deadline nor its listing has passed."""
     a = f"{alias}." if alias else ""
-    return f"COALESCE({a}deadline, json_extract({a}details, '$.listing_ends'), '9999-12-31') >= ?"
+    return (f"({a}gone_at IS NULL AND "
+            f"COALESCE({a}deadline, json_extract({a}details, '$.listing_ends'), '9999-12-31') >= ?)")
 
 
 def move_listing_dates() -> int:
@@ -773,13 +775,23 @@ def draft_best() -> list[int]:
 
     threshold = int(a.get("auto_draft_threshold") or 80)
     # The threshold is for the ranked score (fit, less the points for distance and a big employer); the most
-    # urgent first on ties.
+    # urgent first on ties. An ad up for months without a deadline is left for you to ask about first.
     rows = rank.urgent_first([j for j in rank.annotate(db.q(
         "SELECT j.* FROM jobs j WHERE j.status NOT IN ('dismissed', 'filtered') AND j.fit_score >= ? "
         "AND NOT EXISTS (SELECT 1 FROM applications ap WHERE ap.job_id = j.id) "
         "AND (j.company_id IS NULL OR NOT COALESCE((SELECT blocked FROM companies c WHERE c.id = j.company_id), 0)) "
         f"AND {open_sql()}", (threshold, date.today().isoformat()))) if j["rank"]["score"] >= threshold])
-    rows = sorted(rows, key=lambda j: -j["rank"]["score"])[:left]  # stable: the urgent order stays on ties
+    from . import adcheck
+
+    best = []
+    for job in sorted(rows, key=lambda j: -j["rank"]["score"]):  # stable: the urgent order stays on ties
+        if len(best) == left:
+            break
+        if job["urgency"]["long_running"]:  # up for months without a date: you ask them first, then press Write
+            continue
+        if adcheck.still_up(job["id"]):  # never write for an ad that's gone
+            best.append(job)
+    rows = best
     for job in rows:
         create_application(job["id"], auto=True)
         notify.send("Strong match found", f"{job['title']} at {job['company_name'] or '?'} scored {job['fit_score']}. Drafting your application…")
@@ -812,5 +824,5 @@ def set_status(job_id: int, status: str) -> None:
 
 
 def is_expired(job: dict) -> bool:
-    gone = closes_on(job)
-    return bool(gone) and gone < date.today().isoformat()
+    ends = closes_on(job)
+    return bool(job.get("gone_at")) or (bool(ends) and ends < date.today().isoformat())

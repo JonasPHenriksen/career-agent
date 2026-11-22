@@ -359,6 +359,14 @@ MIGRATIONS: list[str] = [
     ALTER TABLE companies ADD COLUMN size_by TEXT;
     ALTER TABLE companies ADD COLUMN size_note TEXT;
     """,
+    # 14: whether the ad is still up (adcheck.py): when it was last looked at and what was found, when it was found
+    # gone, and when you said it's still open after all
+    """
+    ALTER TABLE jobs ADD COLUMN checked_at TEXT;
+    ALTER TABLE jobs ADD COLUMN check_note TEXT;
+    ALTER TABLE jobs ADD COLUMN gone_at TEXT;
+    ALTER TABLE jobs ADD COLUMN open_said_at TEXT;
+    """,
 ]
 
 

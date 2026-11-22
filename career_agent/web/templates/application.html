@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline, progress, status, model_picker, made_by %}
+{% from "_macros.html" import score, grade, deadline, progress, status, model_picker, made_by, ad_state, ask_first %}
 {% block title %}{{ a.job_title or 'Application' }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/tracker">Applications</a> · <a href="/jobs/{{ a.job_id }}">job details</a>{% if a.auto_drafted %} · drafted automatically{% endif %}</div>
@@ -20,6 +20,7 @@
   </div>
 </header>
 
+{% if job and a.status in ('drafting', 'draft', 'ready') %}{{ ad_state(job, a, '/') }}{{ ask_first(job) }}{% endif %}
 {% if job and job.ai_notice %}
 <div class="card warn" role="alert" style="margin-bottom:1rem">
   <strong>Check before you send: this ad says something about AI-written applications.</strong>

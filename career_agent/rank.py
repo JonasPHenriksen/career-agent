@@ -21,6 +21,7 @@ SIZE_WHY = {"large": "large employer", "very_large": "very large or very well-kn
 ROLLING_DAYS = 7  # "apply as soon as possible" counts as due this long after the ad was posted…
 SOONEST_DAYS = 2  # …but never sooner than this from today, so a deadline in the next day or two still comes first
 STALE_DAYS = 28  # posted longer ago than this without a date: it may be filled, or they hire all year round
+LONG_RUNNING_DAYS = 91  # up this long without a date: worth asking whether it's still open before writing
 _UNSOLICITED = re.compile(r"uopfordret|unsolicited|spontan|open application|åben ansøgning", re.I)
 
 
@@ -83,7 +84,8 @@ def _day(value: str | None) -> date | None:
 
 
 def urgency(r: dict, today: date | None = None) -> dict:
-    """How soon to apply: {"kind": "dated" | "rolling" | "stale" | "open", "due": date or None, "note", "age_days"}.
+    """How soon to apply: {"kind": "dated" | "rolling" | "stale" | "open" | "gone", "due": date or None, "note",
+    "age_days", "since", "long_running"}. Long running: up for months without a date, so ask first.
     Takes a job row, or an application row joined with its job's deadline, details, title, posted_at and
     job_created_at."""
     today = today or date.today()
@@ -92,7 +94,10 @@ def urgency(r: dict, today: date | None = None) -> dict:
     seen = _day(r.get("posted_at")) or _day(r.get("job_created_at") or r.get("created_at")) or today
     age = (today - seen).days
     soon = max(seen + timedelta(days=ROLLING_DAYS), today + timedelta(days=SOONEST_DAYS))
-    out = {"note": note, "age_days": age, "listing_ends": d.get("listing_ends")}
+    out = {"note": note, "age_days": age, "listing_ends": d.get("listing_ends"), "since": seen.isoformat(),
+           "long_running": not r.get("deadline") and age >= LONG_RUNNING_DAYS}
+    if r.get("gone_at") and not r.get("open_said_at"):  # the ad was found gone (adcheck.py)
+        return {**out, "kind": "gone", "due": None}
     deadline = _day(r.get("deadline"))
     if deadline:
         # "Ansøgningsfrist 30. november, samtaler løbende": the job may go before the date
@@ -105,13 +110,14 @@ def urgency(r: dict, today: date | None = None) -> dict:
     return {**out, "kind": "rolling", "due": soon}
 
 
-_GROUP = {"dated": 0, "rolling": 0, "stale": 1, "open": 2}
+_GROUP = {"dated": 0, "rolling": 0, "stale": 1, "open": 2, "gone": 3}
 POOR_BELOW = 50  # ranked lower than this, a job isn't worth hurrying for: it goes after the rest
 
 
 def urgent_first(rows: list[dict]) -> list[dict]:
     """Soonest due first (a rolling job counts as due a week after it was posted); then ads posted long ago
-    without a date; then open applications; poor matches after all of those. Ties: highest ranked first."""
+    without a date; then open applications; poor matches after all of those, and ads found gone last. Ties: highest
+    ranked first."""
     today = date.today()
     for r in rows:
         r["urgency"] = urgency(r, today)
@@ -120,6 +126,6 @@ def urgent_first(rows: list[dict]) -> list[dict]:
 
     def key(r):
         score = (r.get("rank") or {}).get("score")
-        return (score is not None and score < POOR_BELOW, _GROUP[r["urgency"]["kind"]],
+        return (r["urgency"]["kind"] == "gone", score is not None and score < POOR_BELOW, _GROUP[r["urgency"]["kind"]],
                 r["urgency"]["due"] or date.max, -(score or 0))
     return sorted(rows, key=key)

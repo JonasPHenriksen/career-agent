@@ -22,12 +22,13 @@ HEADERS = {
 class FetchError(Exception):
     """Fetching failed; message is for the user. `connection` is True when the site couldn't be reached at all
     (no answer, no network), and `later` when it asked robots to slow down: both are worth trying again later,
-    unlike a page that's gone or blocked."""
+    unlike a page that's gone or blocked. `gone` is True when the site says there is no such page (404, 410)."""
 
-    def __init__(self, message: str, connection: bool = False, later: bool = False):
+    def __init__(self, message: str, connection: bool = False, later: bool = False, gone: bool = False):
         super().__init__(message)
         self.connection = connection
         self.later = later
+        self.gone = gone
 
 
 # One site is never asked faster than this, however many tasks run at once: three workers reading ads from the
@@ -78,7 +79,7 @@ def get(url: str, timeout: float = 25) -> httpx2.Response:
         raise FetchError(f"The site blocked automatic access (HTTP {r.status_code}). "
                          "Open the ad in your browser and paste its text instead.")
     if r.status_code in (404, 410):
-        raise FetchError("Page not found. The ad may have been taken down.")
+        raise FetchError("Page not found. The ad may have been taken down.", gone=True)
     if r.status_code >= 400:
         raise FetchError(f"The site answered HTTP {r.status_code}.")
     return r

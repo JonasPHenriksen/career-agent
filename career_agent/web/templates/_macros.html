@@ -17,10 +17,47 @@
 {# A job's deadline; or, for one without a date, that it closes when they find someone (see rank.urgency) #}
 {% macro when_due(j) -%}
 {% set u = j.urgency %}
-{% if j.deadline %}{{ deadline(j.deadline) }}{% if u and u.due and u.due|string < j.deadline %} <span class="pill warn" title="{{ u.note }}">interviews as they apply</span>{% endif %}
+{% if u and u.kind == 'gone' %}<span class="pill bad" title="Checked {{ j.checked_at|ago }}: {{ j.check_note }}">ad gone</span>
+{% elif j.deadline %}{{ deadline(j.deadline) }}{% if u and u.due and u.due|string < j.deadline %} <span class="pill warn" title="{{ u.note }}">interviews as they apply</span>{% endif %}
 {% elif u and u.kind == 'rolling' %}<span class="pill warn" title="{{ u.note or 'The ad gives no date. Jobs like this close when they find someone.' }}{% if u.listing_ends %} The listing comes down on {{ u.listing_ends|nice_date }}.{% endif %}">rolling · apply soon</span>
-{% elif u and u.kind == 'stale' %}<span class="pill" title="No date in the ad, and it was posted {{ (u.age_days / 7)|round|int }} weeks ago: it may be filled already, or they hire all year round.{% if u.note %} The ad says: {{ u.note }}{% endif %}">posted {{ (u.age_days / 7)|round|int }} weeks ago</span>
+{% elif u and u.kind == 'stale' and u.long_running %}<span class="pill warn" title="Up since {{ u.since|nice_date }} without a deadline. Ask whether it's still open before you spend time on it.{% if u.note %} The ad says: {{ u.note }}{% endif %}">open since {{ u.since|nice_date }} · ask first</span>
+{% elif u and u.kind == 'stale' %}<span class="pill" title="Up since {{ u.since|nice_date }} without a deadline: they may hire for it all year round, or it may be filled soon.{% if u.note %} The ad says: {{ u.note }}{% endif %}">open since {{ u.since|nice_date }}</span>
 {% elif u and u.kind == 'open' %}<span class="pill" title="An unsolicited application: no job to close.">open application</span>
+{% endif %}
+{%- endmacro %}
+
+{# Whether the job's ad is still up (adcheck.py): a warning when it's gone, else one quiet line #}
+{% macro ad_state(job, app=none, next='/jobs') -%}
+{% if job.gone_at and not job.open_said_at %}
+<div class="card danger" role="alert" style="margin-bottom:1rem">
+  <strong>This job ad is gone.</strong> Checked {{ job.checked_at|ago }}: {{ job.check_note }}. It was first found gone {{ job.gone_at|ago }}.
+  <div class="row" style="margin-top:.5rem">
+    <form method="post" action="/jobs/{{ job.id }}/check" class="inline"><button class="btn small" data-busy="Checking…">Check again</button></form>
+    <form method="post" action="/jobs/{{ job.id }}/still-open" class="inline"><button class="btn small ghost" title="The ad moved, or the check got it wrong">It's still open</button></form>
+    {% if job.url %}<a class="small" href="{{ job.url }}" target="_blank" rel="noopener noreferrer">Open the ad</a>{% endif %}
+    {% if not app or app.status in ('drafting', 'draft', 'ready') %}
+    <form method="post" action="/jobs/{{ job.id }}/remove-gone" class="inline" style="margin-left:auto" data-confirm="Remove this job{{ ' and your draft application' if app }}? Nothing has been sent. You can undo it under History.">
+      <input type="hidden" name="next" value="{{ next }}"><button class="btn small danger">Remove{{ ' job and draft' if app else ' job' }}</button></form>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<p class="small muted" style="margin:-.4rem 0 .8rem">{% if job.open_said_at %}You said the ad is still open ({{ job.open_said_at|ago }}); it isn't marked gone again.{% elif job.checked_at %}Ad checked {{ job.checked_at|ago }}: {{ job.check_note }}.{% else %}The ad hasn't been checked yet.{% endif %}
+  <form method="post" action="/jobs/{{ job.id }}/check" class="inline"><button class="btn small ghost" data-busy="Checking…">Check now</button></form></p>
+{% endif %}
+{%- endmacro %}
+
+{# An ad that has been up for months without a deadline: ask before writing (rank.LONG_RUNNING_DAYS) #}
+{% macro ask_first(job) -%}
+{% set u = job.urgency %}
+{% if u and u.long_running and u.kind != 'gone' %}
+<div class="card warn" role="note" style="margin-bottom:1rem">
+  <strong>This ad has been up since {{ u.since|nice_date }}, {{ (u.age_days / 30.4)|round|int }} months without a deadline.</strong>
+  It may be a role they hire for all year round, one that's hard to fill, or one they forgot to take down. Ask whether it's still open before you spend time on it (it isn't drafted automatically; press Write when you've heard back):
+  {% if job.contact_name or job.contact_email or job.contact_phone %}{{ job.contact_name or '' }}{% if job.contact_email %} <a href="mailto:{{ job.contact_email }}">{{ job.contact_email }}</a>{% endif %}{% if job.contact_phone %} <a href="tel:{{ job.contact_phone|replace(' ', '') }}">{{ job.contact_phone }}</a>{% endif %}.
+  {% else %}the ad names no contact, so use the employer's general address or phone.{% endif %}
+  {% if job.url %}<a class="small" href="{{ job.url }}" target="_blank" rel="noopener noreferrer">Open the ad</a>{% endif %}
+</div>
 {% endif %}
 {%- endmacro %}
 

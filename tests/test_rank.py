@@ -229,3 +229,27 @@ def test_the_pages_show_the_order_and_why(fake):
     assert db.q1("SELECT size FROM companies WHERE id = ?", (cid,))["size"] is None
     assert db.scalar("SELECT COUNT(*) FROM tasks WHERE kind = 'size_companies'") >= 1, "handed back to the model"
     assert tasks.TASK_LABELS["size_companies"]
+
+
+def test_an_ad_up_for_months_without_a_deadline_says_to_ask_first(fake):
+    today = date(2026, 11, 22)
+    year = rank.urgency({"title": "Udvikler", "posted_at": "2025-09-03"}, today)
+    assert year["kind"] == "stale" and year["long_running"] and year["since"] == "2025-09-03"
+    assert not rank.urgency({"title": "Udvikler", "posted_at": "2026-10-01"}, today)["long_running"], "under 3 months"
+    assert not rank.urgency({"title": "Udvikler", "posted_at": "2025-09-03", "deadline": "2026-12-01"}, today)["long_running"], \
+        "a deadline says when it closes"
+
+    _home()
+    old = _job("Udvikler til D365 FO", "Brinkholm ApS", "Horsens", 80, posted_at=(date.today() - timedelta(days=445)).isoformat(),
+               contact_name="Mette Holm", contact_email="mh@brinkholm.example")
+    newer = _job("Developer", "B ApS", "Horsens", 70, posted_at=(date.today() - timedelta(days=40)).isoformat())
+    c = TestClient(app)
+    listing = c.get("/jobs").text
+    assert "· ask first" in listing and "open since" in listing
+    page = c.get(f"/jobs/{old}").text
+    assert "months without a deadline." in page and 'href="mailto:mh@brinkholm.example"' in page
+    assert "months without a deadline." not in c.get(f"/jobs/{newer}").text
+    app_id = jobs.create_application(old, draft=False)
+    assert "months without a deadline." in c.get(f"/applications/{app_id}?tab=letter").text
+    assert rank.annotate([db.q1("SELECT * FROM jobs WHERE id = ?", (old,))])[0]["rank"]["score"] == 80, \
+        "the score is left alone: the age says nothing about the fit"

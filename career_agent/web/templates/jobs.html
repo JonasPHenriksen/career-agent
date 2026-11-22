@@ -32,7 +32,7 @@
 {% if busy %}{% include "partials/jobs_progress.html" %}{% endif %}
 
 <nav class="tabs" aria-label="Job lists">
-  {% for key, label in [('inbox','Inbox'),('shortlisted','Shortlisted'),('applying','Applying'),('filtered','Filtered out'),('dismissed','Dismissed'),('all','All')] %}
+  {% for key, label in [('inbox','Inbox'),('shortlisted','Shortlisted'),('applying','Applying'),('filtered','Filtered out'),('dismissed','Dismissed'),('expired','Closed'),('all','All')] %}
   <a href="/jobs?view={{ key }}&sort={{ sort }}" class="{{ 'active' if view == key }}">{{ label }}<span class="count">{{ counts.get(key) or 0 }}</span></a>
   {% endfor %}
 </nav>

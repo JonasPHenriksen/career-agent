@@ -274,6 +274,14 @@ def fake(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def no_ad_checks(monkeypatch):
+    """Tests never look at real ads to see if they're still up; test_adcheck.py tests the looking itself."""
+    from career_agent import adcheck
+
+    monkeypatch.setattr(adcheck, "page_state", lambda url, title: ("unknown", "not looked at in tests"))
+
+
+@pytest.fixture(autouse=True)
 def no_robots_rules(monkeypatch):
     """Tests never fetch a real robots.txt: every site allows everything unless a test sets its own rules."""
     from career_agent import robots

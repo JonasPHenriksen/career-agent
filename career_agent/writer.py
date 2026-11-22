@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from datetime import date
 
-from . import cvdata, db, jobs, knowledge, llm, notify, privacy, profile, retrieval, settings, tracker, voice
+from . import adcheck, cvdata, db, jobs, knowledge, llm, notify, privacy, profile, retrieval, settings, tracker, voice
 from .llm import jsonutil as J
 
 LANG_NAMES = {"da": "Danish", "en": "English", "sv": "Swedish", "no": "Norwegian", "nb": "Norwegian",
@@ -551,6 +551,9 @@ def draft(app_id: int, part: str = "both") -> dict:
         raise llm.LLMError("The job ad hasn't been read yet. Wait for it to be analysed, then try again.")
     if not profile.has_facts():
         raise llm.LLMError("Your career database is empty. Import your CV and past applications first (Profile).")
+    if not adcheck.still_up(job["id"]):  # no time or model use on a job that's gone
+        db.update("applications", app_id, {"status": "draft", "updated_at": db.now()})
+        return {"skipped": "the ad is gone"}
     part = part if part in ("letter", "cv") else "both"
     language = choose_language(job)
     rewrite = bool(app.get("letter") or app.get("cv"))

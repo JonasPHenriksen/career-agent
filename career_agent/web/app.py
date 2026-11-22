@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import (backup, collect, companies, config, cvdata, cvrender, db, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
+from .. import (adcheck, backup, collect, companies, config, cvdata, cvrender, db, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
                 profile, rank, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 
@@ -202,7 +202,8 @@ def today(request: Request):
     threshold = int(settings.get("automation").get("auto_draft_threshold") or 80)
     drafts = rank.urgent_first(db.q(
         "SELECT a.*, j.title AS job_title, j.company_name, j.fit_score, j.deadline, j.details, j.posted_at, "
-        "j.created_at AS job_created_at FROM applications a JOIN jobs j ON j.id = a.job_id "
+        "j.created_at AS job_created_at, j.gone_at, j.open_said_at, j.checked_at, j.check_note "
+        "FROM applications a JOIN jobs j ON j.id = a.job_id "
         "WHERE a.status IN ('drafting', 'draft', 'ready') ORDER BY a.updated_at DESC"))
     for a in drafts:
         a["claims_d"] = db.jload(a["claims"], {}) or {}
@@ -332,6 +333,8 @@ def jobs_list(request: Request, view: str = "inbox", sort: str = "best", q: str 
         "applying": db.scalar("SELECT COUNT(*) FROM applications"),
         "filtered": db.scalar("SELECT COUNT(*) FROM jobs WHERE status = 'filtered'"),
         "dismissed": db.scalar("SELECT COUNT(*) FROM jobs WHERE status = 'dismissed'"),
+        "expired": db.scalar("SELECT COUNT(*) FROM jobs j LEFT JOIN applications a ON a.job_id = j.id "
+                             f"WHERE NOT {jobs.open_sql()} AND a.id IS NULL", (today_s,)),
         "all": db.scalar("SELECT COUNT(*) FROM jobs"),
     }
     busy = db.scalar("SELECT COUNT(*) FROM tasks WHERE kind IN ('parse_job', 'score_job', 'poll_source', 'collect_jobs') "
@@ -354,6 +357,7 @@ def job_detail(request: Request, job_id: int):
     job = need(jobs.get(job_id))
     rank.annotate([job])
     job["urgency"] = rank.urgency(job)
+    adcheck.queue_if_stale(job)
     app_row = db.q1("SELECT * FROM applications WHERE job_id = ?", (job_id,))
     company = db.q1("SELECT * FROM companies WHERE id = ?", (job["company_id"],)) if job["company_id"] else None
     fact_ids = {i for m in (job["f"].get("matched") or []) for i in (m.get("fact_ids") or [])}
@@ -375,6 +379,33 @@ def job_progress(request: Request, job_id: int):
         return done_response()
     return templates.TemplateResponse(request, "partials/progress.html",
                                       {"busy": busy, "url": f"/jobs/{job_id}/progress", "labels": tasks.TASK_LABELS})
+
+
+@app.post("/jobs/{job_id}/check")
+async def job_check(request: Request, job_id: int):
+    need(db.q1("SELECT id FROM jobs WHERE id = ?", (job_id,)))
+    tasks.enqueue("check_ads", {"job_ids": [job_id]}, ref=f"job:{job_id}")
+    return go(back(request, f"/jobs/{job_id}"), msg="Checking the ad… reload in a moment to see what was found.")
+
+
+@app.post("/jobs/{job_id}/still-open")
+async def job_still_open(request: Request, job_id: int):
+    need(db.q1("SELECT id FROM jobs WHERE id = ?", (job_id,)))
+    db.update("jobs", job_id, {"gone_at": None, "open_said_at": db.now(), "check_note": "you said the ad is still open"})
+    return go(back(request, f"/jobs/{job_id}"), msg="Marked as still open. The regular checks won't mark it gone again.")
+
+
+@app.post("/jobs/{job_id}/remove-gone")
+async def job_remove_gone(request: Request, job_id: int):
+    f = await form(request)
+    nxt = local_path(f.get("next"), "/jobs")
+    gone = adcheck.remove(job_id)
+    if not gone:
+        return go(back(request, f"/jobs/{job_id}"),
+                  err="Only a job whose ad is gone, with nothing sent for it, can be removed this way.")
+    what = "The job and your draft" if gone["application"] else "The job"
+    return go(nxt, msg=f"{what} for {gone['title']} at {gone['company'] or '?'} were removed. "
+                       "Undo it here, or later under History.")
 
 
 @app.post("/jobs/{job_id}/status")
@@ -453,13 +484,16 @@ APP_TABS = [("review", "Review"), ("letter", "Letter"), ("claude", "Claude.ai"),
 def application(request: Request, app_id: int, tab: str = ""):
     a = need(tracker.app_with_job(app_id))
     job = jobs.get(a["job_id"])
+    if job and a["status"] in ("drafting", "draft", "ready"):
+        adcheck.queue_if_stale(job)
+        job["urgency"] = rank.urgency(job)
     if tab not in dict(APP_TABS):  # a draft opens on the review screen; nothing to review yet opens on the letter
         tab = "review" if (a["letter"] or a["cv"]) else "letter"
     look = {}
     if tab == "review":
         waiting = [r["id"] for r in rank.urgent_first(db.q(  # the same order as Today's "Waiting for your review"
             "SELECT a.id, a.updated_at, j.title AS job_title, j.fit_score, j.deadline, j.details, j.posted_at, "
-            "j.created_at AS job_created_at FROM applications a JOIN jobs j ON j.id = a.job_id "
+            "j.created_at AS job_created_at, j.gone_at, j.open_said_at FROM applications a JOIN jobs j ON j.id = a.job_id "
             "WHERE a.status IN ('draft', 'ready') AND a.letter IS NOT NULL ORDER BY a.updated_at DESC"))]
         at = waiting.index(app_id) if app_id in waiting else -1
         look = {"base_open": len(review.base_questions(cvdata.base_for(a["language"]))), "questions": review.questions(a), "letter_html": review.marked(a["letter"], a),
