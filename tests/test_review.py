@@ -93,6 +93,32 @@ def test_what_you_confirm_is_placed_before_the_draft_is_checked_again(fake):
     assert "1 new fact to check under Recently added." in TestClient(app).get(f"/applications/{a['id']}?tab=review").text
 
 
+def test_a_sentence_you_said_is_true_is_not_asked_about_again_after_a_revision(fake):
+    a = _draft()
+    db.ex("DELETE FROM tasks")
+    first = next(q for q in review.questions(a) if q["kind"] == "claim")
+    assert f'title="team size">{first["text"]}</mark>' in review.marked(a["letter"], a)
+    TestClient(app).post(f"/applications/{a['id']}/answers", follow_redirects=False,
+                         data={f"v_{first['id']}": "yes", f"t_{first['id']}": ""})
+    a = tracker.app_with_job(a["id"])
+    assert first["text"] in db.jload(a["review"], {})["confirmed"]
+    assert first["text"] not in [q["text"] for q in review.questions(a)], "not asked again while it's being placed"
+    assert "assumed" in [q["kind"] for q in review.questions(a)], "the questions you didn't answer are still there"
+    assert f'title="team size">{first["text"]}</mark>' not in review.marked(a["letter"], a)
+
+    _run("place_answers")  # what the check found missing goes with it, so the database can take that part too
+    sent = next(user for system, user, schema in reversed(fake.calls) if schema is review.PLACE_SCHEMA)
+    assert "What the fact check found the database doesn't say: team size" in sent
+
+    writer.revise(a["id"], "Shorter.")  # the same sentence again: the check is told, and it isn't flagged
+    a = tracker.app_with_job(a["id"])
+    claim = next(c for c in db.jload(a["claims"], {})["claims"] if c["text"] == first["text"])
+    assert (claim["status"], claim["note"]) == ("supported", "You confirmed this is true.")
+    assert first["text"] not in [q["text"] for q in review.questions(a)]
+    system = next(system for system, user, schema in reversed(fake.calls) if schema is writer.CHECK_SCHEMA)
+    assert "confirmed these are true when reviewing this application" in system and f"- {first['text']}" in system
+
+
 def test_placing_adds_to_the_fact_it_belongs_to_and_leaves_out_what_isnt_your_career(fake):
     _draft()
     po = db.q1("SELECT * FROM facts WHERE title = 'Product Owner'")

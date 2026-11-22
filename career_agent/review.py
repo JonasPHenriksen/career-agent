@@ -5,7 +5,8 @@ true, is a sentence the fact check couldn't back actually true? What you confirm
 it belongs in your career database (so the next draft knows): added to the fact it's part of, as a new fact for you
 to tick, or not at all when the database already says it or it isn't about your career. Corrections only change
 the draft, and what the writer assumed about your motives is confirmed for that application alone: a line written
-for one employer isn't evidence of who you are.
+for one employer isn't evidence of who you are. A sentence you said is true isn't asked about again in that
+application, even when a revision rewords it or the database didn't take all of it.
 """
 from __future__ import annotations
 
@@ -41,7 +42,7 @@ def questions(app: dict) -> list[dict]:
                     "detail": "Your answer counts for this application only; it isn't saved in your career database.",
                     "yes": "True", "no": "Not true"})
     for n, c in enumerate(claims):
-        if c.get("status") in FLAGGED:
+        if c.get("status") in FLAGGED and not any(_same(c["text"], x) for x in confirmed):
             out.append({"id": f"claim:{n}", "kind": "claim", "where": c.get("where") or "letter", "text": c["text"],
                         "status": c["status"], "fact_ids": c.get("fact_ids") or [],
                         "ask": ("Your career database doesn't back this. Is it true?" if c["status"] == "unsupported"
@@ -56,6 +57,7 @@ def marked(text: str, app: dict, where: str = "letter") -> str:
     from . import voice
 
     claims = (db.jload(app.get("claims"), {}) or {}).get("claims") or []
+    confirmed = (db.jload(app.get("review"), {}) or {}).get("confirmed") or []
     html = escape(text or "")
     read = voice.read_notes(app) if where == "letter" else None
     for note in (read or {}).get("notes") or []:
@@ -64,7 +66,7 @@ def marked(text: str, app: dict, where: str = "letter") -> str:
         if sentence and sentence in html:
             html = html.replace(sentence, f'<mark class="flag voice" title="{tip}">{sentence}</mark>', 1)
     for c in claims:
-        if c.get("status") not in FLAGGED or (c.get("where") or "letter") != where:
+        if c.get("status") not in FLAGGED or (c.get("where") or "letter") != where or any(_same(c["text"], x) for x in confirmed):
             continue
         sentence = escape(c["text"])
         if sentence and sentence in html:
@@ -86,9 +88,11 @@ PLACE_SYSTEM = """You keep a candidate's career database: the facts their job ap
 has just confirmed some things while reviewing an application. Decide for each one where it goes.
 
 For each numbered item choose one action:
-- known: the database already says this (maybe in other words). Give that fact's id in fact_id.
+- known: the database already says all of it (maybe in other words), including what the fact check found missing. \
+Give that fact's id in fact_id.
 - add_to: it adds a detail to one fact that's already there (usually a job, project or education the fact check \
-linked it to). Give that fact's id in fact_id, and in addition only what the fact doesn't say yet.
+linked it to). Give that fact's id in fact_id, and in addition only what the fact doesn't say yet (usually what the \
+fact check found missing).
 - new: it's about the candidate's career (experience, a project, a skill, education, a certificate or a language) \
 and no fact covers it. Fill in the new fact. Use the category "about" only for how the candidate works or what they \
 value when their own words below the item say so; a line from the letter alone is written for one employer.
@@ -101,7 +105,12 @@ Rules:
 - Write in English, the way the database does: no first person, no "I", no sentence copied from the letter.
 - A title is a few words naming the thing (like the database's titles), never a whole sentence.
 - organization is the employer, school or place as the database names it; empty when there's none.
-- When in doubt between known and add_to, choose known. When in doubt between new and skip, choose skip."""
+- An item may say what the fact check found the database doesn't say. The candidate has now confirmed that part, so \
+choose known only when the database really says it. Otherwise add it (add_to, or new) when it's about their career: \
+a scope, how often, a tool, a document type, a number or a date. Leave it out when it's only wording or a \
+characterisation.
+- When the fact check found nothing missing and you're in doubt between known and add_to, choose known. When in \
+doubt between new and skip, choose skip."""
 
 PLACE_SCHEMA = J.obj(results=J.arr(J.obj(
     n=J.i("The item's number"),
@@ -119,8 +128,11 @@ PLACE_SCHEMA = J.obj(results=J.arr(J.obj(
 
 
 def _item(q: dict, said: str) -> dict:
-    """A confirmed question, as it goes to `place`."""
-    return {"kind": q["kind"], "text": q["text"], "said": said, "fact_ids": q.get("fact_ids") or []}
+    """A confirmed question, as it goes to `place`. A flagged sentence carries what the fact check found missing:
+    without it, `place` saw the core of the sentence in the database, called it known and saved nothing, so the next
+    check flagged the same words and the same question came back."""
+    return {"kind": q["kind"], "text": q["text"], "said": said, "fact_ids": q.get("fact_ids") or [],
+            "missing": (q.get("detail") or "") if q.get("status") in FLAGGED else ""}
 
 
 def _linked(ids: list[int]) -> str:
@@ -144,6 +156,8 @@ def place(items: list[dict], about: str) -> dict:
         block = f"[{n}] {what}:\n“{it['text']}”"
         if it.get("said"):
             block += f"\nThe candidate's own words about it: “{it['said']}”"
+        if it.get("missing"):
+            block += f"\nWhat the fact check found the database doesn't say: {it['missing']}"
         linked = _linked(it.get("fact_ids") or [])
         if linked:
             block += f"\nFacts the fact check linked it to:\n{linked}"
@@ -232,6 +246,7 @@ def apply_answers(app: dict, answers: dict[str, dict], model: dict | None = None
     job_title = app.get("job_title") or "this job"
     place_items: list[dict] = []
     confirmed: list[str] = []
+    settled: list[str] = []  # sentences you said are true: placed, and not asked about again in this application
     instructions: list[str] = []
     parts: set[str] = set()
     for qid, answer in answers.items():
@@ -258,12 +273,13 @@ def apply_answers(app: dict, answers: dict[str, dict], model: dict | None = None
             confirmed.append(q["text"])
         else:
             place_items.append(_item(q, text))
+            settled.append(q["text"])
         if text:
             instructions.append(f"About “{q['text']}” the candidate adds: {text}. Use it if it makes the text better.")
             parts.add(q["where"])
-    if confirmed:
+    if confirmed or settled:  # the writer and the fact check are told, so a revision doesn't raise them again
         review = db.jload(app.get("review"), {}) or {}
-        review["confirmed"] = [*(review.get("confirmed") or []), *confirmed]
+        review["confirmed"] = list(dict.fromkeys([*(review.get("confirmed") or []), *confirmed, *settled]))
         db.update("applications", app["id"], {"review": db.jdump(review)})
     then = None
     if instructions:

@@ -654,8 +654,13 @@ def check_items(letter: str, cv: str) -> list[tuple[str, str]]:
     return items
 
 
-def check_claims(letter: str, cv: str, tier: str | None = None) -> dict:
-    """Fact-check a letter and CV. Returns {claims, counts, summary}."""
+def _same(a: str, b: str) -> bool:
+    return " ".join((a or "").lower().split()) == " ".join((b or "").lower().split())
+
+
+def check_claims(letter: str, cv: str, tier: str | None = None, confirmed: list[str] | None = None) -> dict:
+    """Fact-check a letter and CV. Returns {claims, counts, summary}. `confirmed` is what you said is true when
+    reviewing this application: your own word, like where you live."""
     tier = tier or check_tier()
     lim = profile.limits()
     budget = lim["facts_chars_writing"] if tier == "writing" else lim["facts_chars_analysis"]
@@ -670,7 +675,12 @@ def check_claims(letter: str, cv: str, tier: str | None = None) -> dict:
     city, available = (you.get("city") or "").strip(), (you.get("availability") or "").strip()
     own = ([f"The candidate lives in {city}."] if city else []) + ([f"Their availability: {available}"] if available else [])
     lives = f"\n{' '.join(own)} They said so themselves, so it counts as backed.\n" if own else ""
-    system = (CHECK_SYSTEM + f"\n\nToday's date: {date.today().isoformat()}\n{lives}\nCAREER DATABASE:\n"
+    # Without this a sentence you'd said is true was flagged again after every revision, and asked about again.
+    confirmed = [c for c in (confirmed or []) if c and c.strip()]
+    told = ("\nThe candidate confirmed these are true when reviewing this application. A sentence that says the same, "
+            "even in other words, counts as backed; anything it adds beyond them still needs backing:\n"
+            + "\n".join(f"- {c}" for c in confirmed) + "\n") if confirmed else ""
+    system = (CHECK_SYSTEM + f"\n\nToday's date: {date.today().isoformat()}\n{lives}{told}\nCAREER DATABASE:\n"
               + profile.facts_digest(budget, with_evidence=True, query=f"{letter}\n\n{cv}"))
     user = "APPLICATION, ONE ITEM PER NUMBER:\n" + "\n".join(f"[{n}] ({where}) {text}" for n, (where, text) in enumerate(items, 1))
     d = llm.run(tier, "claim_check", system, user, CHECK_SCHEMA, max_tokens=12000, effort="medium").data
@@ -679,8 +689,11 @@ def check_claims(letter: str, cv: str, tier: str | None = None) -> dict:
         if not 1 <= v["n"] <= len(items) or v["status"] == "not_a_claim" or v["kind"] == "other":
             continue
         where, text = items[v["n"] - 1]
-        claims.append({"text": text, "where": where, "kind": v["kind"], "status": v["status"],
-                       "fact_ids": profile.fact_ids_valid(v["fact_ids"]), "note": v["problem"].strip()})
+        claim = {"text": text, "where": where, "kind": v["kind"], "status": v["status"],
+                 "fact_ids": profile.fact_ids_valid(v["fact_ids"]), "note": v["problem"].strip()}
+        if claim["status"] != "supported" and any(_same(text, c) for c in confirmed):  # the very sentence you confirmed
+            claim.update(status="supported", note="You confirmed this is true.")
+        claims.append(claim)
     _verify_against_documents(claims, tier)
     counts = dict(Counter(c["status"] for c in claims))
     problems = counts.get("partly", 0) + counts.get("unsupported", 0)
@@ -705,7 +718,7 @@ def run_checks(app_id: int) -> dict:
         tasks.enqueue("read_voice", {"application_id": app_id}, ref=f"app:{app_id}")
     if not (app["letter"] or app["cv"]):
         return {"voice": v["score"]}
-    d = check_claims(app["letter"] or "", app["cv"] or "")
+    d = check_claims(app["letter"] or "", app["cv"] or "", confirmed=(db.jload(app.get("review"), {}) or {}).get("confirmed"))
     d["checked_at"] = db.now()
     db.update("applications", app_id, {"claims": db.jdump(d)})
     return {"voice": v["score"], "claims": d["counts"]}
