@@ -217,7 +217,7 @@
     <label class="check"><input type="checkbox" name="auto_draft" value="1" {{ 'checked' if auto.auto_draft }}> <span>Write a draft automatically for strong matches (you always review before anything is sent)</span></label>
     <div class="fields-3" style="margin-top:.6rem">
       <div class="field"><label for="thr">Strong match = score at least <span class="hint">· after the points taken off for distance and a big employer</span></label><input id="thr" type="number" name="auto_draft_threshold" value="{{ auto.auto_draft_threshold }}" min="0" max="100"></div>
-      <div class="field"><label for="cap">Max automatic drafts per day</label><input id="cap" type="number" name="auto_draft_daily_cap" value="{{ auto.auto_draft_daily_cap }}" min="0" max="50"></div>
+      <div class="field"><label for="cap">Max automatic drafts per day <span class="hint">· 0 = none</span></label><input id="cap" type="number" name="auto_draft_daily_cap" value="{{ auto.auto_draft_daily_cap }}" min="0" max="50"></div>
       <div class="field"><label for="fud">Suggest a follow-up after (days)</label><input id="fud" type="number" name="followup_days" value="{{ auto.followup_days }}" min="1"></div>
       <div class="field"><label for="gd">Count as “no response” after (days)</label><input id="gd" type="number" name="ghost_days" value="{{ auto.ghost_days }}" min="7"></div>
     </div>

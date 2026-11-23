@@ -213,10 +213,16 @@ def _fold(text: str | None) -> str:
     return re.sub(r"[^\w]+", " ", s).strip()
 
 
+def _written_out(name: str) -> str:
+    """æ, ø and å as ae, oe and aa, the way repeats are compared (jobs._folded): København as Koebenhavn."""
+    return name.lower().replace("æ", "ae").replace("ø", "oe").replace("å", "aa")
+
+
 _FOLDED_RX = re.compile(r"(?<![\w])(" + "|".join(re.escape(n) for n in sorted(
-    {_fold(n) for t in _TOWNS for n in (t[0], *t[5])} | {_fold(n) for n in _ABROAD}, key=len, reverse=True) if n)
+    {_fold(v) for t in _TOWNS for n in (t[0], *t[5]) for v in (n, _written_out(n))}
+    | {_fold(v) for n in _ABROAD for v in (n, _written_out(n))}, key=len, reverse=True) if n)
     + r")(?![\w])")
-_PLACE_JOINERS = {"or", "eller", "and", "og", "also", "ogsa", "near", "naer", "nær", "i", "in", "ved"}
+_PLACE_JOINERS = {"or", "eller", "and", "og", "also", "ogsa", "ogsaa", "near", "naer", "nær", "i", "in", "ved"}
 
 
 def only_places(text: str | None) -> bool:

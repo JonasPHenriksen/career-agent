@@ -113,6 +113,33 @@ def site_for(page_url: str) -> tuple[str, object] | None:
     return None
 
 
+def stash_cards(html: str) -> str | None:
+    """Jobindex and IT-Jobbank build the job list in the browser from the page's own data (var Stash = {...}).
+    The cards for the jobs on the page, as one HTML document the layout readers take, or None when the page has no
+    such data. The same data the bookmark reads from your tab."""
+    a = html.find("var Stash = ")
+    b = html.find("</script>", a) if a >= 0 else -1
+    if a < 0 or b < 0:
+        return None
+    data = html[a + len("var Stash = "):b]
+    try:
+        stash = json.loads(data[:data.rfind("}") + 1])
+    except ValueError:
+        return None
+    todo = [stash]
+    while todo:
+        o = todo.pop()
+        if isinstance(o, dict):
+            found = o.get("searchResponse")
+            if isinstance(found, dict) and isinstance(found.get("results"), list):
+                cards = [r.get("html") or "" for r in found["results"] if isinstance(r, dict)]
+                return "<html><body>" + "\n".join(cards) + "</body></html>"
+            todo.extend(o.values())
+        elif isinstance(o, list):
+            todo.extend(o)
+    return None
+
+
 def extract(html: str, page_url: str) -> list[dict] | None:
     """The job cards on a known site's results page; None for a site the app has no layout for."""
     site = site_for(page_url)
@@ -238,7 +265,7 @@ def receive(html: str, page_url: str, pages: int = 1) -> dict:
     fresh = [it for it in items if not db.q1("SELECT 1 FROM jobs WHERE url = ?", (fetch.canonical_url(it["url"]),))]
     n, k = len(items), len(fresh)
     saved = mark_collected(page_url)
-    chain = _chain() if saved else {}
+    chain = _chain(page_url) if saved else {}
     if not fresh:
         return {"ok": True, "site": name, "found": n, "new": 0, "saved": saved, "page_url": page_url, **chain,
                 "message": f"{where}: {n} job{'s' if n != 1 else ''} {on}, all already in Career Agent."}
@@ -396,10 +423,41 @@ def next_search(today: date | None = None) -> dict | None:
     return next((s for s in searches() if search_key(s["url"]) in due), None)
 
 
-def _chain() -> dict:
-    """After collecting a saved search: the next one still to collect this week, so a weekly run is one click after
-    another, and how many are left."""
+RUN_HOURS = 3  # a round you start with Collect now is forgotten after this, and the weekly order applies again
+_run: dict = {}  # that round, in memory only: the searches still to collect and when it started
+
+
+def start_run() -> dict | None:
+    """You pressed Collect now: all your saved searches, in the order of your list, whether or not they were
+    collected this week. The first one to open, or None when there are none."""
+    rows = searches()
+    _run.clear()
+    if not rows:
+        return None
+    _run.update(keys=[search_key(s["url"]) for s in rows[1:]], at=time.monotonic())
+    return rows[0]
+
+
+def _chain(page_url: str = "") -> dict:
+    """After collecting a saved search: the next one to collect, so a run is one click after another, and how many
+    are left. In a round you started with Collect now: the rest of that round; otherwise the ones due this week."""
+    if _run and time.monotonic() - _run["at"] < RUN_HOURS * 3600:
+        _run["keys"] = [k for k in _run["keys"] if k != search_key(page_url)]
+        by_key = {search_key(s["url"]): s for s in searches()}
+        left = [by_key[k] for k in _run["keys"] if k in by_key]
+        if not left:
+            _run.clear()
+        return {"next": left[0] if left else None, "left": len(left), "round": True}
+    _run.clear()
     return {"next": next_search(), "left": len(due_searches())}
+
+
+def last_collected() -> str | None:
+    """When the saved search collected longest ago was collected (None if one never was, or there are none)."""
+    rows = searches()
+    if not rows or any(not s.get("last_at") for s in rows):
+        return None
+    return min(s["last_at"] for s in rows)
 
 
 def search_links(today: date | None = None) -> list[dict]:

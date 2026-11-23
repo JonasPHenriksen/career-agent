@@ -250,6 +250,8 @@ class FakeProvider:
                     size = "very_large" if "Netcompany" in name else "medium" if "Mellem" in name else "small"
                     sizes.append({"n": int(n), "size": size, "note": f"{name.strip()}: a guess"})
             return {"companies": sizes}
+        if schema is jobs.SAME_JOB_SCHEMA:  # not certain: the job stays (tests that want a copy found say so)
+            return {"same": 0, "reason": "Not certain."}
         if schema is writer.FOLLOWUP_SCHEMA:
             return {"subject": "Opfølgning", "body": "Hej Mette, jeg følger lige op."}
         if schema is None:

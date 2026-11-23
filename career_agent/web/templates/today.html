@@ -25,7 +25,8 @@
         {% if t.detail %}<div class="detail">{{ t.detail|md }}</div>{% endif %}
         {% if t.progress %}<div class="todo-progress">{{ t.progress }}</div>{% endif %}
         {% set first_due = (t.searches or [])|selectattr('due')|first %}
-        {% if first_due %}<p style="margin:.4rem 0 .2rem"><a class="btn small primary" href="{{ first_due.url }}" target="_blank" rel="noopener noreferrer">Start: {{ first_due.name }} →</a> <span class="small text-2">After each <em>Send</em>, the page that opens takes you to the next one.</span></p>{% endif %}
+        {% if first_due %}<p style="margin:.4rem 0 .2rem"><a class="btn small primary" href="{{ first_due.url }}" target="_blank" rel="noopener noreferrer">Start: {{ first_due.name }} →</a> <span class="small text-2">After each <em>Send</em>, the page that opens takes you to the next one.</span></p>
+        {% elif t.searches %}<p style="margin:.4rem 0 .2rem"><a class="btn small" href="/collect/run" target="_blank" rel="noopener">Collect them all again ↗</a></p>{% endif %}
         {% if t.searches %}<ul class="small" style="margin:.3rem 0 0;padding-left:1.1rem">
           {% for s in t.searches %}<li><a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{{ s.name }}</a> <span class="muted">· {% if s.last_at %}collected {{ s.last_at|ago }}{% else %}not collected yet{% endif %}</span>{% if not s.due %} <span class="pill good">done this week</span>{% endif %}</li>{% endfor %}
         </ul>{% endif %}

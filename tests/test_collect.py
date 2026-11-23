@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from career_agent import collect, db, robots, sources, tasks
@@ -379,3 +380,51 @@ def test_collecting_a_saved_search_leads_on_to_the_next_one_still_to_collect(fak
     page = c.post("/collect/take", data={"url": first, "html": JOBINDEX_PAGE, "token": collect.token()}, headers=site).text
     assert "Next:" not in page and "the last of your saved searches this week" in page and 'data-close="1"' in page
     assert "Start:" not in c.get("/").text
+
+
+def _watched_page() -> str:
+    """A Jobindex area page as the app gets it: no cards in the HTML, the job list in the page's own data."""
+    soup = BeautifulSoup(JOBINDEX_PAGE, "html.parser")
+    cards = [str(w) for w in soup.select('div[id^="jobad-wrapper-"]')]
+    stash = {"common": {"csrf_token": "x"}, "app": {"jobsearch": {"searchResponse": {
+        "hitcount": 2, "results": [{"tid": "h1700001", "html": cards[0]}, {"tid": "r14000002", "html": cards[1]}]}}}}
+    return ("<html><head><script>//<![CDATA[\n    var Stash = " + json.dumps(stash) + ";\n//]]></script></head>"
+            "<body><div id='result_list_box'></div></body></html>")
+
+
+def test_a_watched_jobindex_page_is_read_from_its_data_without_the_model(fake, monkeypatch):
+    monkeypatch.setattr(robots, "allowed", lambda url: True)
+    url = "https://www.jobindex.dk/jobsoegning/it/horsens"
+    assert collect.stash_cards("<html>no data</html>") is None
+    items = sources._page_items(_watched_page(), url)
+    assert [it["url"] for it in items] == ["https://www.jobindex.dk/vis-job/h1700001", "https://www.jobindex.dk/vis-job/r14000002"]
+    assert items[0]["title"] == "Embedded Software Engineer" and items[0]["location"] == "Horsens"
+    assert items[0]["text"].startswith("Du skriver firmware")
+    assert not [s for _, _, s in fake.calls if s is sources.PAGE_SCHEMA], "no model call for a page the app can read"
+
+
+def test_collect_now_opens_every_saved_search_in_turn_even_ones_done_this_week(fake):
+    c = TestClient(app)
+    site = {"origin": "https://www.jobindex.dk"}
+    first = "https://www.jobindex.dk/jobsoegning/it?address=8700+Horsens&radius=50"
+    second = "https://www.it-jobbank.dk/jobsoegning?address=8700+Horsens&radius=50"
+    third = "https://www.jobindex.dk/jobsoegning/ingenioer?address=8700+Horsens&radius=50"
+    assert "Collect bookmark jobs" not in c.get("/jobs").text, "no button before a search is saved"
+    r = c.get("/collect/run", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/settings?err=Save+a+search+first")
+    for name, url in (("Jobindex IT", first), ("IT-Jobbank", second), ("Jobindex engineering", third)):
+        collect.add_search(name, url)
+        collect.mark_collected(url)  # all done this week: the weekly reminder has nothing left
+    assert collect.next_search() is None
+    jobs_page = c.get("/jobs").text
+    assert 'href="/collect/run"' in jobs_page and "Collect bookmark jobs" in jobs_page and "last collected" in jobs_page
+
+    r = c.get("/collect/run", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == first
+    page = c.post("/collect/take", data={"url": first, "html": JOBINDEX_PAGE, "token": collect.token()}, headers=site).text
+    assert "Next: IT-Jobbank →" in page and "2 of your saved searches left in this round" in page
+    assert collect.receive(JOBINDEX_PAGE, second + "&page=2")["next"]["name"] == "Jobindex engineering", "any page of a search counts"
+    last = collect.receive(JOBINDEX_PAGE, third)
+    assert last["next"] is None and last["round"] and not collect._run
+    # the round is over: the weekly order applies again
+    assert "round" not in collect.receive(JOBINDEX_PAGE, first)

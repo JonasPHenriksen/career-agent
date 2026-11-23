@@ -95,12 +95,63 @@ def test_the_same_job_twice_behind_links_the_app_may_not_open(fake):
     assert _job("https://track.example/c")["duplicate_of"] == one["id"]
 
 
-def test_a_dismissed_copy_does_not_hide_a_new_one(fake):
+def test_a_job_you_said_is_not_for_you_hides_new_copies(fake):
     a, b = _source("jobindex"), _source("jobbank")
     sources._screen_and_store([_item("https://jobindex.example/1")], a)
-    jobs.set_status(_job("https://jobindex.example/1")["id"], "dismissed")
+    first = _job("https://jobindex.example/1")
+    jobs.set_status(first["id"], "dismissed")
     sources._screen_and_store([_item("https://jobbank.example/2")], b)
-    assert _job("https://jobbank.example/2")["duplicate_of"] is None
+    copy = _job("https://jobbank.example/2")
+    assert copy["duplicate_of"] == first["id"] and copy["status"] == "filtered" and "is not for you" in copy["notes"]
+    # ... for three months, not just the three weeks a repeat counts for
+    db.ex("UPDATE jobs SET created_at = ? WHERE id = ?", (db.days_ago(60), first["id"]))
+    sources._screen_and_store([_item("https://jobbank.example/3")], b)
+    assert _job("https://jobbank.example/3")["duplicate_of"] == first["id"]
+    db.ex("UPDATE jobs SET created_at = ? WHERE id = ?", (db.days_ago(100), first["id"]))
+    sources._screen_and_store([_item("https://jobbank.example/4")], b)
+    assert _job("https://jobbank.example/4")["duplicate_of"] is None
+
+
+def test_a_dismissed_locked_copy_hides_a_readable_one(fake):
+    mail, feed = _source("collected"), _source("feed")
+    sources._screen_and_store([_item("https://track.example/c?x=1", readable=False)], mail)
+    jobs.set_status(_job("https://track.example/c?x=1")["id"], "dismissed")
+    sources._screen_and_store([_item("https://feed.example/7")], feed)
+    assert _job("https://feed.example/7")["duplicate_of"] == _job("https://track.example/c?x=1")["id"]
+
+
+def test_not_for_me_sets_aside_the_copies_already_in_your_inbox(fake):
+    a, b, c = _source("jobindex"), _source("jobbank"), _source("jobnet")
+    sources._screen_and_store([_item("https://jobindex.example/1", location="Aarhus")], a)
+    first = _job("https://jobindex.example/1")
+    # a copy from more than three weeks later is its own job until you say the first is not for you
+    db.insert("jobs", {"url": "https://jobbank.example/2", "title": "Product Owner", "company_name": "FinPay",
+                       "location": "Aarhus C", "source_id": b, "status": "new", "created_at": db.now()})
+    db.ex("UPDATE jobs SET created_at = ? WHERE id = ?", (db.days_ago(40), first["id"]))
+    shortlisted = db.insert("jobs", {"url": "https://jobnet.example/3", "title": "Product Owner", "company_name": "FinPay",
+                                     "location": "Aarhus", "source_id": c, "status": "shortlisted", "created_at": db.now()})
+    elsewhere = db.insert("jobs", {"url": "https://jobnet.example/4", "title": "Product Owner", "company_name": "FinPay",
+                                   "location": "Vejle", "source_id": c, "status": "new", "created_at": db.now()})
+    gone = jobs.dismiss(first["id"])
+    assert gone["copies"] == 1 and not gone["draft_removed"]
+    assert _job("https://jobbank.example/2")["duplicate_of"] == first["id"]
+    assert jobs.get(shortlisted)["duplicate_of"] is None, "a job you shortlisted is yours to decide"
+    assert jobs.get(elsewhere)["duplicate_of"] is None, "same title in another town is another job"
+
+
+def test_not_for_me_removes_an_unsent_draft_but_never_a_sent_application(fake):
+    one = db.insert("jobs", {"url": "https://x.example/1", "title": "PO", "company_name": "A", "status": "shortlisted",
+                             "created_at": db.now()})
+    two = db.insert("jobs", {"url": "https://x.example/2", "title": "PM", "company_name": "B", "status": "shortlisted",
+                             "created_at": db.now()})
+    draft = db.insert("applications", {"job_id": one, "status": "draft", "created_at": db.now(), "updated_at": db.now()})
+    from career_agent import tasks
+    tasks.enqueue("draft_application", {"application_id": draft}, ref=f"app:{draft}")
+    sent = db.insert("applications", {"job_id": two, "status": "applied", "created_at": db.now(), "updated_at": db.now()})
+    assert jobs.dismiss(one)["draft_removed"] and not db.q1("SELECT 1 FROM applications WHERE id = ?", (draft,))
+    assert not db.q1("SELECT 1 FROM tasks WHERE ref = ? AND status = 'queued'", (f"app:{draft}",))
+    assert not jobs.dismiss(two)["draft_removed"] and db.q1("SELECT 1 FROM applications WHERE id = ?", (sent,))
+    assert jobs.get(one)["status"] == jobs.get(two)["status"] == "dismissed"
 
 
 def test_a_locked_copy_never_stands_in_for_one_the_app_can_read(fake):
@@ -182,3 +233,18 @@ def test_cleaning_up_repeats_already_in_the_list(fake):
     assert db.q1("SELECT duplicate_of FROM jobs WHERE id = ?", (same_site,))["duplicate_of"] is None, \
         "a second ad with the same title on the same site, with another text, is another job"
     assert jobs.mark_existing_repeats() == 0
+
+
+def test_a_job_is_never_set_aside_as_a_repeat_of_itself(fake):
+    from career_agent import settings
+    a = _source("jobindex")
+    sources._screen_and_store([_item("https://jobindex.example/1")], a)
+    job = _job("https://jobindex.example/1")
+    jobs.mark_repeat(job["id"], job)
+    assert _job("https://jobindex.example/1")["duplicate_of"] is None
+    # one already stored that way is put right once, after the update
+    db.ex("UPDATE jobs SET duplicate_of = id, status = 'filtered' WHERE id = ?", (job["id"],))
+    settings.update("state", {"jobs_tidied": 1})
+    assert jobs.tidy_after_update()["self_repeats"] == 1
+    fixed = _job("https://jobindex.example/1")
+    assert fixed["duplicate_of"] is None and "repeat of itself" in fixed["notes"]

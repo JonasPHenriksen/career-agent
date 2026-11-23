@@ -22,7 +22,7 @@
     {% endif %}
     {% if job.url %}<a class="btn" href="{{ job.url }}" target="_blank" rel="noopener noreferrer">Open ad ↗</a>{% endif %}
     {% if job.status != 'shortlisted' %}<form method="post" action="/jobs/{{ job.id }}/status" class="inline"><input type="hidden" name="status" value="shortlisted"><button class="btn">☆ Shortlist</button></form>{% endif %}
-    {% if job.status != 'dismissed' %}<form method="post" action="/jobs/{{ job.id }}/status" class="inline"><input type="hidden" name="status" value="dismissed"><button class="btn ghost">Not for me</button></form>
+    {% if job.status != 'dismissed' %}<form method="post" action="/jobs/{{ job.id }}/status" class="inline"{% if app and app.status in ('drafting', 'draft', 'ready') %} data-confirm="Not for me: remove your draft for this job? Copies of the ad are set aside too. You can undo it."{% endif %}><input type="hidden" name="status" value="dismissed"><button class="btn ghost">Not for me</button></form>
     {% else %}<form method="post" action="/jobs/{{ job.id }}/status" class="inline"><input type="hidden" name="status" value="new"><button class="btn ghost">Restore</button></form>{% endif %}
   </div>
 </header>

@@ -246,12 +246,12 @@ def test_the_same_ad_under_a_sister_company_is_filtered_and_not_scored(fake):
     assert job["status"] == "filtered"
     assert job["duplicate_of"] == first and "same title and almost the same ad text" in job["notes"]
     assert db.scalar("SELECT COUNT(*) FROM tasks WHERE kind = 'score_job'") == 1, "only the first ad is scored"
-    # a dismissed original no longer hides new copies
+    # a job you said is not for you keeps hiding the same ad when it comes back
     third = _source_job("TITLE=Full stack developer. " + LONG_AD, 3)
     jobs.set_status(first, "dismissed")
-    jobs.set_status(second, "dismissed")
     jobs.parse(third, use_text=True)
-    assert jobs.get(third)["status"] == "new"
+    job = jobs.get(third)
+    assert job["status"] == "filtered" and job["duplicate_of"] == first and "is not for you" in job["notes"]
 
 
 def test_a_different_ad_with_the_same_title_is_kept(fake):

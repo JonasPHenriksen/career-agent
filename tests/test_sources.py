@@ -153,3 +153,26 @@ def test_a_source_its_site_forbids_is_switched_off_once(monkeypatch):
     assert row["enabled"] == 0 and row["last_status"] == "error" and "Switched off" in row["last_error"]
     assert sid not in [s["id"] for s in sources.due()], "and isn't checked again"
     db.ex("DELETE FROM sources WHERE id = ?", (sid,))
+
+
+def test_a_remote_only_search_tells_the_screener_the_town_is_where_the_company_sits(fake):
+    from career_agent import settings
+    db.insert("facts", {"category": "skill", "title": "Python", "created_at": db.now()})
+    settings.update("profile", {"city": "Horsens", "max_km": 50})
+    remote = db.insert("sources", {"name": "Remote", "kind": "rss", "url": "https://jobbank.dk/job/rss/?fjernarbejde=helt&erf=31",
+                                   "created_at": db.now()})
+    local = db.insert("sources", {"name": "Local", "kind": "rss", "url": "https://jobbank.dk/job/rss/?amt=8&erf=31",
+                                  "created_at": db.now()})
+    assert sources.remote_only(remote) and not sources.remote_only(local) and not sources.remote_only(None)
+    it = lambda url, title: {"url": url, "title": title, "company": "Performativ", "location": "København", "text": ""}
+    sources._screen_and_store([it("https://x.example/1", "Cloud Engineer")], remote)
+    sources._screen_and_store([it("https://x.example/2", "Data Engineer")], local)
+    asked = [user for _, user, schema in fake.calls if schema is sources.TRIAGE_SCHEMA]
+    assert "0. Cloud Engineer — Performativ — fully remote (the company sits in København)" in asked[0]
+    assert "km from home" not in asked[0]
+    assert "0. Data Engineer — Performativ — København (" in asked[1] and "km from home" in asked[1]
+
+
+def test_the_screener_still_drops_jobs_far_from_your_level():
+    # Checked 2026-11-23: senior ads near Horsens ask for a median of 5 years; about 2% invite early-career people.
+    assert "far from their level" in sources.TRIAGE_SYSTEM

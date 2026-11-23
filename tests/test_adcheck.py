@@ -118,6 +118,15 @@ def test_auto_drafting_skips_a_gone_ad_and_takes_the_next(fake, monkeypatch):
     assert db.q1("SELECT gone_at FROM jobs WHERE id = ?", (gone,))["gone_at"]
 
 
+def test_a_daily_limit_of_0_writes_no_drafts(fake, monkeypatch):
+    settings.update("automation", {"auto_draft": True, "auto_draft_daily_cap": 0, "auto_draft_threshold": 70})
+    _job("https://b.example/job/2", fit_score=95)
+    monkeypatch.setattr(adcheck, "page_state", lambda url, title: ("open", "y"))
+    assert jobs.draft_best() == [] and not db.q1("SELECT 1 FROM applications")
+    settings.update("automation", {"auto_draft_daily_cap": 1, "auto_draft_threshold": 0})
+    assert len(jobs.draft_best()) == 1, "a threshold of 0 is 0, not the default 80"
+
+
 def test_the_regular_check_looks_at_what_you_might_spend_time_on(fake):
     settings.update("profile", {"city": "Horsens"})
     drafted = _job("https://a.example/1")

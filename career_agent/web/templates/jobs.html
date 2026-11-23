@@ -21,9 +21,19 @@
       <p class="hint" style="margin-top:.4rem">Keep the link above too if you have it, so I can open it for you later.</p>
     </details>
   </form>
+  {% if searches %}
+  <div class="row" style="margin-top:.8rem;align-items:center">
+    <a class="btn primary" href="/collect/run" target="_blank" rel="noopener">Collect bookmark jobs ↗</a>
+    <span class="small text-2">Your {{ searches|length }} saved search{{ 'es' if searches|length != 1 }} ({% for s in searches %}{{ s.name }}{{ ', ' if not loop.last }}{% endfor %}){% if searches_at %}, last collected {{ searches_at|ago }}{% endif %}.
+      Opens the first one; click <em>Collect jobs</em> in your Favourites bar there, and the page that opens takes you to the next.</span>
+  </div>
+  {% endif %}
   {% if sources %}
-  <p class="small muted" style="margin:.8rem 0 0">Watching {{ sources|length }} source{{ 's' if sources|length != 1 }}:
-    {% for s in sources %}<a href="/settings#sources">{{ s.name }}</a>{% if s.last_run_at %} ({{ s.last_run_at|ago }}){% endif %}{{ ', ' if not loop.last }}{% endfor %}.</p>
+  {% set newest = sources|map(attribute='last_run_at')|select|max %}
+  <details class="small muted" style="margin:.7rem 0 0">
+    <summary>Watching {{ sources|length }} source{{ 's' if sources|length != 1 }} by themselves{% if newest %}, last checked {{ newest|ago }}{% endif %}</summary>
+    <p style="margin:.4rem 0 0">{% for s in sources %}<a href="/settings#sources">{{ s.name }}</a>{% if s.last_run_at %} ({{ s.last_run_at|ago }}){% endif %}{{ ', ' if not loop.last }}{% endfor %}.</p>
+  </details>
   {% else %}
   <p class="small muted" style="margin:.8rem 0 0">Tip: <a href="/settings#sources">add a job-search feed</a> (e.g. a Jobindex search) and new jobs arrive here by themselves.</p>
   {% endif %}
@@ -74,7 +84,7 @@
       <form method="post" action="/jobs/{{ j.id }}/status" class="inline"><input type="hidden" name="status" value="shortlisted"><button class="btn small ghost" title="Shortlist">☆</button></form>
       {% endif %}
       {% if j.status != 'dismissed' %}
-      <form method="post" action="/jobs/{{ j.id }}/status" class="inline"><input type="hidden" name="status" value="dismissed"><button class="btn small ghost" title="Not for me">✕</button></form>
+      <form method="post" action="/jobs/{{ j.id }}/status" class="inline"{% if j.app_status in ('drafting', 'draft', 'ready') %} data-confirm="Not for me: remove your draft for this job? Copies of the ad are set aside too. You can undo it."{% endif %}><input type="hidden" name="status" value="dismissed"><button class="btn small ghost" title="Not for me{{ ': removes your draft' if j.app_status in ('drafting', 'draft', 'ready') }}">✕</button></form>
       {% else %}
       <form method="post" action="/jobs/{{ j.id }}/status" class="inline"><input type="hidden" name="status" value="new"><button class="btn small ghost" title="Restore">↺</button></form>
       {% endif %}

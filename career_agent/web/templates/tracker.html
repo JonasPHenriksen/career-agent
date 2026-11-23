@@ -18,6 +18,7 @@
   <section class="col">
     <h2>{{ label }} <span>{{ items|length }}</span></h2>
     {% for a in items %}
+    <div class="bcard-w">
     <a class="bcard" href="/applications/{{ a.id }}{{ '?tab=timeline' if a.applied_at else '' }}">
       <div class="t">{{ a.job_title or 'Untitled' }}</div>
       <div class="c">{{ a.company_name or '' }}</div>
@@ -26,6 +27,11 @@
         <span>{% if a.applied_at %}{{ a.applied_at|days_since }}d ago{% elif a.deadline %}{{ deadline(a.deadline) }}{% endif %}</span>
       </div>
     </a>
+    {% if a.status in ('drafting', 'draft', 'ready') %}
+    <form method="post" action="/jobs/{{ a.job_id }}/status" class="bx" data-confirm="Not for me: remove your draft for this job? Copies of the ad are set aside too. You can undo it.">
+      <input type="hidden" name="status" value="dismissed"><input type="hidden" name="next" value="/tracker"><button class="btn small ghost" title="Not for me: removes your draft" aria-label="Not for me: {{ a.job_title or 'this job' }}">✕</button></form>
+    {% endif %}
+    </div>
     {% else %}<p class="small muted">Empty</p>{% endfor %}
   </section>
   {% endfor %}

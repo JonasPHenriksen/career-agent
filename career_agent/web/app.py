@@ -201,7 +201,7 @@ def today(request: Request):
         {"done": n_facts > 0 and bool(settings.get("style_guide")), "title": "Check your career database and style", "text": "Built automatically from your documents.", "href": "/profile?tab=facts"},
         {"done": n_sources > 0 or n_jobs > 0, "title": "Add jobs", "text": "Paste a job link, or add a job-search feed to watch.", "href": "/jobs"},
     ]
-    threshold = int(settings.get("automation").get("auto_draft_threshold") or 80)
+    threshold = jobs.setting_int(settings.get("automation"), "auto_draft_threshold", 80)
     drafts = rank.urgent_first(db.q(
         "SELECT a.*, j.title AS job_title, j.company_name, j.fit_score, j.deadline, j.details, j.posted_at, "
         "j.created_at AS job_created_at, j.gone_at, j.open_said_at, j.checked_at, j.check_note "
@@ -342,7 +342,8 @@ def jobs_list(request: Request, view: str = "inbox", sort: str = "best", q: str 
     busy = db.scalar("SELECT COUNT(*) FROM tasks WHERE kind IN ('parse_job', 'score_job', 'poll_source', 'collect_jobs') "
                      "AND status IN ('queued', 'running')") or 0
     return render(request, "jobs.html", rows=rows, view=view, sort=sort, q=q, counts=counts, busy=busy,
-                  sources=db.q("SELECT * FROM sources ORDER BY id"), sorts=JOB_SORTS)
+                  sources=db.q("SELECT * FROM sources WHERE kind != 'collect' AND enabled = 1 ORDER BY id"), sorts=JOB_SORTS,
+                  searches=collect.searches(), searches_at=collect.last_collected())
 
 
 @app.get("/jobs/progress")
@@ -413,8 +414,18 @@ async def job_remove_gone(request: Request, job_id: int):
 @app.post("/jobs/{job_id}/status")
 async def job_status(request: Request, job_id: int):
     f = await form(request)
-    jobs.set_status(job_id, f.get("status", ""))
-    return go(back(request, f"/jobs/{job_id}"))
+    nxt = local_path(f.get("next"), back(request, f"/jobs/{job_id}"))
+    if f.get("status") != "dismissed":
+        jobs.set_status(job_id, f.get("status", ""))
+        return go(nxt)
+    gone = jobs.dismiss(job_id)
+    if not gone:
+        return go(nxt)
+    what = [w for w, n in (("your draft was removed", gone["draft_removed"]),
+                           (f"{gone['copies']} cop{'y' if gone['copies'] == 1 else 'ies'} of the ad set aside",
+                            gone["copies"])) if n]
+    return go(nxt, msg=f"{gone['title'] or 'The job'} is not for you" + (": " + " and ".join(what) if what else "")
+                       + ". New copies of the ad will be set aside too. Undo it here, or later under History.")
 
 
 @app.post("/jobs/{job_id}/rescore")
@@ -1597,6 +1608,16 @@ async def collect_confirm(request: Request):
     except ValueError as e:
         result = {"ok": False, "message": str(e)}
     return render(request, "collect.html", result=result)
+
+
+@app.get("/collect/run")
+def collect_run(request: Request):
+    """Collect now: opens the first of your saved searches; after each Send, the page that opens offers the next."""
+    first = collect.start_run()
+    if not first:
+        return go("/settings#collect-searches", err="Save a search first: open a job search, click Collect jobs, "
+                                                    "then press Save this search.")
+    return RedirectResponse(first["url"], status_code=303)
 
 
 @app.post("/collect/searches/add")

@@ -64,3 +64,21 @@ def test_security_guards(fake):
     assert c.get("/", headers={"host": "evil.example.com"}).status_code == 403
     r = c.post("/profile/about", data={"name": "x"}, headers={"origin": "https://evil.example.com"})
     assert r.status_code == 403
+
+
+def test_not_for_me_on_a_draft_removes_it_and_offers_undo(fake):
+    job = db.insert("jobs", {"url": "https://x.example/1", "title": "Product Owner", "company_name": "FinPay",
+                             "status": "shortlisted", "parse_status": "parsed", "created_at": db.now()})
+    app_id = db.insert("applications", {"job_id": job, "status": "draft", "created_at": db.now(), "updated_at": db.now()})
+    c = TestClient(app)
+    for url in ("/tracker", f"/applications/{app_id}", "/jobs?view=applying", f"/jobs/{job}"):
+        assert "removes your draft" in c.get(url).text or "remove your draft" in c.get(url).text, url
+    r = c.post(f"/jobs/{job}/status", data={"status": "dismissed", "next": "/tracker"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/tracker?") and "undo=" in r.headers["location"]
+    assert "your draft was removed" in r.headers["location"].replace("+", " ").replace("%20", " ")
+    assert not db.q1("SELECT 1 FROM applications WHERE id = ?", (app_id,)) and jobs.get(job)["status"] == "dismissed"
+    assert c.get("/tracker").status_code == 200
+    op = r.headers["location"].split("undo=")[1].split("&")[0].split("#")[0]
+    c.post(f"/history/{op}/undo")
+    assert db.q1("SELECT status FROM applications WHERE id = ?", (app_id,))["status"] == "draft"
+    assert jobs.get(job)["status"] == "shortlisted"

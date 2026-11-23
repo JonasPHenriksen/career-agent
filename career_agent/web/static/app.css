@@ -302,6 +302,9 @@ mark.claim-unsupported { border-color: var(--bad); background: var(--bad-soft); 
 .col h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-2); display: flex; justify-content: space-between; }
 .bcard { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: .65rem .7rem; margin-bottom: .55rem; color: var(--text); box-shadow: var(--shadow); }
 .bcard:hover { text-decoration: none; border-color: var(--accent); color: var(--text); }
+.bcard-w { position: relative; }
+.bcard-w .bx { position: absolute; top: .3rem; right: .3rem; margin: 0; }
+.bcard-w:has(.bx) .bcard .t { padding-right: 1.8rem; }
 .bcard .t { font-weight: 600; font-size: .92rem; line-height: 1.3; }
 .bcard .c { color: var(--text-2); font-size: .85rem; }
 .bcard .m { color: var(--muted); font-size: .78rem; margin-top: .35rem; display: flex; justify-content: space-between; gap: .4rem; align-items: center; }

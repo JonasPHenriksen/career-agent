@@ -25,7 +25,9 @@
   {% endif %}
   {% if chain_next %}
   <p style="margin:.4rem 0 .8rem"><a class="btn primary" href="{{ result.next.url }}">Next: {{ result.next.name }} →</a>
-    <span class="small text-2">{{ result.left }} of your saved searches left this week. Click <em>Collect jobs</em> there too.</span></p>
+    <span class="small text-2">{{ result.left }} of your saved searches left {{ 'in this round' if result.round else 'this week' }}. Click <em>Collect jobs</em> there too.</span></p>
+  {% elif result.saved and result.round %}
+  <p class="small text-2">That was the last of your saved searches. The new jobs are being screened now.</p>
   {% elif result.saved %}
   <p class="small text-2">That was the last of your saved searches this week. The reminder on Today waits until next week.</p>
   {% endif %}

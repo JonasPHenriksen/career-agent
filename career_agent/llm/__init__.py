@@ -60,7 +60,7 @@ def effort_kind(provider: str | None) -> str:
 # Settings lets you pick another model and effort for any step; a redo can pick one for a single run.
 STEPS = [
     ("screen", "Screen new job listings", "analysis", ("triage", "page_jobs", "company_size")),
-    ("read_ad", "Read a job ad", "analysis", ("parse_job",)),
+    ("read_ad", "Read a job ad", "analysis", ("parse_job", "same_job")),
     ("score", "Score how well a job fits", "analysis", ("fit_score",)),
     ("read_document", "Read your documents into facts", "analysis", ("analyze_document", "consolidate_facts", "place_answers")),
     ("reply", "Read an employer's reply", "analysis", ("classify_response",)),

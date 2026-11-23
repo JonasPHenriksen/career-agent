@@ -17,6 +17,10 @@
         {% for key, label in statuses %}{% if key != 'drafting' or a.status == 'drafting' %}<option value="{{ key }}" {{ 'selected' if a.status == key }}>{{ label }}</option>{% endif %}{% endfor %}
       </select>
     </form>
+    {% if a.status in ('drafting', 'draft', 'ready') %}
+    <form method="post" action="/jobs/{{ a.job_id }}/status" class="inline" data-confirm="Not for me: remove your draft for this job? Copies of the ad are set aside too. You can undo it.">
+      <input type="hidden" name="status" value="dismissed"><input type="hidden" name="next" value="/tracker"><button class="btn ghost">Not for me</button></form>
+    {% endif %}
   </div>
 </header>
 
