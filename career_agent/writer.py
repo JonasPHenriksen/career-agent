@@ -642,6 +642,25 @@ def revise(app_id: int, instructions: str, part: str = "letter") -> dict:
     return {"revised": part}
 
 
+def reset_cv(app_id: int) -> dict | None:
+    """This job's CV goes back to your base CV exactly as it is, with no model involved. The CV it replaces stays
+    under Versions. Your photo stays left out if the ad asked for that. None if you have no base CV."""
+    app = db.q1("SELECT language, cv_data, writer_notes FROM applications WHERE id = ?", (app_id,))
+    base = cvdata.base_for(app["language"])
+    if not base:
+        return None
+    data = cvdata.clean(base["data"])
+    data["language"] = base.get("language") or data.get("language") or app["language"]
+    if (db.jload(app["cv_data"], {}) or {}).get("photo") is False:
+        data["photo"] = False
+    _save_version(app_id, "Before reset to base CV")
+    notes = [n for n in db.jload(app["writer_notes"], []) or [] if not str(n).startswith("CV:")]
+    db.update("applications", app_id, {"cv": cvdata.to_markdown(data), "cv_data": db.jdump(data),
+                                       "writer_notes": db.jdump(["CV: your base CV, unchanged (you reset it)."] + notes),
+                                       "updated_at": db.now()})
+    return {"base": base, "same_language": (base.get("language") or "")[:2] == (app["language"] or "")[:2]}
+
+
 CHECK_SYSTEM = """You verify a job application (cover letter and CV) item by item against the candidate's career database. Each sentence of the letter and each line of the CV is a numbered item. Give a verdict for EVERY item.
 
 kind:

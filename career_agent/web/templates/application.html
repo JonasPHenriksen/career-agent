@@ -246,7 +246,7 @@
     <form method="post" action="/applications/{{ a.id }}/revise">
       <input type="hidden" name="part" value="cv">
       <label for="cvinstr">Ask for changes</label>
-      <div class="chips">{% for c in ['Fit it on one page', 'Put the most relevant points first', 'Shorter bullets', 'Go back to my base CV'] %}<button type="button" class="chip" data-fill="#cvinstr" data-text="{{ c }}.">{{ c }}</button>{% endfor %}</div>
+      <div class="chips">{% for c in ['Fit it on one page', 'Put the most relevant points first', 'Shorter bullets'] %}<button type="button" class="chip" data-fill="#cvinstr" data-text="{{ c }}.">{{ c }}</button>{% endfor %}</div>
       <textarea id="cvinstr" name="instructions" rows="3"></textarea>
       <div class="row end" style="margin-top:.5rem">{{ model_picker() }}<button class="btn" data-busy="Revising…">Revise CV</button></div>
     </form>
@@ -254,6 +254,7 @@
       <a class="btn primary" href="/applications/{{ a.id }}/export/cv.pdf">Download PDF</a>
       <a class="btn ghost" href="/applications/{{ a.id }}/export/cv.pdf?view=1" target="_blank">Open PDF</a>
       <a class="btn ghost" href="/applications/{{ a.id }}/export/cv.json" title="The open JSON Resume format, which tools like rxresu.me can import">Download JSON</a>
+      <form method="post" action="/applications/{{ a.id }}/cv-reset" class="inline" data-confirm="Replace this CV with your base CV, word for word? The current one is kept under Versions."><button class="btn ghost" title="Your own CV exactly as it is under Profile → Your CV, with no AI changes">Reset to base CV</button></form>
     </div>
     <details style="margin-top:1rem"><summary>Edit the CV's data yourself</summary>
       <form method="post" action="/applications/{{ a.id }}/save">
@@ -268,6 +269,7 @@
         <textarea id="cv" name="cv" class="editor code">{{ a.cv or '' }}</textarea></div>
       <div class="row"><button class="btn primary">Save edits</button><span class="spacer"></span><a class="btn ghost" href="/applications/{{ a.id }}/export/cv.pdf?view=1" target="_blank">Preview PDF</a></div>
     </form>
+    <form method="post" action="/applications/{{ a.id }}/cv-reset" style="margin-top:.6rem" data-confirm="Replace this CV with your base CV, word for word? The current one is kept under Versions."><button class="btn ghost">Reset to base CV</button></form>
     <form method="post" action="/applications/{{ a.id }}/revise" style="margin-top:1rem">
       <input type="hidden" name="part" value="cv">
       <label for="cvinstr">Ask for changes</label>

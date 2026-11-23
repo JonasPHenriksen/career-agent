@@ -609,6 +609,20 @@ async def application_revise(request: Request, app_id: int):
     return go(f"/applications/{app_id}?tab={tab}", msg=with_model_msg(f, "Revising") + "…")
 
 
+@app.post("/applications/{app_id}/cv-reset")
+def application_cv_reset(app_id: int):
+    """The CV back to your base CV, word for word: a fallback when the tailoring went wrong."""
+    need(db.q1("SELECT id FROM applications WHERE id = ?", (app_id,)))
+    result = writer.reset_cv(app_id)
+    if not result:
+        return go(f"/applications/{app_id}?tab=cv", err="You have no base CV yet. Add one under Profile → Your CV.")
+    tasks.enqueue("check_application", {"application_id": app_id}, ref=f"app:{app_id}")
+    msg = f"The CV is your base CV again ({result['base']['title']}). The previous one is under Versions. Fact-checking now…"
+    if not result["same_language"]:
+        msg += " Your base CV isn't in this application's language, so the CV is now in the base's language."
+    return go(f"/applications/{app_id}?tab=cv", msg=msg)
+
+
 @app.post("/applications/{app_id}/voice-revise")
 async def application_voice_revise(request: Request, app_id: int):
     """The sentences you ticked on the Voice tab, rewritten the plainer way the voice read suggested."""

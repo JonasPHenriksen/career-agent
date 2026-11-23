@@ -133,6 +133,30 @@ def test_cv_pages_in_the_app(fake):
     assert r.status_code == 303 and db.q1("SELECT 1 FROM tasks WHERE kind = 'build_cv_base' AND status = 'queued'")
 
 
+def test_reset_puts_your_base_cv_back_word_for_word(fake):
+    a = _draft()
+    base = cvdata.base()
+    assert db.jload(a["cv_data"]) != cvdata.clean(base["data"]), "the draft was tailored"
+    data = db.jload(a["cv_data"])
+    data["photo"] = False  # the ad asked for no photo
+    db.update("applications", a["id"], {"cv_data": db.jdump(data)})
+    c = TestClient(app)
+    assert "/cv-reset" in c.get(f"/applications/{a['id']}?tab=cv").text
+    calls = len(fake.calls)
+    r = c.post(f"/applications/{a['id']}/cv-reset", follow_redirects=False)
+    assert r.status_code == 303 and "base+CV+again" in r.headers["location"] and len(fake.calls) == calls, "no model"
+    after = tracker.app_with_job(a["id"])
+    reset = db.jload(after["cv_data"])
+    assert reset.pop("photo") is False, "a photo the ad asked to leave out stays out"
+    assert {k: v for k, v in reset.items() if k != "language"} == {k: v for k, v in cvdata.clean(base["data"]).items() if k != "language"}
+    assert after["cv"] == cvdata.to_markdown(db.jload(after["cv_data"]))
+    notes = db.jload(after["writer_notes"])
+    assert notes[0].startswith("CV: your base CV, unchanged") and not any(n.startswith("CV: Put") for n in notes)
+    assert db.q1("SELECT 1 FROM app_versions WHERE application_id = ? AND label = 'Before reset to base CV'", (a["id"],))
+    assert db.q1("SELECT 1 FROM tasks WHERE kind = 'check_application' AND status = 'queued'")
+
+
+
 def test_dates_and_employers_from_your_cv_are_put_back():
     base = cvdata.clean({"work": [{"name": "Havbro ApS", "position": "Intern", "start": "Jul 2024", "end": "Dec 2024"},
                                   {"name": "Nordvik P/S", "position": "Consultant", "start": "May 2026", "end": "Present"}],
