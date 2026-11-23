@@ -62,3 +62,21 @@ def test_today_shows_the_list_first_and_escapes_text(fake):
     assert not db.scalar("SELECT COUNT(*) FROM todos WHERE id = ?", (tid,))
     empty = c.post("/todos/add", data={"title": " "}, follow_redirects=False).headers["location"]
     assert "err=" in empty and "title" in empty and not db.scalar("SELECT COUNT(*) FROM todos WHERE title = ''")
+
+
+def test_the_ai_repeat_reminder_counts_what_the_check_set_aside(fake):
+    from fastapi.testclient import TestClient
+
+    from career_agent import jobs
+    from career_agent.web.app import app
+
+    tid = todos.add("Check the AI repeat decisions", href="/jobs?view=same-ad", check_kind="same_job")
+    item = db.q1("SELECT * FROM todos WHERE id = ?", (tid,))
+    assert todos.progress(item) == "0 jobs set aside by the AI repeat check so far"
+    first = db.insert("jobs", {"url": "https://x.example/1", "title": "IT-supportkonsulent", "status": "new", "created_at": db.now()})
+    copy = db.insert("jobs", {"url": "https://x.example/2", "title": "IT-supportkonsulent til MSP", "status": "new", "created_at": db.now()})
+    jobs.mark_repeat(copy, {"id": first}, "a model read both ads and judged them the same opening (same team)")
+    assert todos.progress(item) == "1 job set aside by the AI repeat check so far"
+    page = TestClient(app).get("/jobs?view=same-ad").text
+    assert "IT-supportkonsulent til MSP" in page and "Set aside by the AI repeat check." in page
+    assert ">IT-supportkonsulent</a>" not in page

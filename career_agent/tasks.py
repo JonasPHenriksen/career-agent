@@ -100,7 +100,7 @@ def _handlers() -> dict:
         from . import collect
 
         result = tracker.maintenance()
-        collect.remind()  # the weekly to-do to collect your saved searches, dated when one turns a week old
+        collect.remind()  # the to-do to collect your saved searches, dated when one is REMIND_DAYS days old
         result["reminders"] = todos.notify_due()  # dated to-dos whose day has come: one notification each
         return result
 

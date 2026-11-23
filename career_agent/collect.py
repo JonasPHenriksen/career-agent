@@ -323,10 +323,10 @@ def store(payload: dict) -> dict:
     return {"listings": len(items), "new": len(fresh), "kept": kept}
 
 
-# --- Your saved searches and the weekly reminder to collect them ---
+# --- Your saved searches and the reminder to collect them ---
 # The app may not check a filtered search on its own, so new jobs there only arrive when you collect it. The searches
-# you run each week are saved here with when you last collected them, and a to-do on Today reminds you when one
-# hasn't been collected for a week.
+# you run are saved here with when you last collected them, and a to-do on Today reminds you when one hasn't been
+# collected for REMIND_DAYS days. "Collect bookmark jobs" on the Jobs page starts a round whenever you like.
 
 SEARCHES = "collect_searches"
 REMIND_DAYS = 7
@@ -385,16 +385,16 @@ def _collected_on(row: dict) -> date | None:
 
 
 def due_searches(today: date | None = None) -> list[dict]:
-    """Saved searches not collected in the last week, oldest first (never collected first of all)."""
+    """Saved searches not collected in the last REMIND_DAYS days, oldest first (never collected first of all)."""
     today = today or date.today()
     out = [s for s in searches() if not _collected_on(s) or _collected_on(s) <= today - timedelta(days=REMIND_DAYS)]
     return sorted(out, key=lambda s: s.get("last_at") or "")
 
 
 def remind(today: date | None = None) -> None:
-    """Keep one to-do on Today for collecting your saved searches, dated the day the first of them turns a week
-    old: it waits under Coming up until then and is shown (with one notification) on the day. Collecting them all
-    moves it a week on; ticking it off without collecting waits a week before reminding again."""
+    """Keep one to-do on Today for collecting your saved searches, dated the day the first of them is REMIND_DAYS
+    days old: it waits under Coming up until then and is shown (with one notification) on the day. Collecting them
+    all moves it REMIND_DAYS days on; ticking it off without collecting waits as long before reminding again."""
     today = today or date.today()
     rows = searches()
     open_ = db.q1("SELECT * FROM todos WHERE check_kind = 'collect' AND done_at IS NULL ORDER BY id")
@@ -418,18 +418,18 @@ def remind(today: date | None = None) -> None:
 
 
 def next_search(today: date | None = None) -> dict | None:
-    """The next saved search to collect this week, in the order of your list."""
+    """The next saved search that is due, in the order of your list."""
     due = {search_key(s["url"]) for s in due_searches(today)}
     return next((s for s in searches() if search_key(s["url"]) in due), None)
 
 
-RUN_HOURS = 3  # a round you start with Collect now is forgotten after this, and the weekly order applies again
+RUN_HOURS = 3  # a round you start with Collect now is forgotten after this, and the reminder's order applies again
 _run: dict = {}  # that round, in memory only: the searches still to collect and when it started
 
 
 def start_run() -> dict | None:
     """You pressed Collect now: all your saved searches, in the order of your list, whether or not they were
-    collected this week. The first one to open, or None when there are none."""
+    collected lately. The first one to open, or None when there are none."""
     rows = searches()
     _run.clear()
     if not rows:
@@ -440,7 +440,7 @@ def start_run() -> dict | None:
 
 def _chain(page_url: str = "") -> dict:
     """After collecting a saved search: the next one to collect, so a run is one click after another, and how many
-    are left. In a round you started with Collect now: the rest of that round; otherwise the ones due this week."""
+    are left. In a round you started with Collect now: the rest of that round; otherwise the ones that are due."""
     if _run and time.monotonic() - _run["at"] < RUN_HOURS * 3600:
         _run["keys"] = [k for k in _run["keys"] if k != search_key(page_url)]
         by_key = {search_key(s["url"]): s for s in searches()}

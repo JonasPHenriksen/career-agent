@@ -10,7 +10,7 @@
    the browser only lets a page open the app's tab straight after a click. */
 (function () {
   var APP = '__APP__', KEY = '__KEY__', MAX_PAGES = 50, MAX_MORE = 100, PAUSE = 600, d = document, box = null;
-  if (location.origin === APP) { alert('Drag this button to your Favourites bar. Then click it there while a job search results page is open.'); return; }
+  if (location.origin === APP) { alert('Drag this button to your bookmarks bar. Then click it there while a job search results page is open.'); return; }
   function post(html, pages) {
     var f = d.createElement('form');
     f.method = 'post'; f.action = APP + '/collect/take'; f.target = '_blank'; f.acceptCharset = 'UTF-8'; f.style.display = 'none';

@@ -28,7 +28,7 @@
         {% if first_due %}<p style="margin:.4rem 0 .2rem"><a class="btn small primary" href="{{ first_due.url }}" target="_blank" rel="noopener noreferrer">Start: {{ first_due.name }} →</a> <span class="small text-2">After each <em>Send</em>, the page that opens takes you to the next one.</span></p>
         {% elif t.searches %}<p style="margin:.4rem 0 .2rem"><a class="btn small" href="/collect/run" target="_blank" rel="noopener">Collect them all again ↗</a></p>{% endif %}
         {% if t.searches %}<ul class="small" style="margin:.3rem 0 0;padding-left:1.1rem">
-          {% for s in t.searches %}<li><a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{{ s.name }}</a> <span class="muted">· {% if s.last_at %}collected {{ s.last_at|ago }}{% else %}not collected yet{% endif %}</span>{% if not s.due %} <span class="pill good">done this week</span>{% endif %}</li>{% endfor %}
+          {% for s in t.searches %}<li><a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{{ s.name }}</a> <span class="muted">· {% if s.last_at %}collected {{ s.last_at|ago }}{% else %}not collected yet{% endif %}</span>{% if not s.due %} <span class="pill good">done</span>{% endif %}</li>{% endfor %}
         </ul>{% endif %}
         {% if t.show_from %}<div class="meta">Reminder from {{ t.show_from|nice_date }}</div>{% endif %}
       </div>
@@ -141,6 +141,7 @@
       {% endfor %}
     </ul>
     {% else %}<p class="empty">No unanswered matches right now. <a href="/settings#sources">Add a job feed</a> to have new jobs found and scored automatically.</p>{% endif %}
+    {% if needs_text %}<p class="small" style="margin:.6rem 0 0"><span class="pill warn">{{ needs_text }}</span> job{{ 's' if needs_text != 1 }} the app couldn't read: paste the ad text to have {{ 'them' if needs_text != 1 else 'it' }} scored. <a href="/jobs?view=needs-text">Show them →</a></p>{% endif %}
   </section>
 
   <section class="card">

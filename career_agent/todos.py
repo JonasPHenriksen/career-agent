@@ -11,7 +11,7 @@ from datetime import date
 
 from . import db, notify
 
-CHECKS = ("facts", "collect")
+CHECKS = ("facts", "collect", "same_job")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -49,6 +49,11 @@ def progress(item: dict) -> str:
         rows = collect.searches()
         fresh = len(rows) - len(collect.due_searches())
         return f"{fresh} of {len(rows)} saved searches collected in the last {collect.REMIND_DAYS} days"
+    if item.get("check_kind") == "same_job":
+        from . import jobs
+
+        n = db.scalar("SELECT COUNT(*) FROM jobs WHERE notes LIKE ?", (jobs.SAME_JOB_NOTE_LIKE,)) or 0
+        return f"{n} job{'s' if n != 1 else ''} set aside by the AI repeat check so far"
     return ""
 
 

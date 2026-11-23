@@ -301,7 +301,7 @@ def _reminder():
     return db.q1("SELECT * FROM todos WHERE check_kind = 'collect' AND done_at IS NULL")
 
 
-def test_the_weekly_reminder_waits_for_the_oldest_search_and_moves_on_when_all_are_collected(fake):
+def test_the_reminder_waits_for_the_oldest_search_and_moves_on_when_all_are_collected(fake):
     from datetime import date, timedelta
 
     from career_agent import settings, todos
@@ -312,6 +312,7 @@ def test_the_weekly_reminder_waits_for_the_oldest_search_and_moves_on_when_all_a
     todo = _reminder()
     assert todo["title"] == collect.REMIND_TITLE and todo["show_from"] == today.isoformat(), "never collected: due now"
     now = todos.lists()["now"]
+    assert collect.REMIND_DAYS == 7
     assert now[0]["progress"] == "0 of 2 saved searches collected in the last 7 days"
     assert [s["name"] for s in now[0]["searches"]] == ["Jobindex IT", "Jobnet IT"]
 
@@ -330,7 +331,7 @@ def test_the_weekly_reminder_waits_for_the_oldest_search_and_moves_on_when_all_a
     collect.remind()
     assert _reminder()["show_from"] == today.isoformat()
 
-    # Ticked off without collecting: the next one waits a week.
+    # Ticked off without collecting: the next one waits as long again.
     todos.set_done(todo["id"])
     collect.remind()
     assert _reminder()["show_from"] == (today + timedelta(days=7)).isoformat()
@@ -345,7 +346,7 @@ def test_the_pages_show_saved_searches_and_offer_to_save_a_new_one(fake):
     local, site = {"origin": "http://testserver"}, {"origin": "https://www.jobindex.dk"}
     url = "https://www.jobindex.dk/jobsoegning/it?address=8700+Horsens&radius=50"
     r = c.post("/collect/take", data={"url": url, "html": JOBINDEX_PAGE, "token": collect.token()}, headers=site)
-    assert "Save this search for the weekly reminder" in r.text and 'data-close=""' in r.text
+    assert "Save this search for the reminder" in r.text and 'data-close=""' in r.text
 
     r = c.post("/collect/searches/add", data={"name": "Jobindex IT, 50 km", "url": url}, headers=local)
     assert "Saved “Jobindex IT, 50 km”" in r.text and "Your saved searches" in r.text and "never" in r.text
@@ -353,7 +354,7 @@ def test_the_pages_show_saved_searches_and_offer_to_save_a_new_one(fake):
     r = c.post("/collect/take", data={"url": url, "html": JOBINDEX_PAGE, "token": collect.token()}, headers=site)
     assert "Save this search" not in r.text and 'data-close="1"' in r.text
 
-    today = c.get("/").text  # collected just now: the reminder waits a week
+    today = c.get("/").text  # collected just now: the reminder waits until it's due again
     assert collect.REMIND_TITLE in today.split("Coming up")[1]
     r = c.post("/collect/searches/remove", data={"url": url}, headers=local)
     assert "Search removed." in r.text and "Jobindex IT, 50 km" not in r.text
@@ -378,7 +379,7 @@ def test_collecting_a_saved_search_leads_on_to_the_next_one_still_to_collect(fak
 
     collect.mark_collected(second)
     page = c.post("/collect/take", data={"url": first, "html": JOBINDEX_PAGE, "token": collect.token()}, headers=site).text
-    assert "Next:" not in page and "the last of your saved searches this week" in page and 'data-close="1"' in page
+    assert "Next:" not in page and "That was the last of your saved searches." in page and 'data-close="1"' in page
     assert "Start:" not in c.get("/").text
 
 
@@ -403,7 +404,7 @@ def test_a_watched_jobindex_page_is_read_from_its_data_without_the_model(fake, m
     assert not [s for _, _, s in fake.calls if s is sources.PAGE_SCHEMA], "no model call for a page the app can read"
 
 
-def test_collect_now_opens_every_saved_search_in_turn_even_ones_done_this_week(fake):
+def test_collect_now_opens_every_saved_search_in_turn_even_ones_collected_lately(fake):
     c = TestClient(app)
     site = {"origin": "https://www.jobindex.dk"}
     first = "https://www.jobindex.dk/jobsoegning/it?address=8700+Horsens&radius=50"
@@ -414,17 +415,18 @@ def test_collect_now_opens_every_saved_search_in_turn_even_ones_done_this_week(f
     assert r.status_code == 303 and r.headers["location"].startswith("/settings?err=Save+a+search+first")
     for name, url in (("Jobindex IT", first), ("IT-Jobbank", second), ("Jobindex engineering", third)):
         collect.add_search(name, url)
-        collect.mark_collected(url)  # all done this week: the weekly reminder has nothing left
+        collect.mark_collected(url)  # all collected just now: the reminder has nothing left
     assert collect.next_search() is None
     jobs_page = c.get("/jobs").text
     assert 'href="/collect/run"' in jobs_page and "Collect bookmark jobs" in jobs_page and "last collected" in jobs_page
 
-    r = c.get("/collect/run", follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == first
+    r = c.get("/collect/run")
+    assert r.status_code == 200 and "Open 1 of 3: Jobindex IT →" in r.text and f'href="{first.replace("&", "&amp;")}"' in r.text
+    assert "Bookmarks Toolbar" in r.text and 'href="javascript:' in r.text, "the steps, and the bookmark to drag"
     page = c.post("/collect/take", data={"url": first, "html": JOBINDEX_PAGE, "token": collect.token()}, headers=site).text
     assert "Next: IT-Jobbank →" in page and "2 of your saved searches left in this round" in page
     assert collect.receive(JOBINDEX_PAGE, second + "&page=2")["next"]["name"] == "Jobindex engineering", "any page of a search counts"
     last = collect.receive(JOBINDEX_PAGE, third)
     assert last["next"] is None and last["round"] and not collect._run
-    # the round is over: the weekly order applies again
+    # the round is over: the reminder's order applies again
     assert "round" not in collect.receive(JOBINDEX_PAGE, first)

@@ -82,3 +82,28 @@ def test_not_for_me_on_a_draft_removes_it_and_offers_undo(fake):
     c.post(f"/history/{op}/undo")
     assert db.q1("SELECT status FROM applications WHERE id = ?", (app_id,))["status"] == "draft"
     assert jobs.get(job)["status"] == "shortlisted"
+
+
+def test_jobs_the_app_could_not_read_say_so_and_point_to_the_paste_box(fake):
+    def job(n, **kw):
+        return db.insert("jobs", {"url": f"https://x.example/{n}", "title": f"Job {n}", "company_name": "FinPay",
+                                  "status": "new", "created_at": db.now(), **kw})
+    locked = job(1, parse_status="skipped", link_locked=1, notes="Collected from Jobnet. The site behind the link doesn't let the app open it.")
+    broken = job(2, parse_status="error", parse_error="This page doesn't look like a single job ad. Open the specific ad, or paste its text.")
+    busy = job(3, parse_status="error", parse_error="The model is overloaded right now.")  # tried again by itself
+    job(4, parse_status="skipped", status="filtered", notes="Filtered out by quick screening.")  # set aside: not yours to fix
+    job(5, parse_status="error", parse_error="This page doesn't look like a single job ad.", fit_score=40)  # read before
+    assert [j["id"] for j in jobs.needing_text()] == [broken, locked]
+    c = TestClient(app)
+    inbox = c.get("/jobs").text
+    assert "2 jobs the app couldn't read." in inbox and 'href="/jobs?view=needs-text"' in inbox
+    assert inbox.count(">needs the ad text</a>") == 2 and f'href="/jobs/{locked}#paste"' in inbox
+    assert f'let the app open it. <a href="/jobs/{locked}#paste">Paste it' in inbox and "couldn't read, trying again" in inbox
+    only = c.get("/jobs?view=needs-text").text
+    assert "Job 1" in only and "Job 2" in only and "Job 3" not in only and "Job 4" not in only and "Job 5" not in only
+    assert "2 jobs the app couldn't read." not in only, "no notice on the list itself"
+    assert 'id="paste"' in c.get(f"/jobs/{locked}").text and 'id="paste"' in c.get(f"/jobs/{broken}").text
+    assert "job</span>" not in c.get("/").text and "jobs the app couldn't read: paste the ad text" in c.get("/").text
+    for j in (locked, broken):
+        db.update("jobs", j, {"parse_status": "parsed"})
+    assert "Needs the ad text" not in c.get("/jobs").text, "the tab goes away when there's nothing to paste"

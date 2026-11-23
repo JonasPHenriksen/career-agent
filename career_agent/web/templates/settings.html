@@ -172,11 +172,11 @@
 
   <h3 id="collect" style="margin-top:1.6rem">Collect jobs from a page you have open</h3>
   <p class="small text-2">A job board's filtered search (category, distance, page 2 and on) is closed to robots, so the app can't watch it. You can open it yourself and hand the page to the app. The app fetches nothing from the site: it reads the jobs that were on your screen, drops the ones it already has, and screens the rest like any other source.</p>
-  <p><a class="btn" href="{{ collect_bookmark }}" title="Drag me to your Favourites bar">Collect jobs</a> <span class="small text-2">← drag this button to your browser's Favourites bar (Safari: View → Show Favourites Bar).</span></p>
+  <p><a class="btn" href="{{ collect_bookmark }}" title="Drag me to your bookmarks bar">Collect jobs</a> <span class="small text-2">← drag this button to your browser's bookmarks bar (Firefox: View → Toolbars → Bookmarks Toolbar → Always Show; Safari: View → Show Favourites Bar).</span></p>
   <ol class="small text-2">
     <li>Keep Career Agent running.</li>
     <li>Run your search on the job site, with any filters.</li>
-    <li>Click <em>Collect jobs</em> in the Favourites bar. One click takes the whole search: on Jobindex and IT-Jobbank it reads every page of results (up to 50, a little apart), and on Jobnet it presses “Indlæs flere job” until all the jobs are showing. A box on the page says how far it has got.</li>
+    <li>Click <em>Collect jobs</em> in the bookmarks bar. One click takes the whole search: on Jobindex and IT-Jobbank it reads every page of results (up to 50, a little apart), and on Jobnet it presses “Indlæs flere job” until all the jobs are showing. A box on the page says how far it has got.</li>
     <li>Press <em>Send to Career Agent</em> in the box. A tab opens, says how many jobs it took, and closes again. (A search with just one page is sent at once.)</li>
   </ol>
   <h4 id="collect-searches" style="margin:1.2rem 0 .3rem">Your saved searches</h4>
@@ -206,7 +206,7 @@
   </form>
   <p class="small text-2" style="margin-top:1rem">Made the bookmark before 19 November 2026? Remove it and drag the button again: the old one takes one page per click.</p>
   <p class="small text-2">Read by their layout: {{ collect_sites|join(', ') }}. On any other site the app asks first, then picks out the job links like it does for a watched results page. LinkedIn's terms forbid collecting with scripts, so paste LinkedIn links by hand.</p>
-  <form method="post" action="/collect/new-key" class="small text-2" data-confirm="Make a new key? The bookmark you have now stops working until you drag the button to the Favourites bar again.">The bookmark carries a private key, so only a page you click it on can hand the app a page. <button class="btn small ghost">Make a new key</button></form>
+  <form method="post" action="/collect/new-key" class="small text-2" data-confirm="Make a new key? The bookmark you have now stops working until you drag the button to the bookmarks bar again.">The bookmark carries a private key, so only a page you click it on can hand the app a page. <button class="btn small ghost">Make a new key</button></form>
 </section>
 
 <section class="card" id="automation">

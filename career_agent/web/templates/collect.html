@@ -20,16 +20,16 @@
   <form method="post" action="/collect/searches/add" class="row" style="margin:.4rem 0 .8rem">
     <input type="hidden" name="url" value="{{ result.page_url }}">
     <input type="text" name="name" value="{{ result.site }} search" aria-label="Name of the search" style="max-width:18rem">
-    <button class="btn" data-busy="Saving…">Save this search for the weekly reminder</button>
+    <button class="btn" data-busy="Saving…">Save this search for the reminder</button>
   </form>
   {% endif %}
   {% if chain_next %}
   <p style="margin:.4rem 0 .8rem"><a class="btn primary" href="{{ result.next.url }}">Next: {{ result.next.name }} →</a>
-    <span class="small text-2">{{ result.left }} of your saved searches left {{ 'in this round' if result.round else 'this week' }}. Click <em>Collect jobs</em> there too.</span></p>
+    <span class="small text-2">{{ result.left }} of your saved searches left {{ 'in this round' if result.round else 'to collect' }}. Click <em>Collect jobs</em> there too.</span></p>
   {% elif result.saved and result.round %}
   <p class="small text-2">That was the last of your saved searches. The new jobs are being screened now.</p>
   {% elif result.saved %}
-  <p class="small text-2">That was the last of your saved searches this week. The reminder on Today waits until next week.</p>
+  <p class="small text-2">That was the last of your saved searches. The reminder on Today comes back when they're due again.</p>
   {% endif %}
   <p class="small text-2" id="collect-closing" hidden>This tab closes in <span id="collect-left">4</span> s. <a href="#" id="collect-keep">Keep it open</a></p>
   <p class="small text-2"><a href="/jobs">Go to Jobs</a> · <a href="/tasks">See the queue</a></p>

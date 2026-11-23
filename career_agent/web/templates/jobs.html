@@ -25,7 +25,7 @@
   <div class="row" style="margin-top:.8rem;align-items:center">
     <a class="btn primary" href="/collect/run" target="_blank" rel="noopener">Collect bookmark jobs ↗</a>
     <span class="small text-2">Your {{ searches|length }} saved search{{ 'es' if searches|length != 1 }} ({% for s in searches %}{{ s.name }}{{ ', ' if not loop.last }}{% endfor %}){% if searches_at %}, last collected {{ searches_at|ago }}{% endif %}.
-      Opens the first one; click <em>Collect jobs</em> in your Favourites bar there, and the page that opens takes you to the next.</span>
+      Opens a page with the steps; the first time, it shows how to put the bookmark in your browser.</span>
   </div>
   {% endif %}
   {% if sources %}
@@ -41,10 +41,24 @@
 
 {% if busy %}{% include "partials/jobs_progress.html" %}{% endif %}
 
+{% if view == 'same-ad' %}
+<div class="card" role="note" style="margin-bottom:1rem">
+  <strong>Set aside by the AI repeat check.</strong> Each was judged the same opening as an earlier ad; the reason is under the title.
+  If one is a different job, open it and press <em>Keep it as its own job</em>.
+</div>
+{% endif %}
+{% if counts.get('needs-text') and view != 'needs-text' %}
+<div class="card warn" role="note" style="margin-bottom:1rem">
+  <strong>{{ counts['needs-text'] }} job{{ 's' if counts['needs-text'] != 1 }} the app couldn't read.</strong>
+  Usually the link goes to LinkedIn or another site the app isn't allowed to open, or to a page that isn't the ad itself. Open each one, copy the ad from your browser and paste it in: it's then read and scored like the rest.
+  <a href="/jobs?view=needs-text">Show them →</a>
+</div>
+{% endif %}
+
 <nav class="tabs" aria-label="Job lists">
-  {% for key, label in [('inbox','Inbox'),('shortlisted','Shortlisted'),('applying','Applying'),('filtered','Filtered out'),('dismissed','Dismissed'),('expired','Closed'),('all','All')] %}
+  {% for key, label in [('inbox','Inbox'),('needs-text','Needs the ad text'),('shortlisted','Shortlisted'),('applying','Applying'),('filtered','Filtered out'),('dismissed','Dismissed'),('expired','Closed'),('all','All')] %}{% if key != 'needs-text' or counts.get(key) or view == key %}
   <a href="/jobs?view={{ key }}&sort={{ sort }}" class="{{ 'active' if view == key }}">{{ label }}<span class="count">{{ counts.get(key) or 0 }}</span></a>
-  {% endfor %}
+  {% endif %}{% endfor %}
 </nav>
 
 <form class="row" method="get" action="/jobs" style="margin-bottom:.8rem">
@@ -69,12 +83,13 @@
         {% if j.location %}<span>{{ j.location }}</span>{% endif %}
         {% if j.work_mode and j.work_mode != 'unknown' %}<span>{{ j.work_mode }}</span>{% endif %}
         {{ when_due(j) }}
-        {% if j.parse_status in ('pending', 'parsing') %}<span class="pill accent">reading…</span>{% elif j.parse_status == 'error' %}<span class="pill bad" title="{{ j.parse_error }}">couldn't read</span>{% elif j.parse_status == 'parsed' and j.fit_score is none %}<span class="pill">not scored</span>{% endif %}
+        {% if j.parse_status in ('pending', 'parsing') %}<span class="pill accent">reading…</span>{% elif j.needs_text %}<a class="pill warn" href="/jobs/{{ j.id }}#paste">needs the ad text</a>{% elif j.parse_status == 'error' and j.fit_score is none %}<span class="pill bad" title="{{ j.parse_error }}">couldn't read, trying again</span>{% elif j.parse_status == 'parsed' and j.fit_score is none %}<span class="pill">not scored</span>{% endif %}
         {% if j.reposted %}<span class="pill warn" title="This company posted the same job before">re-posted</span>{% endif %}
         {% if j.app_id %}<a class="pill st-{{ j.app_status }}" href="/applications/{{ j.app_id }}">application: {{ j.app_status }}</a>{% endif %}
       </div>
       {% if j.rank and j.rank.points %}<div class="small muted">Ranked {{ j.rank.score if j.rank.score is not none else 'lower' }}{% for n, why in j.rank.points %}{{ ':' if loop.first else ',' }} −{{ n }} {{ why }}{% endfor %}</div>{% endif %}
-      {% if j.f.get('summary') %}<div class="why">{{ j.f.summary }}</div>{% elif j.status == 'filtered' and j.notes %}<div class="why">{{ j.notes }}</div>{% endif %}
+      {% if j.needs_text %}<div class="why">{{ j.needs_text }} <a href="/jobs/{{ j.id }}#paste">Paste it →</a></div>
+      {% elif j.f.get('summary') %}<div class="why">{{ j.f.summary }}</div>{% elif j.status == 'filtered' and j.notes %}<div class="why">{{ j.notes }}</div>{% endif %}
     </div>
     <div class="acts">
       {% if not j.app_id and j.parse_status == 'parsed' %}

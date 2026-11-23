@@ -30,7 +30,7 @@
 {% if busy %}{{ progress(busy, task_labels, '/jobs/%d/progress'|format(job.id)) }}{% endif %}
 
 {% if job.parse_status == 'error' or (error and not busy) %}
-<section class="card danger" style="margin-bottom:1rem">
+<section class="card danger" id="paste" style="margin-bottom:1rem">
   <h2>I couldn't finish reading this job</h2>
   <p>{{ job.parse_error or error.error }}</p>
   <form method="post" action="/jobs/{{ job.id }}/text">
@@ -44,7 +44,7 @@
 {% endif %}
 
 {% if job.parse_status == 'skipped' and job.status != 'filtered' %}
-<section class="card warn" style="margin-bottom:1rem">
+<section class="card warn" id="paste" style="margin-bottom:1rem">
   <p style="margin:0">{{ job.notes or "This ad hasn't been read yet." }}</p>
   <form method="post" action="/jobs/{{ job.id }}/text" style="margin-top:.6rem">
     <label for="adtext2">Paste the ad text and I'll read and score it:</label>

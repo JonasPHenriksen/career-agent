@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Collect bookmark jobs{% endblock %}
+{% block content %}
+<h1>Collect bookmark jobs</h1>
+<section class="card" style="margin-bottom:1rem">
+  <p>Your {{ searches|length }} saved search{{ 'es' if searches|length != 1 }} are sites the app isn't allowed to check by itself, so you open each one and hand it over with the <em>Collect jobs</em> bookmark. It takes about a minute per search.</p>
+
+  <h2 style="margin-top:1rem">Once: put the bookmark in your browser</h2>
+  <ol class="small">
+    <li>Show the bookmarks bar. <strong>Firefox:</strong> View → Toolbars → Bookmarks Toolbar → Always Show (or right-click the empty area next to the tabs). Safari: View → Show Favourites Bar. Chrome or Edge: ⌘⇧B.</li>
+    <li>Drag this button up onto the bar: <a class="btn small" href="{{ collect_bookmark }}" title="Drag me to your bookmarks bar">Collect jobs</a></li>
+  </ol>
+  <p class="small text-2">Already there? Skip this. Made it before 19 November 2026? Delete the old one and drag it again.</p>
+
+  <h2 style="margin-top:1rem">Each time</h2>
+  <ol class="small">
+    <li>Press the button below. The search opens in a new tab.</li>
+    <li>When the results show, click <em>Collect jobs</em> in the bookmarks bar. A box in the bottom-right corner counts the pages it reads.</li>
+    <li>Press <em>Send to Career Agent</em> in that box. A Career Agent tab opens and says how many jobs were new.</li>
+    <li>In that tab, press <em>Next: …</em> and repeat from step 2, until it says that was the last one. The new jobs are screened while you go.</li>
+  </ol>
+  <p style="margin-top:1rem"><a class="btn primary" href="{{ first.url }}" target="_blank" rel="noopener noreferrer">Open 1 of {{ searches|length }}: {{ first.name }} →</a></p>
+</section>
+<section class="card">
+  <h2>This round</h2>
+  <ol class="small">
+    {% for s in searches %}<li>{{ s.name }} <span class="muted">· {% if s.last_at %}collected {{ s.last_at|ago }}{% else %}not collected yet{% endif %}</span></li>{% endfor %}
+  </ol>
+  <p class="small text-2">Change the list under <a href="/settings#collect-searches">Settings → Job sources</a>. Today reminds you when a search hasn't been collected for {{ remind_days }} days.</p>
+</section>
+{% endblock %}

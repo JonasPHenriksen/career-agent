@@ -227,7 +227,8 @@ def today(request: Request):
                   drafts=drafts, matches=matches, deadlines=tracker.deadlines_soon(7),
                   followups=tracker.followups_due(), interviews=interviews, errors=errors, counts=counts,
                   name=p.get("name"), task_labels=tasks.TASK_LABELS,
-                  followup_days=settings.get("automation").get("followup_days"), todo=todos.lists())
+                  followup_days=settings.get("automation").get("followup_days"), todo=todos.lists(),
+                  needs_text=len(jobs.needing_text()))
 
 
 # ---------------------------------------------------------------------------------------
@@ -247,7 +248,7 @@ async def todos_add(request: Request):
 @app.post("/todos/{todo_id}/done")
 def todos_done(request: Request, todo_id: int):
     todos.set_done(todo_id, True)
-    collect.remind()  # ticking off the weekly collect reminder dates the next one
+    collect.remind()  # ticking off the collect reminder dates the next one
     return go("/#todo", msg="Done. Nice.")
 
 
@@ -301,6 +302,12 @@ def jobs_list(request: Request, view: str = "inbox", sort: str = "best", q: str 
     if view == "inbox":
         where.append(f"j.status IN ('new', 'shortlisted') AND a.id IS NULL AND {jobs.open_sql()}")
         params.append(today_s)
+    elif view == "same-ad":  # set aside by the AI repeat check (the to-do on Today links here)
+        where.append("j.notes LIKE ?")
+        params.append(jobs.SAME_JOB_NOTE_LIKE)
+    elif view == "needs-text":
+        where.append(f"{jobs.NEEDS_TEXT_SQL} AND {jobs.open_sql()}")
+        params.append(today_s)
     elif view == "shortlisted":
         where.append("j.status = 'shortlisted'")
     elif view == "applying":
@@ -318,6 +325,8 @@ def jobs_list(request: Request, view: str = "inbox", sort: str = "best", q: str 
     sql = ("SELECT j.*, a.id AS app_id, a.status AS app_status FROM jobs j LEFT JOIN applications a ON a.job_id = j.id"
            + (" WHERE " + " AND ".join(where) if where else "") + f" ORDER BY {order}")
     rows = db.q(sql, params)  # ranked here, not in SQL: distance and employer size count too (rank.py)
+    if view == "needs-text":
+        rows = [r for r in rows if jobs.needs_text(r)]
     rows = (rank.best_first(rows) if sort == "best" else rank.urgent_first(rows) if sort == "urgent"
             else rank.annotate(rows))[:300]
     today_d = date.today()
@@ -328,6 +337,7 @@ def jobs_list(request: Request, view: str = "inbox", sort: str = "best", q: str 
             grades[r["company_id"]] = companies.badge(r["company_id"])
         r["badge"] = grades.get(r["company_id"])
         r["f"] = db.jload(r["fit"], {}) or {}
+        r["needs_text"] = jobs.needs_text(r)
     counts = {
         "inbox": db.scalar("SELECT COUNT(*) FROM jobs j LEFT JOIN applications a ON a.job_id = j.id WHERE j.status IN ('new','shortlisted') "
                            f"AND a.id IS NULL AND {jobs.open_sql()}", (today_s,)),
@@ -338,6 +348,7 @@ def jobs_list(request: Request, view: str = "inbox", sort: str = "best", q: str 
         "expired": db.scalar("SELECT COUNT(*) FROM jobs j LEFT JOIN applications a ON a.job_id = j.id "
                              f"WHERE NOT {jobs.open_sql()} AND a.id IS NULL", (today_s,)),
         "all": db.scalar("SELECT COUNT(*) FROM jobs"),
+        "needs-text": len(jobs.needing_text()),
     }
     busy = db.scalar("SELECT COUNT(*) FROM tasks WHERE kind IN ('parse_job', 'score_job', 'poll_source', 'collect_jobs') "
                      "AND status IN ('queued', 'running')") or 0
@@ -1612,12 +1623,14 @@ async def collect_confirm(request: Request):
 
 @app.get("/collect/run")
 def collect_run(request: Request):
-    """Collect now: opens the first of your saved searches; after each Send, the page that opens offers the next."""
+    """Collect now: a page with the steps and the bookmark to drag, and the first of your saved searches to open;
+    after each Send, the page that opens offers the next."""
     first = collect.start_run()
     if not first:
         return go("/settings#collect-searches", err="Save a search first: open a job search, click Collect jobs, "
                                                     "then press Save this search.")
-    return RedirectResponse(first["url"], status_code=303)
+    return render(request, "collect_run.html", first=first, searches=collect.searches(), remind_days=collect.REMIND_DAYS,
+                  collect_bookmark=collect.bookmark(str(request.base_url)))
 
 
 @app.post("/collect/searches/add")
