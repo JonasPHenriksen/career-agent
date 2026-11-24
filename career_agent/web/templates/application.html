@@ -135,7 +135,7 @@
         <a class="small" href="?tab=check">See the fact check →</a>
       {% else %}<p class="small text-2">No fact check yet.</p>{% endif %}
       {% if v %}<p class="small" style="margin-top:.6rem">Voice match <strong>{{ v.score }}</strong>/100{% if read and read.notes %} · {{ read.notes|length }} sentence{{ 's' if read.notes|length != 1 }} not in your voice{% endif %} · <a href="?tab=voice">details</a></p>{% endif %}
-      <form method="post" action="/applications/{{ a.id }}/check" class="row">{{ model_picker() }}<button class="btn small" data-busy="Checking…">Run fact check again</button></form>
+      <form method="post" action="/applications/{{ a.id }}/check" class="row">{{ model_picker() }}<button class="btn small" data-busy="Checking…" title="Only sentences and lines that are new or changed since the last check are read again">{{ 'Check what changed' if claims else 'Run fact check' }}</button>{% if claims %}<button class="btn small ghost" name="full" value="1" data-busy="Checking…">Check everything again</button>{% endif %}</form>
       <p style="margin:.4rem 0 0">{{ made_by(made.check, 'Checked') }}</p>
     </section>
     <section class="card">
@@ -301,9 +301,9 @@
       <h2>Verdict</h2>
       {% if claims %}
         <p>{{ claims.summary }}</p>
-        <p class="small muted">Checked {{ claims.checked_at|ago }}. Edited since? Run it again.</p>
+        <p class="small muted">Checked {{ claims.checked_at|ago }}. Edited since? Check what changed: only new or changed sentences and lines are read again, and the rest keep their verdict.</p>
       {% else %}<p class="text-2">Not checked yet.</p>{% endif %}
-      <form method="post" action="/applications/{{ a.id }}/check" class="row">{{ model_picker() }}<button class="btn small" data-busy="Checking…">Run fact check</button>{{ made_by(made.check, 'Last checked') }}</form>
+      <form method="post" action="/applications/{{ a.id }}/check" class="row">{{ model_picker() }}<button class="btn small" data-busy="Checking…">{{ 'Check what changed' if claims else 'Run fact check' }}</button>{% if claims %}<button class="btn small ghost" name="full" value="1" data-busy="Checking…" title="Every sentence and line, as if for the first time">Check everything again</button>{% endif %}{{ made_by(made.check, 'Last checked') }}</form>
     </section>
     {% set problems = (claims.get('claims') or [])|rejectattr('status', 'equalto', 'supported')|list %}
     <section class="card">
@@ -347,7 +347,8 @@
             <div class="plainer small">Plainer: <q>{{ n.plainer }}</q></div></li>
           {% endfor %}
         </ul>
-        <div class="row">{{ model_picker() }}<button class="btn small primary" data-busy="Revising…">Rewrite the ticked ones</button></div>
+        <p class="small text-2">Sentences you untick are kept as you wrote them, and later reads leave them alone.</p>
+        <div class="row">{{ model_picker() }}<button class="btn small primary" data-busy="Revising…">Rewrite the ticked ones</button><button class="btn small ghost" formaction="/applications/{{ a.id }}/voice-keep" title="Nothing is rewritten, and later reads don't suggest these again">Keep them all as they are</button></div>
       </form>
       {% elif read.skipped %}<p class="text-2">Not read: {{ read.skipped }}.</p>
       {% else %}<p class="empty">Every sentence sounds like you.</p>{% endif %}

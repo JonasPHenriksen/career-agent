@@ -459,9 +459,23 @@ def settle(app_id: int, plainer: list[str]) -> None:
     db.update("applications", app_id, {"review": db.jdump(r)})
 
 
-def read(text: str, language: str | None, settled: list[str] | None = None) -> dict:
+def left_sentences(app: dict) -> list[str]:
+    """Sentences a read suggested a plainer version for, which you chose to keep as they are, in this application."""
+    return (db.jload(app.get("review"), {}) or {}).get("voice_left") or []
+
+
+def leave(app_id: int, kept_as_is: list[str]) -> None:
+    """Remember the sentences you chose to keep as they are, so later reads don't suggest them again."""
+    a = db.q1("SELECT review FROM applications WHERE id = ?", (app_id,))
+    r = db.jload((a or {}).get("review"), {}) or {}
+    r["voice_left"] = list(dict.fromkeys([*(r.get("voice_left") or []), *(t.strip() for t in kept_as_is if t.strip())]))
+    db.update("applications", app_id, {"review": db.jdump(r)})
+
+
+def read(text: str, language: str | None, settled: list[str] | None = None, left: list[str] | None = None) -> dict:
     """Read the letter for your voice. Returns {letter, summary, notes: [{n, text, problem, plainer}]}. `settled`
-    are sentences you had rewritten the plainer way after an earlier read: they're left alone."""
+    are sentences you had rewritten the plainer way after an earlier read, and `left` the ones you chose to keep as
+    they were: both are left alone."""
     from . import knowledge
 
     lang = (language or "").lower()[:2]
@@ -471,15 +485,19 @@ def read(text: str, language: str | None, settled: list[str] | None = None) -> d
                 "summary": "", "notes": []}
     paras = numbered(text)
     shown = "\n\n".join("\n".join(f"[{n}] {s}" for n, s in block) for block in paras)
-    leave = sorted(n for block in paras for n, s in block if any(_close(s, k) for k in settled or []))
-    if leave:
-        shown += ("\n\nSentences " + ", ".join(f"[{n}]" for n in leave) + " were already rewritten the plainer way "
+    rewritten = sorted(n for block in paras for n, s in block if any(_close(s, k) for k in settled or []))
+    kept = sorted(n for block in paras for n, s in block if n not in rewritten and any(_close(s, k) for k in left or []))
+    if rewritten:
+        shown += ("\n\nSentences " + ", ".join(f"[{n}]" for n in rewritten) + " were already rewritten the plainer way "
                   "after an earlier reading, and the candidate kept them. Leave them alone and don't mention them.")
+    if kept:
+        shown += ("\n\nFor sentences " + ", ".join(f"[{n}]" for n in kept) + " an earlier reading suggested a plainer "
+                  "version, and the candidate chose to keep their own. Leave them alone and don't mention them.")
     d = llm.run(llm.STEP_TIER["voice"], "voice_read", READ_SYSTEM.format(guide=guide),
                 "LETTER, EACH SENTENCE NUMBERED (a blank line between paragraphs):\n\n" + shown,
                 READ_SCHEMA, max_tokens=4000, effort="medium").data
     by_n = {n: s for block in paras for n, s in block}
-    notes, seen = [], set(leave)
+    notes, seen = [], {*rewritten, *kept}
     for note in d["notes"]:
         sentence = by_n.get(note["n"])
         plainer = (note.get("plainer") or "").strip()
@@ -498,7 +516,7 @@ def read_task(payload: dict) -> dict:
     done = read_notes(app)
     if done and not done.get("skipped"):
         return {"skipped": "already read"}
-    result = read(app["letter"], app["language"], settled_sentences(app))
+    result = read(app["letter"], app["language"], settled_sentences(app), left_sentences(app))
     current = db.q1("SELECT letter, voice FROM applications WHERE id = ?", (app["id"],))
     if letter_key(current["letter"]) != result["letter"]:
         return {"skipped": "the letter changed while it was read"}
@@ -510,11 +528,11 @@ def read_task(payload: dict) -> dict:
 
 def read_notes(app: dict) -> dict | None:
     """The reading of this letter as it is now, or None when there's none (or it was of an older version). Sentences
-    you had rewritten the plainer way aren't shown, even in a read made before they were settled."""
+    you had rewritten the plainer way, or chose to keep as they are, aren't shown, even in a read made before."""
     r = (db.jload(app.get("voice"), {}) or {}).get("read")
     if not r or r.get("letter") != letter_key(app.get("letter") or ""):
         return None
-    settled = settled_sentences(app)
-    if settled and r.get("notes"):
-        r = {**r, "notes": [n for n in r["notes"] if not any(_close(n["text"], k) for k in settled)]}
+    done = [*settled_sentences(app), *left_sentences(app)]
+    if done and r.get("notes"):
+        r = {**r, "notes": [n for n in r["notes"] if not any(_close(n["text"], k) for k in done)]}
     return r

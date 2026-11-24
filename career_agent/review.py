@@ -348,8 +348,9 @@ def base_confirmed() -> list[str]:
     return list(dict.fromkeys(out))
 
 
-def check_base(base_id: int | None = None) -> dict:
-    """Fact-check the base CV, line by line, and keep the result with it."""
+def check_base(base_id: int | None = None, full: bool = False) -> dict:
+    """Fact-check the base CV, line by line, and keep the result with it. Only lines that changed since the last
+    check are read again (see writer.check_claims), unless `full`."""
     from . import cvdata, writer
 
     base = cvdata.base(base_id)
@@ -357,7 +358,7 @@ def check_base(base_id: int | None = None) -> dict:
         return {"skipped": "no base CV"}
     before = db.jload(base.get("claims"), {}) or {}
     confirmed = before.get("confirmed") or []
-    d = writer.check_claims("", cvdata.to_markdown(base["data"]), confirmed=confirmed)
+    d = writer.check_claims("", cvdata.to_markdown(base["data"]), confirmed=confirmed, before=None if full else before)
     d["checked_at"] = db.now()
     if confirmed:
         d["confirmed"] = confirmed

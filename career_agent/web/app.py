@@ -637,9 +637,24 @@ async def application_voice_revise(request: Request, app_id: int):
                     "something close to it that fits the letter; keep every fact and add none:\n"
                     + "\n".join(f"- “{n['text']}” → “{n['plainer']}”" for n in chosen))
     voice.settle(app_id, [n["plainer"] for n in chosen])  # later reads leave these sentences alone
+    voice.leave(app_id, [n["text"] for n in read["notes"] if n not in chosen])  # and the ones you kept as they are
     tasks.enqueue("revise_application", {"application_id": app_id, "instructions": instructions, "part": "letter",
                                          **chosen_model(f)}, ref=f"app:{app_id}", dedupe=False)
     return go(f"/applications/{app_id}?tab=voice", msg=with_model_msg(f, "Revising") + "…")
+
+
+@app.post("/applications/{app_id}/voice-keep")
+def application_voice_keep(request: Request, app_id: int):
+    """Keep the sentences the voice read pointed at as they are: later reads don't suggest them again."""
+    a = need(db.q1("SELECT * FROM applications WHERE id = ?", (app_id,)))
+    notes = (voice.read_notes(a) or {}).get("notes") or []
+    if not notes:
+        return go(f"/applications/{app_id}?tab=voice")
+    voice.leave(app_id, [n["text"] for n in notes])
+    n = len(notes)
+    return go(f"/applications/{app_id}?tab=voice",
+              msg=f"Kept {'it' if n == 1 else f'all {n}'} as you wrote {'it' if n == 1 else 'them'}. Later reads leave "
+                  f"{'it' if n == 1 else 'them'} alone.")
 
 
 @app.post("/applications/{app_id}/answers")
@@ -692,9 +707,14 @@ async def application_manual_import(request: Request, app_id: int):
 
 @app.post("/applications/{app_id}/check")
 async def application_check(request: Request, app_id: int):
+    """Fact-check what changed since the last check; everything with `full`, or when you picked another model."""
     f = await form(request)
-    tasks.enqueue("check_application", {"application_id": app_id, **chosen_model(f)}, ref=f"app:{app_id}")
-    return go(f"/applications/{app_id}?tab=check", msg=with_model_msg(f, "Fact-checking") + "…")
+    model = chosen_model(f)
+    full = bool(f.get("full") or model.get("model"))
+    tasks.enqueue("check_application", {"application_id": app_id, **model, **({"full": True} if full else {})},
+                  ref=f"app:{app_id}")
+    return go(f"/applications/{app_id}?tab=check", msg=with_model_msg(f, "Fact-checking " + ("everything again" if full
+                                                                                            else "what changed")) + "…")
 
 
 @app.get("/applications/{app_id}/export/{name}")

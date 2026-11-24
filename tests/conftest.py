@@ -198,7 +198,9 @@ class FakeProvider:
             # a verdict per numbered item: team sizes aren't in the fake career database
             import re
             verdicts = []
-            for n, where, text in re.findall(r"^\[(\d+)\] \((letter|cv)\) (.*)$", user, re.M):
+            items = re.findall(r"^\[(\d+)\](\*?) \((letter|cv)\) (.*)$", user, re.M)
+            marked = any(star for _, star, _, _ in items)  # only the new and changed ones, when some are marked
+            for n, where, text in [(n, w, t) for n, star, w, t in items if star or not marked]:
                 if text.startswith(("Kære", "Med venlig hilsen")):
                     verdicts.append({"n": int(n), "kind": "other", "status": "not_a_claim", "fact_ids": [], "problem": ""})
                 elif "udviklere" in text:
