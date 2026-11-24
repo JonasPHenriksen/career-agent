@@ -242,7 +242,7 @@
 <div class="grid-2">
   <section class="card">
     {% if cv_data %}
-    <p class="small text-2">This is your own CV{% if cv_base %} (<a href="/profile?tab=cv&base={{ cv_base.id }}">{{ cv_base.title }}</a>){% endif %} with small changes for this job. What changed is listed under Letter → Notes from the writer.</p>
+    <p class="small text-2">This is your own CV{% if cv_base %} (<a href="/profile?tab=cv&base={{ cv_base.id }}">{{ cv_base.title }}</a>){% endif %}, made to read as written for this job: points and projects from your career database, and the sections in the order that suits it. What changed is listed under Letter → Notes from the writer.</p>
     <form method="post" action="/applications/{{ a.id }}/revise">
       <input type="hidden" name="part" value="cv">
       <label for="cvinstr">Ask for changes <span class="hint">· to the words; the colour is set below</span></label>

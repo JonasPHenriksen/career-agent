@@ -193,7 +193,7 @@
   <div>
     <section class="card" style="margin-bottom:1rem">
       <h2>The CV every application starts from</h2>
-      <p class="small text-2">Pick one of your own CVs. It is read once into data, word for word, and each job's CV is that base with small changes: the most relevant points first, a point left out, the headline turned towards the job. Your name and contact details come from About you and never go to a model.</p>
+      <p class="small text-2">Pick one of your own CVs. It is read once into data, word for word. Each job's CV starts from it and is made to read as written for that job: the headline and profile, the points and projects that matter most for it (from your career database too) and the order of the sections. Employers, titles and dates stay as your CV has them. Your name and contact details come from About you and never go to a model.</p>
       {% if cv.busy %}<p><span class="spinner" aria-hidden="true"></span> Reading your CV…</p>{% endif %}
       {% if cv.task_error %}<p class="small" style="color:var(--bad)">{{ cv.task_error.error }}</p>{% endif %}
       {% if cv.docs %}

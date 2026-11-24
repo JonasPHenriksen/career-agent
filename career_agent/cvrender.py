@@ -129,7 +129,8 @@ def model(data: dict, language: str | None = None, profile: dict | None = None, 
     # The photo is on every CV unless this one says no (the job ad asked for applications without a photo).
     photo = photo_path() if data.get("photo") is not False else None
     sidebar = [{"title": _title(data, k, lang), "items": items(k)} for k in look["sidebar_order"]]
-    main = [{"title": _title(data, k, lang), "entries": entries(k)} for k in look["main_order"]]
+    order = [k for k in data.get("main_order") or [] if k in MAIN_SECTIONS] or look["main_order"]  # this CV's own, for its job
+    main = [{"title": _title(data, k, lang), "entries": entries(k)} for k in order]
     return {"lang": lang, "design": look,
             "photo": "photo.jpg" if photo else "", "photo_hash": hashlib.sha1(photo.read_bytes()).hexdigest()[:12] if photo else "",
             "header": {"name": p.get("name") or "", "label": (data.get("label") or "").strip(), "lines": lines},

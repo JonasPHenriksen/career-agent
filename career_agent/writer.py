@@ -342,7 +342,8 @@ def tailor_cv(job: dict, language: str, instructions: str | None, system: str, p
         return None
     task = _cv_tailor_task(job, language, instructions, base["data"], current, told)
     d = llm.run("writing", purpose, system, task, cvdata.TAILOR_SCHEMA, max_tokens=16000, effort=effort).data
-    data = cvdata.clean(d["cv"])
+    # The order of the main sections is chosen for this job; a revision that doesn't choose keeps the one it had.
+    data = cvdata.clean({**d["cv"], "main_order": d.get("main_order") or (current or {}).get("main_order")})
     if cvdata.is_empty(data):  # a model that returned nothing usable: keep what we had
         data = current or cvdata.clean(base["data"])
     data["language"] = language
@@ -355,7 +356,7 @@ def tailor_cv(job: dict, language: str, instructions: str | None, system: str, p
                "the points, skills or interests that matter least for this job. Change nothing else.")
         again = llm.run("writing", "revise_cv", system, _cv_tailor_task(job, language, fit, base["data"], data),
                         cvdata.TAILOR_SCHEMA, max_tokens=16000, effort=effort or "medium").data
-        shorter = cvdata.clean(again["cv"])
+        shorter = cvdata.clean({**again["cv"], "main_order": again.get("main_order") or data.get("main_order")})
         if not cvdata.is_empty(shorter):
             shorter["language"] = language
             data = shorter
