@@ -8,6 +8,25 @@
 // How open the lines and gaps are: 1 is the tightest. cvrender.py picks the most open value that still fits the
 // CV on its pages, so the page is filled whatever the font, the language or the number of points.
 #let s = d.design.at("spacing", default: 1.0)
+// A text whose last line would hold only a word or so wastes a line of a one-page CV. Such a text is set a touch
+// tighter (letters and the gaps between words) when that pulls it up a line. cvrender.py first lays the CV out in
+// measuring mode, where every text reports how many lines it takes, whether its last line is that short and whether
+// tightening helps; it then lists the texts to tighten in `tight`. What tightening can't fix is shortened instead.
+#let measuring = d.at("measure", default: false)
+#let tight = d.at("tight", default: ())
+#let squeeze(body) = text(tracking: -0.12pt, spacing: 85%, body)
+#let fitted(kind, body) = if measuring {
+  layout(size => {
+    let w = size.width
+    let h = measure(block(width: w, body)).height
+    let one = measure(block(width: w, [x])).height
+    let lines = calc.round((h - one) / (measure(block(width: w, [x \ x])).height - one)) + 1
+    let short = lines > 1 and measure(block(width: w * (1 + 0.15 / (lines - 1)), body)).height < h
+    let helps = measure(block(width: w, squeeze(body))).height < h
+    [#metadata((kind: kind, text: body, lines: lines, short: short, tighten: helps)) <cvtext>]
+    body
+  })
+} else if body in tight { squeeze(body) } else { body }
 
 #set document(title: d.header.name + " – CV", author: d.header.name)
 #set page(paper: "a4", margin: (x: 0pt, top: 0pt, bottom: 8pt),
@@ -24,12 +43,12 @@
 #let entry(e) = block(above: 10pt * s, below: 0pt)[
   #if e.a != "" or e.b != "" { row(e.a, e.b, bold: true) }
   #if e.c != "" or e.d != "" { row(e.c, e.d) }
-  #if e.text != "" { par(e.text) }
-  #if e.bullets.len() > 0 { list(..e.bullets) }
+  #if e.text != "" { par(fitted("text", e.text)) }
+  #if e.bullets.len() > 0 { list(..e.bullets.map(b => fitted("bullet", b))) }
 ]
 #let side-item(i) = block(above: 9pt * s, below: 0pt)[
   #text(weight: 600, i.name)
-  #if i.text != "" { linebreak(); text(size: base * 0.9, i.text) }
+  #if i.text != "" { linebreak(); text(size: base * 0.9, fitted("side", i.text)) }
 ]
 
 #grid(columns: (side, 1fr),
@@ -72,7 +91,7 @@
     #if d.profile.text != "" {
       block(fill: tint, width: 100%, inset: (x: 16pt, top: 12pt, bottom: 12pt))[
         #title(d.profile.title)
-        #d.profile.text
+        #fitted("profile", d.profile.text)
       ]
     }
     #block(width: 100%, inset: (x: 16pt, top: 0pt, bottom: 6pt))[

@@ -270,6 +270,8 @@
     <section class="card">
       <h2>Correct the base CV</h2>
       <p class="small text-2">If the reading got a line wrong or in the wrong place, fix it here. It is the data every tailored CV starts from.</p>
+      {% if cv.spills %}<div class="card warn" style="margin:.4rem 0 .8rem" id="cv-spills"><p class="small" style="margin:0 0 .3rem">{{ cv.spills|length }} line{{ 's' if cv.spills|length != 1 }} of this CV end{{ 's' if cv.spills|length == 1 }} with a word or so on a line of its own, which costs a line of the page. Tailored CVs get these shortened by themselves; this one is your own text, so shorten {{ 'it' if cv.spills|length == 1 else 'them' }} here if you want the line back:</p>
+        <ul class="small tight">{% for x in cv.spills %}<li>“{{ x.text }}”</li>{% endfor %}</ul></div>{% endif %}
       <form method="post" action="/cv/base/{{ cv.main.id }}/save">
         <textarea name="data" class="editor code" spellcheck="false" aria-label="Base CV data">{{ cv.json }}</textarea>
         <div class="row" style="margin-top:.5rem"><button class="btn">Save base CV</button><span class="spacer"></span>

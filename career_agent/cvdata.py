@@ -129,6 +129,29 @@ def keep_base_facts(base: dict, tailored: dict) -> list[str]:
     return notes
 
 
+def replace_text(data: dict, old: str, new: str) -> bool:
+    """Put `new` where the CV prints `old`: the profile, an entry's description, a point, or a group of skills as the
+    sidebar prints it ("Python, SQL, Docker"). Returns whether it was found."""
+    old = old.strip()
+    if (data.get("summary") or "").strip() == old:
+        data["summary"] = new
+        return True
+    for key in ("work", "education", "projects"):
+        for e in data.get(key) or []:
+            if (e.get("description") or "").strip() == old:
+                e["description"] = new
+                return True
+            for n, h in enumerate(e.get("highlights") or []):
+                if (h or "").strip() == old:
+                    e["highlights"][n] = new
+                    return True
+    for group in data.get("skills") or []:
+        if ", ".join(group.get("keywords") or []) == old:
+            group["keywords"] = [k.strip() for k in new.split(",") if k.strip()]
+            return True
+    return False
+
+
 def is_empty(data: dict | None) -> bool:
     return not data or not any(data.get(k) for k in SECTIONS)
 

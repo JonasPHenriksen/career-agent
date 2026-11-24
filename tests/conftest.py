@@ -190,6 +190,10 @@ class FakeProvider:
                               "Jeg har ledet et team på 12 udviklere. Ledte et team på 8 udviklere.\n\nMed venlig hilsen\nSara Lund",
                     "used_fact_ids": [1, 3], "assumed": ["You want to work with payments again."],
                     "angle": "Payments product owner with a measurable result.", "notes": ["Check the team size."]}
+        if schema is writer.SPILL_SCHEMA:  # each line given back without its last word
+            import re
+            return {"lines": [{"n": int(n), "text": text.rsplit(" ", 1)[0]}
+                              for n, text in re.findall(r"^\[(\d+)\] (.*)$", user, re.M)]}
         if schema is writer.CV_SCHEMA:
             return {"cv_markdown": "# Product Owner, betalinger\nErfaren product owner.\n\n## Erfaring\n### Product Owner — Danske Bank\n"
                                    "2022 – nu · København\n- Reducerede supporthenvendelser med **30 %**\n\n## Kompetencer\nScrum · SQL",

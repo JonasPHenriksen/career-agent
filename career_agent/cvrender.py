@@ -166,6 +166,25 @@ def fit_spacing(folder: Path, m: dict) -> float:
     return SPACINGS[lo]
 
 
+def _measure(folder: Path, m: dict) -> tuple[list[str], list[dict]]:
+    """Lay the CV out once in measuring mode (see the template): the texts to set a touch tighter, because that saves
+    a line, and the texts whose last line still holds only a word or so ({kind, text}), to be shortened."""
+    import typst
+
+    (folder / "data.json").write_text(json.dumps({**m, "measure": True}, ensure_ascii=False), encoding="utf-8")
+    found = json.loads(typst.query(str(folder / "main.typ"), "<cvtext>", field="value", root=str(folder)))
+    tight = sorted({f["text"] for f in found if f["tighten"]})
+    short = [{"kind": f["kind"], "text": f["text"]} for f in found if f["short"] and not f["tighten"]]
+    return tight, list({s["text"]: s for s in short}.values())
+
+
+def spills(data: dict, language: str | None = None) -> list[dict]:
+    """The texts on this CV whose last line holds only a word or so, even set tighter: [{kind, text}], where kind is
+    bullet, text (an entry's description), profile or side (a sidebar line, such as a group of skills)."""
+    path = render(data, language) / "spills.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+
+
 def render(data: dict, language: str | None = None) -> Path:
     """The folder with cv.pdf and page-1.png, page-2.png… for this CV; made once and kept until anything changes."""
     import typst
@@ -180,6 +199,8 @@ def render(data: dict, language: str | None = None) -> Path:
     shutil.copyfile(TEMPLATE, folder / "main.typ")
     if m["photo"]:
         shutil.copyfile(photo_path(), folder / m["photo"])
+    m["tight"], short = _measure(folder, m)
+    (folder / "spills.json").write_text(json.dumps(short, ensure_ascii=False), encoding="utf-8")
     fit_spacing(folder, m)
     typst.compile(str(folder / "main.typ"), output=str(folder / "cv.pdf"), root=str(folder))
     typst.compile(str(folder / "main.typ"), output=str(folder / "page-{p}.png"), root=str(folder), format="png", ppi=130.0)

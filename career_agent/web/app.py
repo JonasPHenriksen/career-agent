@@ -1122,15 +1122,16 @@ def profile_page(request: Request, tab: str = "about"):
         for b in cvdata.bases():
             if in_use and (b["language"] or "")[:2] != (in_use["language"] or "")[:2]:
                 others.setdefault((b["language"] or "")[:2], b["id"])
-        pages, cv_error = 0, ""
+        pages, cv_error, spilled = 0, "", []
         if main:
             try:
                 pages = cvrender.pages(main["data"], main["language"])
+                spilled = cvrender.spills(main["data"], main["language"])
             except Exception as e:  # noqa: BLE001
                 cv_error = str(e)[:300]
         cv = {"main": main, "in_use": in_use["id"] if in_use else None, "other_languages": {v: k for k, v in others.items()},
               "bases": cvdata.bases(), "docs": cvdata.cv_documents(), "pages": pages, "error": cv_error,
-              "design": settings.get("cv"), "photo": bool(cvrender.photo_path()), "json": json.dumps(main["data"], ensure_ascii=False, indent=2) if main else "",
+              "design": settings.get("cv"), "photo": bool(cvrender.photo_path()), "spills": spilled, "json": json.dumps(main["data"], ensure_ascii=False, indent=2) if main else "",
               "busy": tasks.active(ref="cv-base"), "task_error": tasks.last_error("cv-base"),
               "questions": review.base_questions(main), "checked": db.jload((main or {}).get("claims"), None),
               "checking": tasks.active(ref="cv-base-check"), "check_error": tasks.last_error("cv-base-check"),

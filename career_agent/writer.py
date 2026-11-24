@@ -368,7 +368,46 @@ def tailor_cv(job: dict, language: str, instructions: str | None, system: str, p
         data["photo"] = False
         if not any("photo" in c.lower() for c in changes):
             changes.append("CV: your photo is left out, because the ad asks for applications without one.")
-    return data, changes + cvdata.keep_base_facts(base["data"], data) + notes
+    kept = cvdata.keep_base_facts(base["data"], data)
+    return data, changes + kept + notes + shorten_spills(job, language, system, data, effort)
+
+
+SPILL_SCHEMA = J.obj(lines=J.arr(J.obj(n=J.i("The line's number"), text=J.s("The line, a little shorter"))))
+
+
+def shorten_spills(job: dict, language: str, system: str, data: dict, effort: str | None = None) -> list[str]:
+    """Lines of the CV whose last word or so would sit on a line of its own, even set a touch tighter, are shortened
+    just enough to end a line earlier: on a one-page CV that line is worth more than the words. Only those lines go to
+    the model, and a line comes back only if it got shorter. Changes `data` in place; returns notes for you."""
+    from . import cvrender
+
+    try:
+        short = cvrender.spills(data, language)
+    except Exception:  # noqa: BLE001 - a CV that can't be typeset is reported where it is shown
+        return []
+    if not short:
+        return []
+    where = " at ".join(x for x in (job.get("title"), job.get("company_name")) if x) or "this job"
+    task = (f"These lines are from the candidate's CV for {where}. On the printed page each ends with a word or so on a "
+            "line of its own, which costs a whole line on a one-page CV. Make each just short enough to end a line "
+            "earlier: leave out a word or two or a short phrase, or say it more tightly. Keep every fact, name, number "
+            "and tool, the language and the candidate's voice. A line that lists skills may instead leave out the one "
+            "that matters least for this job. Return every line with its number.\n\n"
+            + "\n".join(f"[{n}] {x['text']}" for n, x in enumerate(short, 1)))
+    d = llm.run("writing", "revise_cv", system, task, SPILL_SCHEMA, max_tokens=4000, effort=effort or "medium").data
+    done = 0
+    for r in d["lines"]:
+        if 1 <= r["n"] <= len(short):
+            old, new = short[r["n"] - 1]["text"], " ".join((r.get("text") or "").split())
+            if new and len(new) < len(old) and cvdata.replace_text(data, old, new):
+                done += 1
+    left = cvrender.spills(data, language)
+    notes = [f"CV: {done} line{'s' if done != 1 else ''} made a little shorter, so no line holds just a word."] if done else []
+    if left:
+        notes.append("CV: " + ("this line still ends" if len(left) == 1 else f"{len(left)} lines still end")
+                     + " with a word or so on a line of its own: " + "; ".join(f"“…{x['text'][-60:]}”" for x in left[:3])
+                     + ". Shorten it under Edit the CV's data if you want the line back.")
+    return notes
 
 
 # ---------------------------------------------------------------------------------------
