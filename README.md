@@ -291,6 +291,11 @@ Settings → AI models. It uses the Claude plan you're logged in with, so there'
 plugins, connectors or saved sessions, in an empty folder, so it can only answer. *Local only* blocks it like any
 cloud model, and ID and bank numbers are removed first.
 
+Each person uses their own Claude account in the official, unmodified Claude Code, for their own job search. Signing
+in happens in Claude Code itself (`/login`, or `claude setup-token`); a token you give the app is kept only in this
+Mac's Keychain and handed to Claude Code on this Mac. The app is not meant to be run as a service for other people.
+Anthropic's [legal and compliance notes](https://code.claude.com/docs/en/legal-and-compliance) say what is allowed.
+
 The choices name exact versions, so you always know which model did the work: the newest of each kind (Claude
 Opus, Sonnet, Haiku, Fable) first, and the older versions your plan still runs under *earlier versions*. The list
 follows your subscription: the app reads the model IDs from the installed Claude Code (which updates itself and
