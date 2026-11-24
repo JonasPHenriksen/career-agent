@@ -302,3 +302,11 @@ def no_robots_rules(monkeypatch):
     from career_agent import robots
 
     monkeypatch.setattr(robots, "rules_for", lambda url: [])
+
+
+@pytest.fixture(autouse=True)
+def no_company_colours(monkeypatch):
+    """Tests never read real company websites for their colour; test_brand.py tests the reading itself."""
+    from career_agent import brand
+
+    monkeypatch.setattr(brand, "_get", lambda url: None)

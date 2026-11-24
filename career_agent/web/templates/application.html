@@ -245,7 +245,7 @@
     <p class="small text-2">This is your own CV{% if cv_base %} (<a href="/profile?tab=cv&base={{ cv_base.id }}">{{ cv_base.title }}</a>){% endif %} with small changes for this job. What changed is listed under Letter → Notes from the writer.</p>
     <form method="post" action="/applications/{{ a.id }}/revise">
       <input type="hidden" name="part" value="cv">
-      <label for="cvinstr">Ask for changes</label>
+      <label for="cvinstr">Ask for changes <span class="hint">· to the words; the colour is set below</span></label>
       <div class="chips">{% for c in ['Fit it on one page', 'Put the most relevant points first', 'Shorter bullets'] %}<button type="button" class="chip" data-fill="#cvinstr" data-text="{{ c }}.">{{ c }}</button>{% endfor %}</div>
       <textarea id="cvinstr" name="instructions" rows="3"></textarea>
       <div class="row end" style="margin-top:.5rem">{{ model_picker() }}<button class="btn" data-busy="Revising…">Revise CV</button></div>
@@ -256,6 +256,16 @@
       <a class="btn ghost" href="/applications/{{ a.id }}/export/cv.json" title="The open JSON Resume format, which tools like rxresu.me can import">Download JSON</a>
       <form method="post" action="/applications/{{ a.id }}/cv-reset" class="inline" data-confirm="Replace this CV with your base CV, word for word? The current one is kept under Versions."><button class="btn ghost" title="Your own CV exactly as it is under Profile → Your CV, with no AI changes">Reset to base CV</button></form>
     </div>
+    {% set colour = cv_data.color if cv_data.color and cv_data.color != 'own' else design_primary %}
+    <form method="post" action="/applications/{{ a.id }}/cv-colour" class="cv-colour" style="margin-top:1rem">
+      <label for="cv_colour">Colour <span class="hint">· {% if cv_data.color_by == 'company' %}{{ a.company_name or 'the employer' }}'s own{% elif cv_data.color_by == 'you' and cv_data.color != 'own' %}picked by you{% else %}your usual colour{% endif %}</span></label>
+      <div class="row">
+        <input id="cv_colour" name="colour" type="color" value="{{ colour }}">
+        <button class="btn small" name="choice" value="pick">Use this colour</button>
+        <button class="btn small ghost" name="choice" value="company">{{ a.company_name or 'The employer' }}'s colour</button>
+        {% if cv_data.color and cv_data.color != 'own' %}<button class="btn small ghost" name="choice" value="own">My usual colour</button>{% endif %}
+      </div>
+    </form>
     <details style="margin-top:1rem"><summary>Edit the CV's data yourself</summary>
       <form method="post" action="/applications/{{ a.id }}/save">
         <div class="field"><label for="cv_data">CV data <span class="hint">· JSON; reorder, remove or reword, then save. Colour and layout are under Profile → Your CV</span></label>

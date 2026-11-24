@@ -27,9 +27,12 @@ SIDEBAR_SECTIONS = ("skills", "certificates", "languages", "interests")
 MAIN_SECTIONS = ("work", "education", "projects")
 
 
-def design() -> dict:
+def design(colour: str | None = None) -> dict:
+    """The look every CV shares (Profile → Your CV). `colour` is one CV's own colour, such as the employer's."""
     d = settings.get("cv")
     primary = d.get("primary") if re.fullmatch(r"#[0-9a-fA-F]{6}", d.get("primary") or "") else "#2254bf"
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", colour or ""):
+        primary = colour
     r, g, b = (int(primary[i:i + 2], 16) for i in (1, 3, 5))
     tint = "#%02x%02x%02x" % tuple(round(c * 0.2 + 255 * 0.8) for c in (r, g, b))  # the colour, mostly white
     return {"primary": primary, "tint": tint, "sidebar": max(24, min(42, float(d.get("sidebar") or 34))),
@@ -83,7 +86,7 @@ def _title(data: dict, key: str, lang: str) -> str:
 def model(data: dict, language: str | None = None, profile: dict | None = None, look: dict | None = None) -> dict:
     """Everything the template prints, in the order it prints it."""
     p = profile if profile is not None else settings.get("profile")
-    look = look or design()
+    look = look or design(data.get("color"))
     lang = (data.get("language") or language or "en")[:2]
     lines = []
     if p.get("email"):

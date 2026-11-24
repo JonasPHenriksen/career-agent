@@ -69,6 +69,7 @@ DEFAULTS: dict[str, Any] = {
         "base_id": None,  # which base CV (table cv_bases) tailored CVs start from
         "photo": "",  # your photo on the CV: a file name in the files folder; "" = no photo
         "primary": "#2254bf",  # the sidebar's colour; the light background is derived from it
+        "company_colour": True,  # each job's CV in the employer's own colour, when its website shows one (brand.py)
         "font": "IBM Plex Serif",  # falls back to Charter or Georgia when it isn't installed
         "size": 9.6,  # body text size in points
         "sidebar": 34,  # sidebar width in percent

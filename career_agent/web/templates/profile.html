@@ -253,6 +253,7 @@
           <div class="field"><label for="cv_main_order">Main column, in order <span class="hint">· work, education, projects</span></label><input id="cv_main_order" name="main_order" type="text" value="{{ cv.design.main_order|join(', ') }}"></div>
           <div class="field"><label for="cv_side_order">Sidebar, in order <span class="hint">· skills, certificates, languages, interests</span></label><input id="cv_side_order" name="sidebar_order" type="text" value="{{ cv.design.sidebar_order|join(', ') }}"></div>
         </div>
+        <label class="check"><input type="checkbox" name="company_colour" value="1" {% if cv.design.company_colour is not defined or cv.design.company_colour %}checked{% endif %}> <span>Each job's CV in the employer's own colour, when its website shows one <span class="hint">· otherwise the colour above; you can change it per job on its CV tab</span></span></label>
         <div class="row end"><button class="btn primary">Save design</button></div>
       </form>
     </section>

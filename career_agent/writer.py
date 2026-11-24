@@ -363,6 +363,7 @@ def tailor_cv(job: dict, language: str, instructions: str | None, system: str, p
         if _cv_pages(data, language) > limit:
             notes.append(f"The CV still fills more than {limit} page(s). Ask for “Fit it on one page” or trim it under CV.")
     data.pop("photo", None)
+    cvdata.carry_colour(current, data)
     if d.get("leave_out_photo"):  # the ad asks for applications without a photo
         data["photo"] = False
         if not any("photo" in c.lower() for c in changes):
@@ -589,6 +590,7 @@ def draft(app_id: int, part: str = "both") -> dict:
         tailored = tailor_cv(job, language, app["instructions"], system, told=notes)
         if tailored:  # your own CV with small changes for this job
             cv_data, cv_notes = tailored
+            cv_notes += job_colour(job, db.jload(app.get("cv_data"), None), cv_data)
             patch.update({"cv": cvdata.to_markdown(cv_data), "cv_data": db.jdump(cv_data)})
         else:  # no CV of yours to start from: one is written from the career database
             cv = llm.run("writing", "write_cv", system, _cv_task(job, language, app["instructions"], notes),
@@ -642,6 +644,27 @@ def revise(app_id: int, instructions: str, part: str = "letter") -> dict:
     return {"revised": part}
 
 
+def job_colour(job: dict, before: dict | None, data: dict) -> list[str]:
+    """The colour for this job's CV: the one you picked for it, else the employer's own (Profile → Your CV can turn
+    that off), else your usual one. Returns a note when the employer's colour is used."""
+    from . import brand
+
+    if (before or {}).get("color_by") == "you":
+        cvdata.carry_colour(before, data)
+        return []
+    if not settings.get("cv").get("company_colour", True):
+        return []
+    try:
+        found = brand.company_colour(job)
+    except Exception:  # noqa: BLE001 - the colour is a nicety; a draft must not fail on it
+        return []
+    if not found["colour"]:
+        return []
+    data["color"], data["color_by"] = found["colour"], "company"
+    return [f"CV: in {job.get('company_name') or 'the employer'}'s colour ({found['colour']}, from {found['website']}). "
+            "Change it on the CV tab."]
+
+
 def reset_cv(app_id: int) -> dict | None:
     """This job's CV goes back to your base CV exactly as it is, with no model involved. The CV it replaces stays
     under Versions. Your photo stays left out if the ad asked for that. None if you have no base CV."""
@@ -653,6 +676,7 @@ def reset_cv(app_id: int) -> dict | None:
     data["language"] = base.get("language") or data.get("language") or app["language"]
     if (db.jload(app["cv_data"], {}) or {}).get("photo") is False:
         data["photo"] = False
+    cvdata.carry_colour(db.jload(app["cv_data"], None), data)
     _save_version(app_id, "Before reset to base CV")
     notes = [n for n in db.jload(app["writer_notes"], []) or [] if not str(n).startswith("CV:")]
     db.update("applications", app_id, {"cv": cvdata.to_markdown(data), "cv_data": db.jdump(data),

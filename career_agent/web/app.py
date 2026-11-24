@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import tempfile
 from contextlib import asynccontextmanager
 from datetime import date, datetime
@@ -15,7 +16,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import (adcheck, backup, collect, companies, config, cvdata, cvrender, db, emails, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
+from .. import (adcheck, backup, brand, collect, companies, config, cvdata, cvrender, db, emails, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
                 profile, rank, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 from .. import suggestions
@@ -546,7 +547,7 @@ def application(request: Request, app_id: int, tab: str = ""):
             cv_error = str(e)[:300]
     return render(request, "application.html", a=a, job=job, tab=tab, tabs=APP_TABS, claims=claims, facts=facts, made=made,
                   cv_data=cv_data, cv_json=json.dumps(cv_data, ensure_ascii=False, indent=2) if cv_data else "",
-                  cv_pages=cv_pages, cv_error=cv_error, cv_base=cvdata.base_for(a["language"]), look=look,
+                  cv_pages=cv_pages, cv_error=cv_error, cv_base=cvdata.base_for(a["language"]), look=look, design_primary=cvrender.design()["primary"],
                   prompt=prompt, prompt_words=len(prompt.split()),
                   v=db.jload(a["voice"], {}) or {}, read=voice.read_notes(a), notes=db.jload(a["writer_notes"], []) or [],
                   busy=tasks.active(ref=f"app:{app_id}"), error=tasks.last_error(f"app:{app_id}"),
@@ -622,6 +623,37 @@ def application_cv_reset(app_id: int):
     if not result["same_language"]:
         msg += " Your base CV isn't in this application's language, so the CV is now in the base's language."
     return go(f"/applications/{app_id}?tab=cv", msg=msg)
+
+
+@app.post("/applications/{app_id}/cv-colour")
+async def application_cv_colour(request: Request, app_id: int):
+    """This job's CV in the employer's colour, your usual colour, or one you pick. Only the look changes."""
+    f = await form(request)
+    a = need(tracker.app_with_job(app_id))
+    data = db.jload(a.get("cv_data"), None)
+    back = f"/applications/{app_id}?tab=cv"
+    if not data:
+        return go(back, err="This CV is kept as text, so it has no colour of its own.")
+    choice, msg = f.get("choice"), ""
+    if choice == "company":
+        found = brand.company_colour(jobs.get(a["job_id"]), refresh=True)
+        if not found["colour"]:
+            where = f" on {found['website']}" if found["website"] else " (no website for it was found in the ad)"
+            return go(back, err=f"Couldn't find {a.get('company_name') or 'the employer'}'s colour{where}. Pick one instead.")
+        data["color"], data["color_by"] = found["colour"], "company"
+        msg = f"The CV is in {a.get('company_name') or 'the employer'}'s colour, from {found['website']}."
+    elif choice == "own":
+        data["color"], data["color_by"] = "own", "you"
+        msg = "The CV is in your usual colour."
+    else:
+        picked = (f.get("colour") or "").lower()
+        if not re.fullmatch(r"#[0-9a-f]{6}", picked):
+            return go(back, err="Pick a colour first.")
+        data["color"], data["color_by"] = brand.readable(picked), "you"
+        msg = "Colour changed." + (" It's a little darker than you picked, so the white text on it can be read."
+                                   if data["color"] != picked else "")
+    db.update("applications", app_id, {"cv_data": db.jdump(cvdata.clean(data)), "updated_at": db.now()})
+    return go(back, msg=msg)
 
 
 @app.post("/applications/{app_id}/voice-revise")
@@ -826,7 +858,8 @@ def cv_base_redo_drafts():
 @app.post("/cv/design")
 async def cv_design(request: Request):
     f = await form(request)
-    patch: dict = {"primary": (f.get("primary") or "").strip(), "font": (f.get("font") or "").strip()}
+    patch: dict = {"primary": (f.get("primary") or "").strip(), "font": (f.get("font") or "").strip(),
+                   "company_colour": bool(f.get("company_colour"))}
     for key, cast in (("size", float), ("sidebar", float)):
         try:
             patch[key] = cast(f.get(key) or 0) or settings.DEFAULTS["cv"][key]

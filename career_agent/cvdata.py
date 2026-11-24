@@ -68,6 +68,7 @@ TAILOR_RULES = """The base CV below is the candidate's own CV and stays the base
 - Write everything, headings included, in {language}. Translate only if the base is in another language, and then translate faithfully.
 - No name or contact details: they are added automatically.
 - Photo: the candidate's photo is printed on the CV. Set leave_out_photo to true only if the ad asks applicants not to send a photo ("uden billede", "undlad venligst billede", "no photo") or says applications are read anonymously, and say so in changes. Otherwise leave it false.
+- The look (colour, font, layout) isn't yours to change: it is set outside the CV data. If the instructions ask only about the look, return the current CV exactly as it is, with no changes, and say in notes that the colour is set on the CV tab and the font and layout under Profile → Your CV.
 Return the whole CV in the same structure, and list every change in changes. If the base already fits, return it unchanged with no changes."""
 
 
@@ -76,6 +77,10 @@ def clean(data: dict | None) -> dict:
     d = J.coerce(data or {}, CV_SCHEMA)
     if (data or {}).get("photo") is False:  # this CV goes out without your photo (the ad asked for that)
         d["photo"] = False
+    colour = (data or {}).get("color")
+    if colour == "own" or re.fullmatch(r"#[0-9a-fA-F]{6}", str(colour or "")):  # this CV's own colour (see brand.py)
+        d["color"] = colour.lower()
+        d["color_by"] = "you" if (data or {}).get("color_by") == "you" else "company"
     d["personal"] = [x for x in d["personal"] if x]
     d["interests"] = [x for x in d["interests"] if x]
     d["work"] = [e for e in d["work"] if e["name"] or e["position"]]
@@ -88,6 +93,13 @@ def clean(data: dict | None) -> dict:
         for e in d[key]:
             e["highlights"] = [h for h in e["highlights"] if h]
     return d
+
+
+def carry_colour(src: dict | None, dst: dict) -> dict:
+    """The colour one version of a job's CV had goes on to the next: a rewrite changes the words, not the look."""
+    if (src or {}).get("color"):
+        dst["color"], dst["color_by"] = src["color"], src.get("color_by") or "company"
+    return dst
 
 
 def _same(a: str | None, b: str | None) -> bool:

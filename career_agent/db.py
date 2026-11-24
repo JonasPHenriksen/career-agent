@@ -389,6 +389,12 @@ MIGRATIONS: list[str] = [
     ALTER TABLE jobs ADD COLUMN gone_at TEXT;
     ALTER TABLE jobs ADD COLUMN open_said_at TEXT;
     """,
+    # 15: the employer's own colour, read from its website (brand.py), so the CV for its job can use it
+    """
+    ALTER TABLE companies ADD COLUMN brand_color TEXT;
+    ALTER TABLE companies ADD COLUMN brand_note TEXT;
+    ALTER TABLE companies ADD COLUMN brand_checked_at TEXT;
+    """,
 ]
 
 
