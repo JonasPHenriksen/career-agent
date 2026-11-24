@@ -8,14 +8,16 @@ from fastapi.testclient import TestClient
 from career_agent import cvdata, cvrender, db, exporter, jobs, profile, settings, tracker, writer
 from career_agent.web.app import app
 
-from .conftest import JOB_TEXT
+from .conftest import JOB_TEXT, approve_waiting
 from .test_pipeline import _import_docs
 
 
 def _draft() -> dict:
     cv_id, letter_id = _import_docs()
     profile.analyze_document(cv_id)
+    approve_waiting()
     profile.analyze_document(letter_id)
+    approve_waiting()
     settings.update("automation", {"auto_draft": False})
     job_id = jobs.add_from_text(JOB_TEXT)
     jobs.parse(job_id, use_text=True)
@@ -27,6 +29,7 @@ def _draft() -> dict:
 def test_your_cv_is_read_into_a_base_without_contact_details(fake):
     cv_id, _ = _import_docs()
     profile.analyze_document(cv_id)
+    approve_waiting()
     settings.update("profile", {"phone": "+45 12 34 56 78", "linkedin": "https://www.linkedin.com/in/sara-lund"})
     db.ex("UPDATE documents SET text = text || ? WHERE id = ?", ("\nsara@example.com · +45 12 34 56 78 · linkedin.com/in/sara-lund", cv_id))
     assert cvdata.base() is None and [d["id"] for d in cvdata.cv_documents()] == [cv_id]
@@ -60,6 +63,7 @@ def test_a_tailored_cv_is_your_base_with_small_changes(fake):
 
 def test_without_a_cv_of_yours_one_is_written_from_the_facts(fake):
     profile.save_facts(None, [{"category": "experience", "title": "Product Owner", "organization": "Danske Bank"}])
+    approve_waiting()
     job_id = jobs.add_from_text(JOB_TEXT)
     jobs.parse(job_id, use_text=True)
     app_id = jobs.create_application(job_id, draft=False)

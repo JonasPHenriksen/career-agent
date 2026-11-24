@@ -24,14 +24,15 @@ from . import config, db
 # The tables that hold your data. Not here: passages and embeddings (rebuilt from documents and facts), the model-call
 # log, the task queue and sync bookkeeping.
 TRACKED = ("settings", "documents", "facts", "companies", "sources", "jobs", "applications", "app_versions", "events",
-           "watched_folders", "todos", "cv_bases")
+           "watched_folders", "todos", "cv_bases", "fact_suggestions")
 UNTRACKED_SETTINGS = ("state",)  # bookkeeping the scheduler rewrites every minute
 
 NOUNS = {"settings": ("setting", "settings"), "documents": ("document", "documents"), "facts": ("fact", "facts"),
          "companies": ("company", "companies"), "sources": ("job source", "job sources"), "jobs": ("job", "jobs"),
          "applications": ("application", "applications"), "app_versions": ("saved draft", "saved drafts"),
          "events": ("timeline event", "timeline events"), "watched_folders": ("watched folder", "watched folders"),
-         "todos": ("to-do", "to-dos"), "cv_bases": ("base CV", "base CVs")}
+         "todos": ("to-do", "to-dos"), "cv_bases": ("base CV", "base CVs"),
+         "fact_suggestions": ("suggested change", "suggested changes")}
 NAME_FIELDS = ("title", "name", "filename", "label", "subject", "key", "summary", "type", "url")
 
 KEEP_AUTOMATIC_DAYS = 90  # your own changes are kept for good

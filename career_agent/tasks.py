@@ -22,7 +22,7 @@ log = logging.getLogger("career_agent.tasks")
 TASK_LABELS = {
     "analyze_document": "Reading document",
     "build_style": "Learning your writing style",
-    "consolidate_facts": "Tidying up your career database",
+    "consolidate_facts": "Looking for duplicate facts",
     "parse_job": "Reading job ad",
     "score_job": "Scoring fit",
     "draft_application": "Writing application",
@@ -42,7 +42,7 @@ TASK_LABELS = {
     "check_cv_base": "Checking your base CV against your career database",
     "backup": "Backing up your data",
     "check_claude_models": "Checking which Claude models your plan offers",
-    "place_answers": "Putting your answers in your career database",
+    "place_answers": "Suggesting your answers for your career database",
     "read_voice": "Reading the letter for your voice",
     "size_companies": "Judging how big new employers are",
     "check_ads": "Checking that job ads are still up",

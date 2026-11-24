@@ -10,7 +10,7 @@
 
 <nav class="tabs">
   {% for key, label in [('about','About you'),('documents','Documents'),('facts','Career database'),('cv','Your CV'),('style','Writing style')] %}
-  <a href="/profile?tab={{ key }}" class="{{ 'active' if tab == key }}">{{ label }}{% if key == 'documents' %}<span class="count">{{ docs|length }}</span>{% elif key == 'facts' %}<span class="count">{{ grouped|map(attribute=2)|map('length')|sum }}</span>{% endif %}</a>
+  <a href="/profile?tab={{ key }}" class="{{ 'active' if tab == key }}">{{ label }}{% if key == 'documents' %}<span class="count">{{ docs|length }}</span>{% elif key == 'facts' %}<span class="count">{{ grouped|map(attribute=2)|map('length')|sum }}</span>{% if n_pending %} <span class="pill warn" title="Changes waiting for your approval">{{ n_pending }} pending</span>{% endif %}{% endif %}</a>
   {% endfor %}
 </nav>
 
@@ -97,7 +97,7 @@
     </li>
   </ul>
   {% if agent.has_facts %}
-  <form method="post" action="/knowledge/import" class="inline" data-confirm="Import the folder's facts and their source documents into your career database? Facts stay unticked until you check them, and running it again is safe.">
+  <form method="post" action="/knowledge/import" class="inline" data-confirm="Import the folder's source documents, and suggest its facts for your career database? The facts wait under Pending changes until you approve them, and running it again is safe.">
     <button class="btn primary" data-busy="Importing…">Import facts from the folder</button>
   </form>
   <span class="small text-2">Each fact comes with the file it's from and a quote, so the local model doesn't have to read those documents again.</span>
@@ -218,7 +218,7 @@
       {% elif cv.check_error %}<p class="small" style="color:var(--bad)">{{ cv.check_error.error }}</p>{% endif %}
       {% if cv.placed %}<p class="small"><span class="pill good">Your last answers</span> {{ cv.placed }}</p>{% endif %}
       {% if cv.questions %}
-      <p class="small text-2">Every application's CV starts from this one, so a line your career database doesn't back is flagged in every application. Settle each line once here: say it's true and it's put where it belongs in your career database, or write what the CV should say. Leave the box empty with “Not true” to take the line out.</p>
+      <p class="small text-2">Every application's CV starts from this one, so a line your career database doesn't back is flagged in every application. Settle each line once here: say it's true and it counts as true from then on, with what it adds suggested for your career database; or write what the CV should say. Leave the box empty with “Not true” to take the line out.</p>
       <form method="post" action="/cv/base/{{ cv.main.id }}/answers">
         {% for q in cv.questions %}
         <fieldset class="question">
@@ -288,6 +288,59 @@
 {% elif tab == 'facts' %}
 <div class="split">
   <div class="stack">
+    {% if pending %}
+    <section class="card" id="pending">
+      <div class="card-head"><h2>Pending changes <span class="muted small">{{ pending|length }}</span></h2></div>
+      <p class="small text-2">A model suggested these. Nothing here is in your career database, or used by your applications, until you approve it. Approving marks it as checked by you; what you refuse isn't suggested again.</p>
+      {% for doc_id, group in pending|selectattr('status', 'equalto', 'pending')|selectattr('document_id')|groupby('document_id') %}{% if group|length > 1 %}
+      {% set doc_name = group[0].doc.title or group[0].doc.filename if group[0].doc else 'a document' %}
+      <div class="row small suggestion-bulk"><span>{{ group|length }} from <a href="/documents/{{ doc_id }}">{{ doc_name }}</a></span><span class="spacer"></span>
+        <form method="post" action="/suggestions/document/{{ doc_id }}/approve" class="inline" data-confirm="Add all {{ group|length }} from {{ doc_name }} to your career database, marked as checked by you?"><button class="btn small">Approve all {{ group|length }}</button></form>
+        <form method="post" action="/suggestions/document/{{ doc_id }}/refuse" class="inline" data-confirm="Leave out all {{ group|length }} from {{ doc_name }}? They won't be suggested again."><button class="btn small ghost danger">Refuse all</button></form></div>
+      {% endif %}{% endfor %}
+      {% for s in pending %}
+      <div class="fact suggestion" id="suggestion-{{ s.id }}">
+        <div class="fm"><span class="pill {{ 'warn' if s.status == 'applied' else 'accent' }}">{% if s.status == 'applied' %}Already changed{% elif s.action == 'new' %}New fact{% elif s.action == 'merge' %}Merge two facts{% elif s.adds %}Addition to a fact{% else %}Change to a fact{% endif %}</span>
+          {% if s.category %}{{ category_labels.get(s.category, s.category) }}{% endif %}{% if s.fact %} · <span class="muted">#{{ s.fact.id }}</span>{% endif %}</div>
+        <div class="ft">{% if s.fact %}<a href="#fact-{{ s.fact.id }}">{{ s.title }}</a>{% else %}{{ s.title }}{% endif %}</div>
+        {% if s.action == 'new' %}
+          {% for label, value in s.shown %}<div class="fd"><span class="muted">{{ label }}:</span> {{ value }}</div>{% endfor %}
+        {% else %}
+          {% if s.adds %}<div class="fd">Adds to the details: <ins class="added">{{ s.adds }}</ins></div>{% endif %}
+          {% for label, before, after in s.changes %}<div class="fd"><span class="muted">{{ label }}:</span> {% if before %}<del>{{ before }}</del> → {% endif %}<ins class="added">{{ after or '(empty)' }}</ins></div>{% endfor %}
+          {% if s.action == 'merge' %}<div class="fd">{% if s.other %}“{{ s.other.title }}” <span class="muted">#{{ s.other.id }}</span> is removed{% if s.other.detail %} <span class="muted">({{ s.other.detail|truncate(220) }})</span>{% endif %}.{% else %}The other fact is already gone.{% endif %}</div>{% endif %}
+        {% endif %}
+        <div class="fe">{{ s.why }}{% if s.link %} <a href="{{ s.link }}">Open</a>{% endif %}</div>
+        {% if s.stale %}<p class="small suggestion-note">The fact has changed since this was suggested. {% if s.adds %}Approving adds the new words to it as it is now.{% else %}Approving puts in the version under Edit; check it first.{% endif %}</p>{% endif %}
+        {% if s.gone %}<p class="small suggestion-note">The fact it would change has been deleted since, so it can only be refused.</p>{% endif %}
+        <div class="acts">
+          {% if s.status == 'applied' %}
+          <form method="post" action="/suggestions/{{ s.id }}/approve" class="inline"><button class="btn small primary">Keep</button></form>
+          <form method="post" action="/suggestions/{{ s.id }}/refuse" class="inline"><button class="btn small ghost danger" title="Put the fact back as it was before">Undo</button></form>
+          {% else %}
+          {% if not s.gone %}<form method="post" action="/suggestions/{{ s.id }}/approve" class="inline"><button class="btn small primary">Approve</button></form>
+          <button type="button" class="btn small ghost" data-toggle="#sedit-{{ s.id }}">Edit</button>{% endif %}
+          <form method="post" action="/suggestions/{{ s.id }}/refuse" class="inline"><button class="btn small ghost danger" title="It won't be suggested again">Refuse</button></form>
+          {% endif %}
+        </div>
+        {% if s.status == 'pending' and not s.gone %}{% set r = s.result %}
+        <form id="sedit-{{ s.id }}" hidden method="post" action="/suggestions/{{ s.id }}/approve" class="card flat" style="margin-top:.5rem">
+          <input type="hidden" name="edited" value="1">
+          <div class="field"><label for="st{{ s.id }}">Title</label><input id="st{{ s.id }}" type="text" name="title" value="{{ r.title or '' }}"></div>
+          <div class="fields-3">
+            <div class="field"><label for="so{{ s.id }}">Organisation</label><input id="so{{ s.id }}" type="text" name="organization" value="{{ r.organization or '' }}"></div>
+            <div class="field"><label for="sf{{ s.id }}">From</label><input id="sf{{ s.id }}" type="text" name="start_date" value="{{ r.start_date or '' }}" placeholder="YYYY-MM"></div>
+            <div class="field"><label for="su{{ s.id }}">To</label><input id="su{{ s.id }}" type="text" name="end_date" value="{{ r.end_date or '' }}" placeholder="YYYY-MM or present"></div>
+          </div>
+          <div class="field"><label for="sd{{ s.id }}">Details</label><textarea id="sd{{ s.id }}" name="detail" rows="4">{{ r.detail or '' }}</textarea></div>
+          <div class="field"><label for="sc{{ s.id }}">Type</label><select id="sc{{ s.id }}" name="category">{% for c, l in categories %}<option value="{{ c }}" {{ 'selected' if c == r.category }}>{{ l }}</option>{% endfor %}</select></div>
+          <button class="btn small primary">Save and approve</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
     {% for cat, label, items, sections in grouped %}{% if items %}
     <section class="card" id="cat-{{ cat }}">
       <div class="card-head"><h2>{{ label }} <span class="muted small">{{ items|length }}</span></h2></div>
@@ -334,24 +387,25 @@
       {% endif %}
     </section>
     {% endif %}{% else %}{% endfor %}
-    {% if not grouped|map(attribute=2)|map('length')|sum %}<section class="card"><p class="empty">Your career database is empty. <a href="/profile?tab=documents">Import documents</a> and it fills itself. You can also add facts by hand.</p></section>{% endif %}
+    {% if not grouped|map(attribute=2)|map('length')|sum %}<section class="card"><p class="empty">Your career database is empty. <a href="/profile?tab=documents">Import documents</a>: the facts read from them wait under Pending changes for you to approve. You can also add facts by hand.</p></section>{% endif %}
   </div>
   <div class="stack">
     <section class="card">
       <h2>How this works</h2>
-      <p class="small text-2">Every fact comes from your own documents, with a quote as evidence. Applications may only use these facts, so check them: mark correct ones with ✓, fix mistakes, and hide anything you don't want used.</p>
-      <form method="post" action="/facts/tidy" class="row">{{ model_picker() }}<button class="btn small" data-busy="Starting…">Merge duplicates</button></form>
+      <p class="small text-2">Applications may only use the facts here. What a model reads from your documents, takes from your answers in a review or finds to be duplicates waits under Pending changes until you approve it. What you add or edit by hand goes in directly. Hide anything you don't want used.</p>
+      <form method="post" action="/facts/tidy" class="row">{{ model_picker() }}<button class="btn small" data-busy="Starting…" title="Duplicates it finds are suggested as merges for you to approve">Look for duplicates</button></form>
     </section>
     <section class="card" id="added">
-      <div class="card-head"><h2>Recently added</h2>{% if added_total > added|length %}<span class="small muted">newest {{ added|length }} of {{ added_total }} in {{ recent_days }} days</span>{% endif %}</div>
-      {% if added %}
-      {% for f in added %}
-      <div class="fact {{ 'hidden-fact' if f.hidden }}">
-        <div class="ft"><a href="#fact-{{ f.id }}">{{ f.title }}</a>{% if f.verified %} <span class="verified-mark" title="Checked by you">✓</span>{% endif %}{% if f.hidden %} <span class="pill">hidden</span>{% endif %}</div>
-        <div class="fm">{{ f.kind_label }} · {% if f.document_id %}from <a href="/documents/{{ f.document_id }}">{{ f.doc_title or f.doc_filename }}</a>{% else %}<span title="{{ f.evidence or '' }}">{{ f.origin }}</span>{% endif %} · {{ f.created_at|ago }} · <span class="muted">#{{ f.id }}</span></div>
+      <div class="card-head"><h2>Recently added and changed</h2>{% if changed_total > changed|length %}<span class="small muted">newest {{ changed|length }} of {{ changed_total }} in {{ recent_days }} days</span>{% endif %}</div>
+      {% if changed %}
+      {% for e in changed %}
+      <div class="fact suggestion">
+        <div class="ft">{% if e.exists %}<a href="#fact-{{ e.id }}">{{ e.title }}</a>{% else %}{{ e.title }} <span class="pill">deleted since</span>{% endif %}</div>
+        <div class="fm">{{ 'Added' if e.action == 'insert' else 'Changed' }}{% if e.by %} by {{ e.by }}{% endif %}{% if e.action == 'insert' %} · {% if e.document_id %}<a href="/documents/{{ e.document_id }}">{{ e.origin }}</a>{% else %}{{ e.origin }}{% endif %}{% endif %} · {{ e.at|ago }}{% if e.kind_label %} · {{ e.kind_label }}{% endif %} · <span class="muted">#{{ e.id }}</span></div>
+        {% for c in e.changes %}<div class="fd small">{% if c.adds %}Added to the details: <ins class="added">{{ c.adds }}</ins>{% elif c.takes %}Taken out of the details: <del>{{ c.takes }}</del>{% elif c.before is defined %}<span class="muted">{{ c.label }}:</span> {% if c.before %}<del>{{ c.before|truncate(160) }}</del> → {% endif %}{{ c.after|truncate(220) if c.after else '(empty)' }}{% else %}{{ c.label }}{% endif %}</div>{% endfor %}
       </div>
       {% endfor %}
-      {% else %}<p class="small muted">Nothing added in the last {{ recent_days }} days. Facts read from documents you import, saved from your answers in a fact check, or added by hand show up here.</p>{% endif %}
+      {% else %}<p class="small muted">Nothing added or changed in the last {{ recent_days }} days. New facts and changes to the ones you have show up here, whether you made them or approved them.</p>{% endif %}
     </section>
     <section class="card deleted-list" id="deleted">
       <div class="card-head"><h2>Recently deleted</h2><a class="small" href="/history?show=deleted">All deletions</a></div>

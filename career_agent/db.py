@@ -203,6 +203,28 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   error               TEXT,
   created_at          TEXT NOT NULL
 );
+
+-- Changes a model suggests for the career database, waiting for you to approve or refuse them (suggestions.py).
+-- A new table, so it is made here on every start rather than by a numbered migration.
+CREATE TABLE IF NOT EXISTS fact_suggestions (
+  id           INTEGER PRIMARY KEY,
+  action       TEXT NOT NULL,                    -- new | edit | merge
+  status       TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | refused | applied (made before you approved changes)
+  title        TEXT NOT NULL,                    -- the fact it is about, as you'd recognise it
+  category     TEXT,
+  fact_id      INTEGER,                          -- edit: the fact; merge: the fact that stays
+  other_id     INTEGER,                          -- merge: the fact merged into it and removed
+  data         TEXT NOT NULL,                    -- new: the fact; edit and merge: the fields as they would become
+  before       TEXT,                             -- edit and merge: the same fields as they were when suggested
+  adds         TEXT,                             -- an addition to the details, in words, when that is all it is
+  why          TEXT,                             -- where it comes from
+  origin       TEXT NOT NULL,                    -- answers | document | tidy | before
+  document_id  INTEGER,
+  ref          TEXT,                             -- what it came from: app:12, cv-base-check, doc:3, facts
+  created_at   TEXT NOT NULL,
+  decided_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS fact_suggestions_status ON fact_suggestions(status);
 """
 
 # Schema changes after the first release, applied in order (tracked with PRAGMA user_version).

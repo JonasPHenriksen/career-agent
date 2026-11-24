@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from career_agent import db, fetch, jobs, profile, sources, tasks
+from .conftest import approve_waiting
 
 AD_BODY = "Vi søger en backendudvikler til vores team. " * 80  # well over the "short page" limit
 
@@ -227,6 +228,7 @@ def test_kinds_you_switched_off_are_set_aside_before_any_model_sees_them(fake, m
 
     settings.update("profile", {"job_kinds": {"student": False, "internship": False}})
     profile.save_facts(None, [{"category": "skill", "title": "Scrum"}])
+    approve_waiting()
     sid = db.insert("sources", {"name": "s", "kind": "rss", "url": "https://example.com/rss", "created_at": db.now()})
     batch = [{"url": "https://example.com/a", "title": "Studentermedhjælper til IT", "company": "X", "location": "", "text": ""},
              {"url": "https://example.com/b", "title": "Backend Developer", "company": "Y", "location": "", "text": ""},

@@ -1,12 +1,13 @@
 """Reviewing a draft: what to ask you about it, and what happens with your answers.
 
 A draft raises questions only you can answer: is the gap the writer named real, is what it assumed about you
-true, is a sentence the fact check couldn't back actually true? What you confirm about your career is put where
-it belongs in your career database (so the next draft knows): added to the fact it's part of, as a new fact for you
-to tick, or not at all when the database already says it or it isn't about your career. Corrections only change
-the draft, and what the writer assumed about your motives is confirmed for that application alone: a line written
-for one employer isn't evidence of who you are. A sentence you said is true, and a gap you've answered, aren't
-asked about again in that application, even when a revision rewords them or the database didn't take all of it.
+true, is a sentence the fact check couldn't back actually true? What you confirm about your career is suggested for
+your career database, where you approve it before later drafts use it (suggestions.py): as an addition to the fact
+it's part of, as a new fact, or not at all when the database already says it or it isn't about your career.
+Corrections only change the draft, and what the writer assumed about your motives is confirmed for that application
+alone: a line written for one employer isn't evidence of who you are. A sentence you said is true, and a gap you've
+answered, aren't asked about again in that application, even when a revision rewords them, and count as true for
+its fact check while the suggestion waits for you.
 """
 from __future__ import annotations
 
@@ -96,12 +97,12 @@ def marked(text: str, app: dict, where: str = "letter") -> str:
 
 
 # ---------------------------------------------------------------------------------------------------------------
-# Putting what you confirmed where it belongs
+# Suggesting what you confirmed for your career database
 #
 # A confirmed sentence is the letter's (or the CV's) wording, written for one job. Saved as it stands it became a
 # "project" with no place, in Danish and the first person, next to the fact that already said it. So a model reads
-# it against the facts the fact check linked it to and the rest of the database, and adds only what's new: to the
-# fact it's part of, or as a new fact you tick yourself.
+# it against the facts the fact check linked it to and the rest of the database, and suggests only what's new: an
+# addition to the fact it's part of, or a new fact. Nothing goes in until you approve it under Pending changes.
 # ---------------------------------------------------------------------------------------------------------------
 
 PLACE_SYSTEM = """You keep a candidate's career database: the facts their job applications may use. The candidate \
@@ -161,10 +162,10 @@ def _linked(ids: list[int]) -> str:
                      + (f": {f['detail']}" if f.get("detail") else "") for f in rows if f)
 
 
-def place(items: list[dict], about: str) -> dict:
-    """Put what you confirmed where it belongs in your career database (see PLACE_SYSTEM). Returns what was done,
-    with a line saying so for the page."""
-    from . import llm
+def place(items: list[dict], about: str, ref: str | None = None) -> dict:
+    """Suggest what you confirmed for your career database (see PLACE_SYSTEM): nothing changes there until you
+    approve it under Pending changes. Returns what was suggested, with a line saying so for the page."""
+    from . import llm, suggestions
 
     if not items:
         return {"added_to": [], "new": [], "known": 0, "skipped": 0, "said": ""}
@@ -197,18 +198,21 @@ def place(items: list[dict], about: str) -> dict:
         target = db.q1("SELECT * FROM facts WHERE id = ?", (r.get("fact_id") or 0,)) if r["action"] in ("known", "add_to") else None
         if r["action"] == "add_to" and target and (r.get("addition") or "").strip():
             detail = " ".join(x for x in ((target.get("detail") or "").strip(), r["addition"].strip()) if x)
-            db.update("facts", target["id"], {"detail": detail, "updated_at": db.now()})
-            added_to.append(target["title"])
+            if suggestions.suggest_edit(target, {"detail": detail}, evidence, "answers", ref=ref):
+                added_to.append(target["title"])
+            else:
+                known += 1  # the same addition is already waiting, or you refused it
         elif r["action"] == "known" and target:
             known += 1
         elif r["action"] == "new" and (r.get("title") or "").strip():
-            db.insert("facts", {
-                "category": r["category"] if r.get("category") in categories else "project",
-                "title": r["title"].strip()[:300], "organization": (r.get("organization") or "").strip()[:200] or None,
-                "start_date": (r.get("start_date") or "").strip()[:10] or None, "end_date": (r.get("end_date") or "").strip()[:10] or None,
-                "detail": (r.get("detail") or "").strip()[:1500] or None, "evidence": evidence,
-                "source": "manual", "verified": 0, "tags": "your answer", "created_at": db.now()})
-            new.append(r["title"].strip())
+            fact = {"category": r["category"] if r.get("category") in categories else "project",
+                    "title": r["title"].strip()[:300], "organization": (r.get("organization") or "").strip()[:200],
+                    "start_date": (r.get("start_date") or "").strip()[:10], "end_date": (r.get("end_date") or "").strip()[:10],
+                    "detail": (r.get("detail") or "").strip()[:1500], "evidence": evidence, "tags": "your answer"}
+            if suggestions.suggest_new(fact, evidence, "answers", ref=ref):
+                new.append(r["title"].strip())
+            else:
+                known += 1
         else:
             skipped += 1
     return {"added_to": added_to, "new": new, "known": known, "skipped": skipped,
@@ -216,20 +220,26 @@ def place(items: list[dict], about: str) -> dict:
 
 
 def placed_line(added_to: list[str], new: list[str], known: int, skipped: int) -> str:
-    parts = [f"added to “{t}”" for t in added_to]
+    parts = [f"suggested an addition to “{t}”" for t in added_to]
     if new:
-        parts.append(f"{len(new)} new fact{'s' if len(new) != 1 else ''} to check under Recently added")
+        parts.append(f"suggested {len(new)} new fact{'s' if len(new) != 1 else ''}")
     if known:
         parts.append(f"{known} your career database already had")
     if skipped:
         parts.append(f"{skipped} not about your career, so not saved")
     line = "; ".join(parts)
-    return line[:1].upper() + line[1:] + "." if line else ""
+    if not line:
+        return ""
+    line = line[:1].upper() + line[1:] + "."
+    if added_to or new:
+        line += " Nothing changes until you approve it under Profile → Career database → Pending changes."
+    return line
 
 
 def place_task(payload: dict) -> dict:
-    """The queued step: place the answers, then start what has to wait for them (the revision, or the check)."""
-    result = place(payload.get("items") or [], payload.get("about") or "an application")
+    """The queued step: suggest the answers for your career database. Tasks queued before suggestions existed carry
+    the step that waited for them, which is started here."""
+    result = place(payload.get("items") or [], payload.get("about") or "an application", payload.get("ref"))
     then = payload.get("then")
     if then:
         tasks.enqueue(then["kind"], then["payload"], ref=then.get("ref"), dedupe=then["kind"] != "revise_application")
@@ -237,7 +247,7 @@ def place_task(payload: dict) -> dict:
 
 
 def last_placed(ref: str) -> str:
-    """What happened to your latest answers, once they've been placed (shown where you answered)."""
+    """What was suggested from your latest answers, once that's done (shown where you answered)."""
     import json
 
     row = db.q1("SELECT * FROM tasks WHERE kind = 'place_answers' AND ref = ? AND finished_at >= ? ORDER BY id DESC LIMIT 1",
@@ -251,12 +261,12 @@ def last_placed(ref: str) -> str:
 
 
 def _queue(items: list[dict], about: str, ref: str, then: tuple[str, dict] | None) -> None:
-    """Place the answers first when there are any: the revision and the check must see where they went."""
-    follow = {"kind": then[0], "payload": then[1], "ref": ref} if then else None
+    """Suggest the answers for your career database, and start the revision or the check. Neither waits for the
+    other: the database doesn't change until you approve, and the answers reach the draft and its check directly."""
     if items:
-        tasks.enqueue("place_answers", {"items": items, "about": about, "then": follow}, ref=ref, dedupe=False)
-    elif follow:
-        tasks.enqueue(follow["kind"], follow["payload"], ref=ref, dedupe=follow["kind"] != "revise_application")
+        tasks.enqueue("place_answers", {"items": items, "about": about, "ref": ref}, ref=ref, dedupe=False)
+    if then:
+        tasks.enqueue(then[0], then[1], ref=ref, dedupe=then[0] != "revise_application")
 
 
 def apply_answers(app: dict, answers: dict[str, dict], model: dict | None = None) -> dict:
@@ -324,9 +334,19 @@ def apply_answers(app: dict, answers: dict[str, dict], model: dict | None = None
 # Your base CV against your career database
 #
 # Every tailored CV starts from the base CV, so a line there that the database doesn't back (or contradicts) is
-# flagged again in every application. It is settled once here instead: you say it's true (it becomes a fact) or
-# what it should say (the base CV is changed). The career database stays the source of truth.
+# flagged again in every application. It is settled once here instead: you say it's true (it's suggested as a fact,
+# and counts as true meanwhile) or what it should say (the base CV is changed). The career database stays the
+# source of truth.
 # ---------------------------------------------------------------------------------------------------------------
+
+def base_confirmed() -> list[str]:
+    """Base CV lines you said are true: your own word (like where you live), so every fact check counts them as
+    backed, also while what they add to your career database waits for your approval."""
+    out: list[str] = []
+    for b in db.q("SELECT claims FROM cv_bases"):
+        out += (db.jload(b["claims"], {}) or {}).get("confirmed") or []
+    return list(dict.fromkeys(out))
+
 
 def check_base(base_id: int | None = None) -> dict:
     """Fact-check the base CV, line by line, and keep the result with it."""
@@ -335,8 +355,12 @@ def check_base(base_id: int | None = None) -> dict:
     base = cvdata.base(base_id)
     if not base:
         return {"skipped": "no base CV"}
-    d = writer.check_claims("", cvdata.to_markdown(base["data"]))
+    before = db.jload(base.get("claims"), {}) or {}
+    confirmed = before.get("confirmed") or []
+    d = writer.check_claims("", cvdata.to_markdown(base["data"]), confirmed=confirmed)
     d["checked_at"] = db.now()
+    if confirmed:
+        d["confirmed"] = confirmed
     db.update("cv_bases", base["id"], {"claims": db.jdump(d)})
     return {"base_id": base["id"], "claims": d["counts"]}
 
@@ -403,8 +427,9 @@ def replace_in_cv(data: dict, old: str, new: str) -> bool:
 
 
 def apply_base_answers(base: dict, answers: dict[str, dict]) -> dict:
-    """Your answers about the base CV. True as written: placed in your career database (see `place`). Not true: the
-    CV says your words instead (or the line is taken out when you write nothing). Then the base is checked again."""
+    """Your answers about the base CV. True as written: suggested for your career database (see `place`), and counted
+    as true by the fact checks meanwhile. Not true: the CV says your words instead (or the line is taken out when you
+    write nothing). Then the base is checked again."""
     from . import cvdata
 
     asked = {q["id"]: q for q in base_questions(base)}
@@ -423,6 +448,10 @@ def apply_base_answers(base: dict, answers: dict[str, dict]) -> dict:
             changed += 1
         else:
             missed.append(q["text"])
+    if place_items:  # your word: true from now on, whatever the database says or waits to say
+        claims = db.jload(base.get("claims"), {}) or {}
+        claims["confirmed"] = list(dict.fromkeys([*(claims.get("confirmed") or []), *(it["text"] for it in place_items)]))
+        db.update("cv_bases", base["id"], {"claims": db.jdump(claims)})
     if changed:
         cvdata.save_base(base["id"], data)
     if place_items or changed:

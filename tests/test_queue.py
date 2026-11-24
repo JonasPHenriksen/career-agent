@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from career_agent import db, fetch, jobs, llm, profile, settings, tasks
 from career_agent.llm.errors import LLMConfigError, LLMError, LLMTransient
 from career_agent.web.app import app
+from .conftest import approve_waiting
 
 
 @pytest.fixture(autouse=True)
@@ -130,6 +131,7 @@ def test_the_worker_leaves_held_tasks_queued_and_runs_the_rest(fake, monkeypatch
 
 def test_a_new_session_picks_up_what_the_last_one_could_not_finish(fake):
     profile.save_facts(None, [{"category": "skill", "title": "Scrum"}])
+    approve_waiting()
     down = "Ollama isn't running. Open the Ollama app (or run `ollama serve`)."
 
     def job(n, **cols):

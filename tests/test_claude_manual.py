@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from career_agent import db, ingest, jobs, profile, writer
 from career_agent.web.app import app
 
-from .conftest import CV_TEXT, JOB_TEXT
+from .conftest import CV_TEXT, JOB_TEXT, approve_waiting
 
 ANSWER = """===SUBJECT===
 Ansøgning: Product Owner hos FinPay
@@ -39,6 +39,7 @@ Erfaren product owner.
 def _app(fake):
     doc_id, _ = ingest.import_bytes("cv.txt", CV_TEXT.encode())
     profile.analyze_document(doc_id)
+    approve_waiting()
     job_id = jobs.add_from_text(JOB_TEXT)
     jobs.parse(job_id, use_text=True)
     return job_id, jobs.create_application(job_id, draft=False)

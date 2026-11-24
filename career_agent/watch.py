@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import httpx2
 
-from . import config, db, ingest, keychain, retrieval, tasks
+from . import config, db, ingest, keychain, retrieval, suggestions, tasks
 
 MAX_FILES = 3000
 NS = {"d": "DAV:"}
@@ -129,6 +129,7 @@ def _replace(doc_id: int, path: Path, data: bytes, sha: str, mtime: float, watch
     db.update("documents", doc_id, {"text": text, "sha256": sha, "word_count": len(text.split()), "source_mtime": mtime,
                                     "status": "new", "error": None, "analyzed_at": None, "watch_id": watch_id})
     db.ex("DELETE FROM facts WHERE document_id = ? AND verified = 0 AND source = 'extracted'", (doc_id,))
+    suggestions.drop_waiting(doc_id)  # the new version is read again, and suggests afresh
     retrieval.index_document(doc_id)
 
 

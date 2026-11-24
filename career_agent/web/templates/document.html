@@ -20,6 +20,7 @@
       {% if facts %}
       <ul class="list">{% for f in facts %}<li><div class="grow"><a class="title" href="/profile?tab=facts#fact-{{ f.id }}">{{ f.title }}</a><span class="meta">{{ category_labels.get(f.category, f.category) }}{% if f.organization %} · {{ f.organization }}{% endif %}{% if f.verified %} · ✓ checked{% endif %}{% if f.hidden %} · hidden{% endif %}</span></div></li>{% endfor %}</ul>
       {% else %}<p class="empty">No facts taken from this document{{ ' yet' if d.status != 'analyzed' }}.</p>{% endif %}
+      {% if waiting %}<p class="small"><span class="pill warn">{{ waiting }} waiting</span> {{ waiting }} suggestion{{ 's' if waiting != 1 }} from this document wait{{ 's' if waiting == 1 }} for you under <a href="/profile?tab=facts#pending">Career database → Pending changes</a>.</p>{% endif %}
     </section>
     <section class="card">
       <h2>Text</h2>

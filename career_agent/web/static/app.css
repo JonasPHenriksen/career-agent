@@ -419,3 +419,9 @@ fieldset.question .row { gap: 1rem; margin: .3rem 0 .5rem; font-size: .9rem; }
 .copy-line { display: flex; gap: .5rem; align-items: center; }
 .copy-line input { flex: 1; min-width: 0; }
 .email-ready textarea { min-height: 0; }
+
+/* Pending changes and Recently added and changed (Profile → Career database) */
+.suggestion ins.added { text-decoration: none; background: var(--good-soft); border-radius: 3px; padding: 0 .15rem; }
+.suggestion del { color: var(--muted); }
+.suggestion .suggestion-note { color: var(--warn); margin: .25rem 0 0; }
+.suggestion-bulk { align-items: center; gap: .4rem; padding: .35rem 0 .6rem; }

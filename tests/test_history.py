@@ -183,19 +183,29 @@ def test_facts_grouped_by_place_and_time():
     assert profile.by_place([facts[8]], index) == [("Havbro ApS", "2024", [facts[8]])]
 
 
-def test_recently_added_lists_new_facts_and_where_they_came_from(fake):
+def test_recently_added_and_changed_lists_new_facts_and_edits_and_who_made_them(fake):
     from career_agent import ingest
 
     doc_id, _ = ingest.import_bytes("cv.txt", b"Jonas, developer at Nordvik since 2026.")
-    _fact("Old one", created_at=db.days_ago(profile.RECENT_DAYS + 5))
+    old = _fact("Old one")
+    db.ex("UPDATE changes SET at = ? WHERE tbl = 'facts' AND row_key = ?", (db.days_ago(profile.RECENT_DAYS + 5), str(old)))
     _fact("From the CV", document_id=doc_id, source="extracted")
     _fact("Starts 1 February", tags="your answer", source="manual")
-    _fact("Typed in by hand", source="manual")
-    added, total = profile.recently_added()
-    assert total == 3 and [f["title"] for f in added] == ["Typed in by hand", "Starts 1 February", "From the CV"]
-    assert [f["origin"] for f in added] == ["added by you", "your answer in a fact check", "from cv"]
+    typed = _fact("Typed in by hand", source="manual", detail="Built a tray app.")
+    with history.op("Putting your answers in your career database"):  # the app by itself, as before suggestions
+        db.update("facts", typed, {"detail": "Built a tray app. Talks to the devices directly."})
+    with history.op("seed", source="you"):
+        db.update("facts", typed, {"verified": 0})  # ticking or unticking isn't listed
+    entries, total = profile.recently_changed()
+    assert total == 4 and [e["title"] for e in entries] == ["Typed in by hand", "Typed in by hand", "Starts 1 February",
+                                                            "From the CV"]
+    changed = entries[0]
+    assert changed["action"] == "update" and changed["by"].startswith("the app by itself")
+    assert changed["changes"][0]["adds"] == "Talks to the devices directly.", "an edit to a fact you had is listed too"
+    assert [e["origin"] for e in entries[1:]] == ["added by you", "your answer in a review", "from cv"]
+    assert entries[1]["by"] == "you"
     page = TestClient(app).get("/profile?tab=facts").text
-    assert "Recently added" in page and "your answer in a fact check" in page
+    assert "Recently added and changed" in page and "Talks to the devices directly." in page
     assert f'href="/documents/{doc_id}"' in page and page.index('id="added"') < page.index('id="deleted"')
-    added, total = profile.recently_added(limit=2)
-    assert (len(added), total) == (2, 3)
+    entries, total = profile.recently_changed(limit=2)
+    assert (len(entries), total) == (2, 4)

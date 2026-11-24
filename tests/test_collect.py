@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from career_agent import collect, db, robots, sources, tasks
 from career_agent.web.app import app
+from .conftest import approve_waiting
 
 # The shape of Jobindex's results page (November 2026): one wrapper per ad, paid ads and ads found by its robot.
 JOBINDEX_PAGE = """
@@ -129,6 +130,7 @@ def test_a_collected_page_is_screened_stored_and_not_taken_twice(fake):
 
     doc_id, _ = ingest.import_bytes("cv.txt", CV_TEXT.encode())
     profile.analyze_document(doc_id)
+    approve_waiting()
     url = "https://www.jobindex.dk/jobsoegning/it?radius=50&page=2"
     r = collect.receive(JOBINDEX_PAGE, url)
     assert r["ok"] and r["found"] == 2 and r["new"] == 2 and "Jobindex, page 2: 2 jobs on the page, 2 new" in r["message"]

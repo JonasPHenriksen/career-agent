@@ -13,7 +13,7 @@ import pytest
 
 from career_agent import db, ingest, keychain, profile, retrieval, settings, tracker, watch, writer
 
-from .conftest import CV_TEXT, JOB_TEXT
+from .conftest import CV_TEXT, JOB_TEXT, approve_waiting
 
 
 # ---------- a fake Ollama embedding endpoint: bag-of-words vectors, good enough to test ranking ----------
@@ -101,6 +101,7 @@ def test_long_documents_are_read_in_parts(fake, monkeypatch):
     real = profile._limits
     monkeypatch.setattr(profile, "_limits", lambda: {**real(), "doc_chars": 20000})  # force several parts
     profile.analyze_document(doc_id)
+    approve_waiting()
     calls = [c for c in fake.calls if c[2] is profile.ANALYZE_SCHEMA]
     assert len(calls) >= 3 and "part 1 of" in calls[0][1]
 
@@ -108,6 +109,7 @@ def test_long_documents_are_read_in_parts(fake, monkeypatch):
 def test_fact_check_finds_evidence_in_documents(fake):
     doc_id, _ = ingest.import_bytes("cv.txt", CV_TEXT.encode())
     profile.analyze_document(doc_id)
+    approve_waiting()
     job_id = __import__("career_agent").jobs.add_from_text(JOB_TEXT)
     __import__("career_agent").jobs.parse(job_id, use_text=True)
     app_id = __import__("career_agent").jobs.create_application(job_id)
@@ -132,6 +134,7 @@ def test_watched_local_folder_tracks_new_and_changed_files(fake, tmp_path):
     assert watch.scan(wid)["unchanged"] == 1, "unchanged files are skipped"
     doc = db.q1("SELECT * FROM documents WHERE source_path = ?", (str(folder / "cv.txt"),))
     profile.analyze_document(doc["id"])
+    approve_waiting()
     keep = db.q1("SELECT id FROM facts WHERE document_id = ? AND category = 'education'", (doc["id"],))["id"]
     db.update("facts", keep, {"verified": 1})
     time.sleep(0.01)

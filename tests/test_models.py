@@ -15,6 +15,8 @@ from career_agent.llm import providers
 from career_agent.llm.errors import LLMConfigError, LLMTransient
 from career_agent.web.app import app
 
+from .conftest import approve_waiting
+
 FAKE_CLAUDE = r'''#!PYTHON
 import json, os, sys
 args = sys.argv[1:]
@@ -166,6 +168,7 @@ def test_a_new_draft_keeps_the_old_one(fake):
 
     doc_id, _ = ingest.import_bytes("cv.txt", CV_TEXT.encode())
     profile.analyze_document(doc_id)
+    approve_waiting()
     _, app_id = _app_with_draft()
     writer.draft(app_id)
     labels = [r["label"] for r in db.q("SELECT label FROM app_versions WHERE application_id = ? ORDER BY id", (app_id,))]
@@ -219,6 +222,7 @@ def test_analyze_with_replace_keeps_ticked_and_hidden_facts(fake):
 
     doc_id, _ = ingest.import_bytes("cv.txt", CV_TEXT.encode())
     profile.analyze_document(doc_id)
+    approve_waiting()
     first = db.q("SELECT id FROM facts WHERE document_id = ? ORDER BY id", (doc_id,))
     keep, hide = first[0]["id"], first[1]["id"]
     db.update("facts", keep, {"verified": 1})
@@ -226,6 +230,7 @@ def test_analyze_with_replace_keeps_ticked_and_hidden_facts(fake):
     db.insert("facts", {"document_id": doc_id, "category": "skill", "title": "Made-up skill from a weak reading",
                         "created_at": db.now()})
     profile.analyze_document(doc_id, replace=True)
+    approve_waiting()
     titles = {r["title"] for r in db.q("SELECT title FROM facts WHERE document_id = ?", (doc_id,))}
     assert "Made-up skill from a weak reading" not in titles
     assert db.q1("SELECT verified FROM facts WHERE id = ?", (keep,))["verified"] == 1

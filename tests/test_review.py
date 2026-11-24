@@ -74,23 +74,35 @@ def test_corrections_and_assumptions_change_the_draft_but_not_your_career_databa
     assert "Answer+at+least+one" in r.headers["location"]
 
 
-def test_what_you_confirm_is_placed_before_the_draft_is_checked_again(fake):
+def test_what_you_confirm_is_suggested_and_nothing_changes_until_you_approve_it(fake):
     a = _draft()
     db.ex("DELETE FROM tasks")
     q = next(q for q in review.questions(a) if q["kind"] == "claim")
-    r = TestClient(app).post(f"/applications/{a['id']}/answers", follow_redirects=False,
-                             data={f"v_{q['id']}": "yes", f"t_{q['id']}": ""})
-    assert "Putting+1+answer+in+your+career+database" in r.headers["location"]
-    assert [t["kind"] for t in db.q("SELECT kind FROM tasks")] == ["place_answers"], "the check waits for the placing"
+    c = TestClient(app)
+    r = c.post(f"/applications/{a['id']}/answers", follow_redirects=False, data={f"v_{q['id']}": "yes", f"t_{q['id']}": ""})
+    assert "Suggesting+1+answer+for+your+career+database" in r.headers["location"]
+    assert sorted(t["kind"] for t in db.q("SELECT kind FROM tasks")) == ["check_application", "place_answers"], \
+        "the check doesn't wait: the database doesn't change until you approve"
     before = db.scalar("SELECT COUNT(*) FROM facts")
-    done = _run("place_answers")
-    assert done["status"] == "done" and db.q1("SELECT kind FROM tasks WHERE status = 'queued'")["kind"] == "check_application"
+    assert _run("place_answers")["status"] == "done"
+    assert db.scalar("SELECT COUNT(*) FROM facts") == before, "nothing goes in by itself"
+    s = db.q1("SELECT * FROM fact_suggestions WHERE status = 'pending'")
+    assert (s["action"], s["title"], s["origin"], s["ref"]) == ("new", "Confirmed fact", "answers", f"app:{a['id']}")
+    assert json.loads(s["data"])["tags"] == "your answer"
+    assert "the application for Product Owner" in s["why"] and q["text"] in s["why"]
+    said = "Suggested 1 new fact. Nothing changes until you approve it under Profile → Career database → Pending changes."
+    assert review.last_placed(f"app:{a['id']}") == said
+    assert said in c.get(f"/applications/{a['id']}?tab=review").text
+
+    page = c.get("/profile?tab=facts").text
+    assert "1 pending" in page and f'id="suggestion-{s["id"]}"' in page and "New fact" in page
+    r = c.post(f"/suggestions/{s['id']}/approve", follow_redirects=False)
+    assert "Added+to+your+career+database" in r.headers["location"]
     new = db.q1("SELECT * FROM facts ORDER BY id DESC LIMIT 1")
-    assert db.scalar("SELECT COUNT(*) FROM facts") == before + 1 and new["title"] == "Confirmed fact"
-    assert (new["verified"], new["tags"], new["source"]) == (0, "your answer", "manual"), "a new fact waits for your tick"
-    assert "the application for Product Owner" in new["evidence"] and q["text"] in new["evidence"]
-    assert review.last_placed(f"app:{a['id']}") == "1 new fact to check under Recently added."
-    assert "1 new fact to check under Recently added." in TestClient(app).get(f"/applications/{a['id']}?tab=review").text
+    assert (new["title"], new["verified"], new["source"]) == ("Confirmed fact", 1, "manual"), "approved is checked by you"
+    assert db.q1("SELECT context FROM change_ops ORDER BY id DESC LIMIT 1")["context"] == \
+        "Approved a suggested change: “Confirmed fact”", "History names what you did"
+    assert "pending" not in c.get("/profile?tab=facts").text.split("<nav", 1)[1].split("</nav>", 1)[0]
 
 
 def test_a_sentence_you_said_is_true_is_not_asked_about_again_after_a_revision(fake):
@@ -141,26 +153,102 @@ def test_a_gap_you_answered_is_not_asked_about_again_though_the_writer_names_it_
         assert ("gap" in [q["kind"] for q in review.questions(tracker.app_with_job(a["id"]))]) is asked, gap
 
 
-def test_placing_adds_to_the_fact_it_belongs_to_and_leaves_out_what_isnt_your_career(fake):
+def test_answers_suggest_an_addition_to_the_fact_they_belong_to_and_leave_out_what_isnt_your_career(fake):
+    from career_agent import suggestions
+
     _draft()
     po = db.q1("SELECT * FROM facts WHERE title = 'Product Owner'")
-    db.update("facts", po["id"], {"verified": 1})
-    result = review.place([
+    items = [
         {"kind": "claim", "text": "Jeg byggede betalingsflowet i mobilbanken.", "said": "", "fact_ids": [po["id"]]},
         {"kind": "claim", "text": "Jeg har ansvaret for betalingerne.", "said": "already in there", "fact_ids": [po["id"]]},
         {"kind": "claim", "text": "Så jeg kan starte 1. februar 2027.", "said": "", "fact_ids": []},
         {"kind": "gap", "text": "Kubernetes", "said": "Ran our test cluster", "fact_ids": []},
-    ], "the application for Product Owner")
-    after = db.q1("SELECT * FROM facts WHERE id = ?", (po["id"],))
-    assert after["detail"] == f"{po['detail']} Also: Jeg byggede betalingsflowet i mobilbanken." and after["verified"] == 1
+    ]
+    result = review.place(items, "the application for Product Owner", "app:1")
+    assert db.q1("SELECT detail FROM facts WHERE id = ?", (po["id"],))["detail"] == po["detail"], "not changed by itself"
     assert (result["added_to"], result["new"], result["known"], result["skipped"]) == (["Product Owner"], ["Kubernetes"], 1, 1)
-    k8s = db.q1("SELECT * FROM facts WHERE title = 'Kubernetes'")
-    assert k8s["category"] == "skill" and not k8s["verified"] and "(Ran our test cluster)" in k8s["evidence"]
-    assert not db.q1("SELECT 1 FROM facts WHERE title LIKE '%starte%' OR detail LIKE '%starte%'")
-    assert result["said"] == ("Added to “Product Owner”; 1 new fact to check under Recently added; "
-                              "1 your career database already had; 1 not about your career, so not saved.")
+    edit = db.q1("SELECT * FROM fact_suggestions WHERE action = 'edit' AND status = 'pending'")
+    assert edit["fact_id"] == po["id"] and edit["adds"] == "Also: Jeg byggede betalingsflowet i mobilbanken."
+    k8s = db.q1("SELECT * FROM fact_suggestions WHERE action = 'new' AND status = 'pending'")
+    assert k8s["title"] == "Kubernetes" and json.loads(k8s["data"])["category"] == "skill" and "(Ran our test cluster)" in k8s["why"]
+    assert not db.q1("SELECT 1 FROM fact_suggestions WHERE title LIKE '%starte%' OR data LIKE '%starte%'")
+    assert result["said"] == ("Suggested an addition to “Product Owner”; suggested 1 new fact; 1 your career database "
+                              "already had; 1 not about your career, so not saved. Nothing changes until you approve it "
+                              "under Profile → Career database → Pending changes.")
     sent = next(user for system, user, schema in reversed(fake.calls) if schema is review.PLACE_SCHEMA)
     assert f"[#{po['id']}] Product Owner (Danske Bank)" in sent, "the facts the check linked are shown in full"
+
+    again = review.place(items[:1], "the application for Product Owner", "app:1")
+    assert again["added_to"] == [] and suggestions.count() == 2, "not suggested twice"
+
+    page = TestClient(app).get("/profile?tab=facts").text
+    assert "2 pending" in page and "Addition to a fact" in page and "Also: Jeg byggede betalingsflowet" in page
+    db.update("facts", po["id"], {"detail": "Rewritten by hand."})  # you change the fact meanwhile
+    assert suggestions.waiting()[0]["stale"]
+    suggestions.approve(edit["id"])
+    after = db.q1("SELECT * FROM facts WHERE id = ?", (po["id"],))
+    assert after["detail"] == "Rewritten by hand. Also: Jeg byggede betalingsflowet i mobilbanken." and after["verified"] == 1, \
+        "the addition goes onto the fact as it is now"
+    suggestions.refuse(k8s["id"])
+    assert not db.q1("SELECT 1 FROM facts WHERE title = 'Kubernetes'")
+    assert review.place(items[3:], "the application for Product Owner")["new"] == [], "a refused fact isn't suggested again"
+
+
+def test_document_reading_and_tidy_up_suggest_and_wait_for_you(fake):
+    from career_agent import ingest, profile, suggestions
+
+    from .conftest import CV_TEXT
+
+    doc_id, _ = ingest.import_bytes("cv.txt", CV_TEXT.encode())
+    profile.analyze_document(doc_id)
+    assert not db.scalar("SELECT COUNT(*) FROM facts"), "nothing goes in by itself"
+    waiting = db.scalar("SELECT COUNT(*) FROM fact_suggestions WHERE document_id = ? AND status = 'pending'", (doc_id,))
+    assert waiting > 1
+    profile.analyze_document(doc_id)  # read again: what it said is already waiting, so nothing doubles
+    assert db.scalar("SELECT COUNT(*) FROM fact_suggestions WHERE status = 'pending'") == waiting
+    c = TestClient(app)
+    assert f"{waiting} waiting" in c.get(f"/documents/{doc_id}").text
+    page = c.get("/profile?tab=facts").text
+    assert f"Approve all {waiting}" in page and f"{waiting} pending" in page
+    first = db.q1("SELECT * FROM fact_suggestions WHERE status = 'pending' ORDER BY id")
+    r = c.post(f"/suggestions/{first['id']}/approve", follow_redirects=False,
+               data={"edited": "1", "title": "Edited before approving", "category": "skill", "detail": ""})
+    assert "Added" in r.headers["location"]
+    assert db.q1("SELECT title, category, verified FROM facts") == {"title": "Edited before approving", "category": "skill",
+                                                                   "verified": 1}
+    r = c.post(f"/suggestions/document/{doc_id}/approve", follow_redirects=False)
+    assert db.scalar("SELECT COUNT(*) FROM facts") == waiting and not suggestions.count()
+
+    # Two facts that look like the same thing: a merge to approve, not a merge done
+    a, b = (r["id"] for r in db.q("SELECT id FROM facts ORDER BY id LIMIT 2"))
+    db.update("facts", b, {"category": db.q1("SELECT category FROM facts WHERE id = ?", (a,))["category"]})
+    keep = db.q1("SELECT * FROM facts WHERE id = ?", (a,))
+    other = db.q1("SELECT * FROM facts WHERE id = ?", (b,))
+    sid = suggestions.suggest_merge(keep, other, {}, "These look like the same thing.")
+    assert db.q1("SELECT 1 FROM facts WHERE id = ?", (b,)), "still there until you approve"
+    assert "Merge two facts" in c.get("/profile?tab=facts").text
+    suggestions.approve(sid)
+    assert not db.q1("SELECT 1 FROM facts WHERE id = ?", (b,))
+    assert profile._norm(other["title"]) in db.jload(db.q1("SELECT absorbed FROM facts WHERE id = ?", (a,))["absorbed"], [])
+
+
+def test_changes_the_app_made_by_itself_are_listed_to_keep_or_undo(fake):
+    from career_agent import history, suggestions
+
+    with history.op("seed", source="you"):
+        fid = db.insert("facts", {"category": "project", "title": "GearTray", "detail": "A tray app.", "verified": 1,
+                                  "created_at": db.now()})
+    with history.op("Putting your answers in your career database"):
+        db.update("facts", fid, {"detail": "A tray app. Talks to the devices directly.", "updated_at": db.now()})
+    assert suggestions.count() == 1
+    s = suggestions.waiting()[0]
+    assert (s["status"], s["adds"]) == ("applied", "Talks to the devices directly.")
+    assert "putting your answers in your career database" in s["why"]
+    page = TestClient(app).get("/profile?tab=facts").text
+    assert "Already changed" in page and ">Undo<" in page and ">Keep<" in page
+    suggestions.refuse(s["id"])
+    assert db.q1("SELECT detail FROM facts WHERE id = ?", (fid,))["detail"] == "A tray app.", "put back as it was"
+    assert not suggestions.count() and suggestions.listed_before() == 0, "listed once"
 
 
 def test_the_fact_check_knows_when_you_can_start(fake):
@@ -249,16 +337,20 @@ def test_base_cv_lines_the_database_does_not_back_are_settled_once(fake):
     db.ex("DELETE FROM tasks")
     r = c.post(f"/cv/base/{base['id']}/answers", follow_redirects=False, data={
         f"v_{qs[0]['id']}": "yes", f"t_{qs[0]['id']}": "", f"v_{qs[1]['id']}": "no", f"t_{qs[1]['id']}": "What is true instead"})
-    assert r.status_code == 303 and "being+put+in+your+career+database" in r.headers["location"] and "changed" in r.headers["location"]
+    assert r.status_code == 303 and "kept+as+true+and+suggested" in r.headers["location"] and "changed" in r.headers["location"]
     text = cvdata.to_markdown(cvdata.base()["data"])
     assert "What is true instead" in text and qs[1]["text"] not in text
-    assert [t["kind"] for t in tasks.active(ref="cv-base-check")] == ["place_answers"], "placed first, then checked again"
+    assert sorted(t["kind"] for t in tasks.active(ref="cv-base-check")) == ["check_cv_base", "place_answers"]
+    assert review.base_confirmed() == [qs[0]["text"]], "your word counts while the suggestion waits"
     _run("place_answers")
-    assert db.scalar("SELECT COUNT(*) FROM facts") == facts + 1
-    added = db.q1("SELECT title, evidence, verified FROM facts ORDER BY id DESC LIMIT 1")
-    assert added["title"] == "Confirmed fact" and not added["verified"] and "your base CV" in added["evidence"]
-    assert [t["kind"] for t in tasks.active(ref="cv-base-check")] == ["check_cv_base"]
-    assert "1 new fact to check under Recently added." in c.get("/profile?tab=cv").text
+    assert db.scalar("SELECT COUNT(*) FROM facts") == facts, "nothing goes in until you approve it"
+    s = db.q1("SELECT * FROM fact_suggestions WHERE status = 'pending'")
+    assert s["title"] == "Confirmed fact" and "your base CV" in s["why"] and s["ref"] == "cv-base-check"
+    _run("check_cv_base")
+    system = next(system for system, user, schema in reversed(fake.calls) if schema is writer.CHECK_SCHEMA)
+    assert f"- {qs[0]['text']}" in system, "the check is told the line you said is true"
+    assert review.base_confirmed() == [qs[0]["text"]], "kept through the next check"
+    assert "Suggested 1 new fact." in c.get("/profile?tab=cv").text
     db.ex("DELETE FROM tasks")
 
 

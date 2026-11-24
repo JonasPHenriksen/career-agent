@@ -6,7 +6,7 @@ from career_agent import (companies, db, exporter, ingest, insights, jobs, priva
                           voice, writer)
 from career_agent.llm import jsonutil
 
-from .conftest import APPLICATION_TEXT, CV_TEXT, JOB_TEXT
+from .conftest import APPLICATION_TEXT, CV_TEXT, JOB_TEXT, approve_waiting
 
 
 def _import_docs():
@@ -57,7 +57,9 @@ def test_text_extraction_formats(tmp_path):
 def test_documents_become_facts_with_merging(fake):
     cv_id, app_id = _import_docs()
     profile.analyze_document(cv_id)
+    approve_waiting()
     profile.analyze_document(app_id)
+    approve_waiting()
     facts = db.q("SELECT * FROM facts")
     experiences = [f for f in facts if f["category"] == "experience"]
     assert len(experiences) == 2, "the Danske Bank role from the application should merge into the CV's"
@@ -72,7 +74,9 @@ def test_documents_become_facts_with_merging(fake):
 def test_style_guide_and_voice(fake):
     cv_id, app_id = _import_docs()
     profile.analyze_document(cv_id)
+    approve_waiting()
     profile.analyze_document(app_id)
+    approve_waiting()
     db.update("documents", app_id, {"outcome": "interview"})
     baseline = voice.compute_baseline()
     assert baseline["da"]["samples"] == 1
@@ -87,7 +91,9 @@ def test_style_guide_and_voice(fake):
 def test_job_to_application_end_to_end(fake):
     cv_id, app_id = _import_docs()
     profile.analyze_document(cv_id)
+    approve_waiting()
     profile.analyze_document(app_id)
+    approve_waiting()
     job_id = jobs.add_from_text(JOB_TEXT)
     jobs.parse(job_id, use_text=True)
     job = jobs.get(job_id)
@@ -166,6 +172,7 @@ def test_rss_source_and_triage(fake, monkeypatch):
     monkeypatch.setattr("career_agent.fetch.get", lambda url, timeout=25: Resp())
     _import_docs()
     profile.analyze_document(1)
+    approve_waiting()
     sid = sources.add("Jobindex", "https://www.jobindex.dk/jobsoegning?q=po", kind="rss")
     assert db.q1("SELECT url FROM sources WHERE id = ?", (sid,))["url"].endswith("jobsoegning.rss?q=po")
     result = sources.poll(sid)
@@ -215,17 +222,21 @@ def test_fact_hygiene(fake):
     # vague version first (from a letter), then the CV's precise version wins
     profile.save_facts(None, [{"category": "experience", "title": "Project manager", "organization": "Novo Nordisk",
                                "start_date": "", "end_date": "", "detail": "Ran projects."}])
+    approve_waiting()
     profile.save_facts(None, [{"category": "experience", "title": "Projektleder", "organization": "Novo Nordisk A/S",
                                "start_date": "2018-08", "end_date": "2021-12", "detail": "Ledte tre projekter."}],
                        authoritative=True)
+    approve_waiting()
     rows = db.q("SELECT * FROM facts WHERE category = 'experience'")
     assert len(rows) == 1 and rows[0]["title"] == "Projektleder" and rows[0]["start_date"] == "2018-08"
     # the same result in two languages, same employer and number: it is stated once, in an entry of that employer
     profile.save_facts(None, [{"category": "achievement", "title": "Reducerede supporthenvendelser med 30 %", "organization": "Danske Bank"}])
+    approve_waiting()
     profile.save_facts(None, [{"category": "achievement", "title": "Cut support requests by 30%", "organization": "Danske Bank"}])
+    approve_waiting()
     assert db.scalar("SELECT COUNT(*) FROM facts WHERE title LIKE '%30%'") == 1
     assert not db.scalar("SELECT COUNT(*) FROM facts WHERE category NOT IN (%s)" % ", ".join(f"'{c}'" for c in profile.CATEGORY_LABELS))
-    assert profile.consolidate() == {"merged": 0}
+    assert profile.consolidate() == {"suggested": 0}
 
 
 def test_pdf_paragraph_detection():
@@ -276,6 +287,7 @@ def test_letter_brief_gives_a_goal_not_a_recipe(fake):
 def test_old_letters_are_not_shown_next_to_a_folder_style_guide(fake, monkeypatch):
     _import_docs()
     profile.analyze_document(1), profile.analyze_document(2)
+    approve_waiting()
     assert "<example" in writer.examples_block("da", None), "without a folder guide, own letters show the voice"
     monkeypatch.setattr("career_agent.knowledge.style_guide", lambda language: "## How she sounds\nPlain.")
     assert writer.examples_block("da", None) == writer.NO_EXAMPLES
@@ -304,6 +316,7 @@ def test_a_job_far_above_your_level_cannot_score_as_a_strong_match(fake):
     assert jobs.level_cap("unknown", "junior") is None and jobs.level_cap("senior", "") is None
     _import_docs()
     profile.analyze_document(1)
+    approve_waiting()
     job_id = jobs.add_from_text(JOB_TEXT)
     jobs.parse(job_id, use_text=True)  # the fake reads it as a senior role and scores the fit 86
     settings.update("automation", {"auto_draft": False})
@@ -367,6 +380,7 @@ def test_newest_cv_wins_in_either_order(fake):
         for d in order:
             end = "present" if d == "2023-05" else "2025-06"  # the old CV still says "now"
             profile.save_facts(ids[d], [{**role, "end_date": end, "detail": f"from the {d} CV"}], authoritative=True)
+            approve_waiting()
         rows = db.q("SELECT * FROM facts WHERE category = 'experience'")
         assert len(rows) == 1 and rows[0]["end_date"] == "2025-06", f"order {order}: {rows[0]['end_date']}"
         assert rows[0]["document_id"] == ids["2025-10"]

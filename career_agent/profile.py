@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
-from . import db, jobkinds, llm, settings
+from . import db, jobkinds, llm, settings, suggestions
 from .llm import jsonutil as J
 
 CATEGORIES = [
@@ -147,6 +147,7 @@ def analyze_document(doc_id: int, replace: bool = False) -> dict:
         return {"skipped": "document deleted"}
     if replace:
         db.ex("DELETE FROM facts WHERE document_id = ? AND verified = 0 AND hidden = 0", (doc_id,))
+        suggestions.drop_waiting(doc_id)  # what the last reading suggested makes way for this one
     db.update("documents", doc_id, {"status": "analyzing", "error": None})
     name = settings.get("profile").get("name") or ""
     who = f"the job seeker {name}" if name else "a job seeker (the candidate)"
@@ -187,7 +188,7 @@ def analyze_document(doc_id: int, replace: bool = False) -> dict:
     # Course material says what was taught, not what the candidate did: it adds no facts.
     facts = [] if kind in ("job_ad", "course_material") else [_clean_dates(f, doc["text"]) for f in d["facts"]]
     added, merged = save_facts(doc_id, facts, authoritative=(kind == "cv"))
-    return {"kind": kind, "facts_added": added, "facts_merged": merged}
+    return {"kind": kind, "facts_suggested": added, "facts_merged": merged}
 
 
 MAX_PARTS = 12
@@ -339,17 +340,29 @@ def _recency(doc_date: str | None, mtime: float | None) -> str:
 
 
 def save_facts(doc_id: int | None, facts: list[dict], authoritative: bool = False) -> tuple[int, int]:
-    """Insert facts, merging duplicates. `authoritative` (a CV) wins over vaguer versions from letters,
-    and between two CVs the more recent one wins, whatever order they're read in."""
+    """Suggest the facts a document gave for your career database (see suggestions.py): nothing goes in until you
+    approve it. A fact you already have becomes a suggested change to it when the document says more; one already
+    waiting is filled in. `authoritative` (a CV) wins over vaguer versions from letters, and between two CVs the
+    more recent one wins, whatever order they're read in. Returns (new facts suggested, duplicates)."""
     added = merged = 0
-    this = db.q1("SELECT doc_date, source_mtime FROM documents WHERE id = ?", (doc_id,)) if doc_id else None
+    this = db.q1("SELECT doc_date, source_mtime, title, filename FROM documents WHERE id = ?", (doc_id,)) if doc_id else None
     this_when = _recency(this["doc_date"], this["source_mtime"]) if this else ""
+    why = f"Read from “{this['title'] or this['filename']}”" if this else "Read from the agent folder"
+    ref = f"doc:{doc_id}" if doc_id else None
     existing: dict[str, list[dict]] = {}
     gone = set(settings.get("dismissed_facts") or [])  # titles you removed on purpose, and titles merged into another fact
+    gone |= suggestions.refused_titles()  # and new facts you refused when they were suggested
     for row in db.q("SELECT f.*, d.kind AS doc_kind, d.doc_date AS src_date, d.source_mtime AS src_mtime "
                     "FROM facts f LEFT JOIN documents d ON d.id = f.document_id"):
         existing.setdefault(row["category"], []).append(row)
         gone.update(db.jload(row.get("absorbed"), []) or [])
+    docs = {d["id"]: d for d in db.q("SELECT id, kind, doc_date, source_mtime FROM documents")}
+    for s in suggestions.waiting_new():  # suggested and still waiting: a duplicate fills in the suggestion
+        src = docs.get(s["document_id"]) or {}
+        existing.setdefault(s["data"].get("category") or "", []).append({
+            **{k: None for k in ("organization", "location", "start_date", "end_date", "detail", "evidence", "tags")},
+            **s["data"], "id": None, "suggestion": s["id"], "verified": 0, "hidden": 0, "doc_kind": src.get("kind"),
+            "src_date": src.get("doc_date"), "src_mtime": src.get("source_mtime")})
     for f in facts:
         title = (f.get("title") or "").strip()
         said = (f.get("category") or "about").strip()
@@ -370,25 +383,33 @@ def save_facts(doc_id: int | None, facts: list[dict], authoritative: bool = Fals
             patch = {}
             dup_when = _recency(dup.get("src_date"), dup.get("src_mtime"))
             newer_cv = bool(this_when and dup_when and this_when > dup_when)
-            override = authoritative and not dup["verified"] and (dup.get("doc_kind") != "cv" or newer_cv)
+            # A (newer) CV may correct what a letter or an older CV said, also in a fact you've checked: it is only
+            # suggested, and you approve it.
+            override = authoritative and (dup.get("doc_kind") != "cv" or newer_cv)
             for key in ("title", "organization", "location", "start_date", "end_date", "evidence"):
                 if f.get(key) and (not dup.get(key) or (override and key != "evidence")):
                     patch[key] = f[key]
-            # A longer description wins, except over one from a CV: only a (newer) CV replaces that.
-            longer = len(f.get("detail") or "") > len(dup.get("detail") or "") and dup.get("doc_kind") != "cv"
-            if f.get("detail") and not dup["verified"] and (override or longer):
+            # A longer description wins, except over one from a CV (only a newer CV replaces that) or one you've
+            # checked: details you wrote or approved aren't suggested away for being shorter.
+            longer = (len(f.get("detail") or "") > len(dup.get("detail") or "") and dup.get("doc_kind") != "cv"
+                      and not dup["verified"])
+            if f.get("detail") and (override or longer):
                 patch["detail"] = f["detail"]
             if override and doc_id:
                 patch["document_id"] = doc_id
                 dup.update({"doc_kind": "cv", "src_date": this["doc_date"] if this else None,
                             "src_mtime": this["source_mtime"] if this else None})
             if tags:
-                merged_tags = {t.strip() for t in (dup.get("tags") or "").split(",") if t.strip()} | set(tags.split(", "))
-                patch["tags"] = ", ".join(sorted(merged_tags))[:400]
-            if patch:
-                patch["updated_at"] = db.now()
-                db.update("facts", dup["id"], patch)
-                dup.update(patch)
+                had = {t.strip() for t in (dup.get("tags") or "").split(",") if t.strip()}
+                if not set(tags.split(", ")) <= had:
+                    patch["tags"] = ", ".join(sorted(had | set(tags.split(", "))))[:400]
+            if dup.get("suggestion"):  # still waiting for you: the suggestion is filled in
+                if patch:
+                    suggestions.update_waiting(dup["suggestion"], patch)
+                    dup.update(patch)
+            elif set(patch) - {"tags", "document_id"}:  # tags or the source alone aren't worth asking about
+                suggestions.suggest_edit(dup, patch, why, "document", ref=ref, document_id=doc_id)
+                dup.update(patch)  # so a later duplicate in this reading isn't suggested the same change again
             merged += 1
             continue
         row = {
@@ -396,11 +417,12 @@ def save_facts(doc_id: int | None, facts: list[dict], authoritative: bool = Fals
             "location": (f.get("location") or "")[:120] or None,
             "start_date": (f.get("start_date") or "")[:10] or None, "end_date": (f.get("end_date") or "")[:10] or None,
             "detail": (f.get("detail") or "")[:1500] or None, "evidence": (f.get("evidence") or "")[:600] or None,
-            "tags": tags or None, "document_id": doc_id, "source": "extracted" if doc_id else "manual",
-            "created_at": db.now(),
+            "tags": tags or None,
         }
-        row["id"] = db.insert("facts", row)
-        row.update({"verified": 0, "hidden": 0, "doc_kind": "cv" if authoritative else None,
+        sid = suggestions.suggest_new(row, why, "document", ref=ref, document_id=doc_id)
+        if not sid:
+            continue
+        row.update({"id": None, "suggestion": sid, "verified": 0, "hidden": 0, "doc_kind": "cv" if authoritative else None,
                     "src_date": this["doc_date"] if this else None, "src_mtime": this["source_mtime"] if this else None})
         existing.setdefault(cat, []).append(row)
         added += 1
@@ -490,20 +512,64 @@ def by_area(items: list[dict]) -> list[tuple[str, str, list[dict]]]:
 RECENT_DAYS = 30
 
 
-def recently_added(limit: int = 10, days: int = RECENT_DAYS) -> tuple[list[dict], int]:
-    """The facts added in the last `days` days, newest first, each with where it came from; and how many that is in all."""
+def _origin(f: dict, docs: dict) -> str:
+    tags = {t.strip() for t in (f.get("tags") or "").split(",")}
+    d = docs.get(f.get("document_id"))
+    return (f"from {d['title'] or d['filename']}" if d
+            else "your answer in a review" if "your answer" in tags
+            else "from a document since deleted" if f.get("source") == "extracted"
+            else "added by you")
+
+
+def _changed_by(source: str | None, context: str | None) -> str:
+    """Who made a change, from the History entry it belongs to."""
+    context = (context or "").strip()
+    if source == "you":
+        return "you approved a suggestion" if context.startswith(("Approved", "Kept")) else "you"
+    if source == "automatic" and context:
+        return f"the app by itself ({context[:1].lower()}{context[1:]})"
+    return ""
+
+
+def recently_changed(limit: int = 12, days: int = RECENT_DAYS) -> tuple[list[dict], int]:
+    """What was added to your career database or changed in it in the last `days` days, newest first, each with what
+    changed, who did it and where it came from; and how many entries that is in all. Read from History, so a change
+    to a fact you already had shows as well as a new fact. Ticking a fact as checked isn't listed."""
+    FIELDS, LABELS = suggestions.FIELDS, suggestions.LABELS
     since = db.days_ago(days)
-    rows = db.q("SELECT f.*, d.title AS doc_title, d.filename AS doc_filename FROM facts f "
-                "LEFT JOIN documents d ON d.id = f.document_id WHERE f.created_at >= ? "
-                "ORDER BY f.created_at DESC, f.id DESC LIMIT ?", (since, limit))
-    for f in rows:
-        tags = {t.strip() for t in (f.get("tags") or "").split(",")}
-        f["kind_label"] = CATEGORY_LABELS.get(f["category"], f["category"])
-        f["origin"] = (f"from {f['doc_title'] or f['doc_filename']}" if f.get("document_id")
-                       else "your answer in a fact check" if "your answer" in tags
-                       else "from a document since deleted" if f.get("source") == "extracted"
-                       else "added by you")
-    return rows, db.scalar("SELECT COUNT(*) FROM facts WHERE created_at >= ?", (since,)) or 0
+    rows = db.q("SELECT c.*, o.source, o.context FROM changes c LEFT JOIN change_ops o ON o.id = c.op_id "
+                "WHERE c.tbl = 'facts' AND c.action IN ('insert', 'update') AND c.at >= ? ORDER BY c.id DESC", (since,)) \
+        if db.q1("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'changes'") else []
+    entries = []
+    for ch in rows:
+        before, after = db.jload(ch["before"], {}) or {}, db.jload(ch["after"], {}) or {}
+        if ch["action"] == "update" and not any(k in FIELDS or k == "hidden" for k in after):
+            continue
+        entries.append((ch, before, after))
+    docs = {d["id"]: d for d in db.q("SELECT id, title, filename FROM documents")}
+    out = []
+    for ch, before, after in entries[:limit]:
+        fid = int(ch["row_key"]) if str(ch["row_key"]).isdigit() else None
+        fact = db.q1("SELECT * FROM facts WHERE id = ?", (fid,)) if fid else None
+        now = fact or after
+        e = {"id": fid, "exists": bool(fact), "at": ch["at"], "action": ch["action"],
+             "title": now.get("title") or before.get("title") or f"#{fid}",
+             "kind_label": CATEGORY_LABELS.get(now.get("category"), now.get("category") or ""),
+             "by": _changed_by(ch["source"], ch["context"]), "changes": []}
+        if ch["action"] == "insert":
+            e["origin"] = _origin(after, docs)
+            e["document_id"] = after.get("document_id") if after.get("document_id") in docs else None
+        else:
+            for k, v in after.items():
+                if k == "hidden":
+                    e["changes"].append({"label": "Hidden" if v else "Shown again"})
+                elif k in FIELDS:
+                    adds = suggestions.added_text(before.get(k), v) if k == "detail" else ""
+                    takes = suggestions.added_text(v, before.get(k)) if k == "detail" else ""  # words taken off the end
+                    e["changes"].append({"label": LABELS.get(k, k), "before": before.get(k) or "", "after": v or "",
+                                         "adds": adds, "takes": takes})
+        out.append(e)
+    return out, len(entries)
 
 
 def visible_facts() -> list[dict]:
@@ -694,40 +760,38 @@ Return only groups that contain duplicates; return an empty list if there are no
 
 
 def consolidate() -> dict:
-    """Merge duplicate facts (e.g. the same achievement written in Danish and in English)."""
+    """Find duplicate facts (e.g. the same achievement written in Danish and in English) and suggest merging them:
+    nothing is merged until you approve it (suggestions.py). Facts you've checked can be merged too, since you
+    decide each one."""
     rows = db.q("SELECT f.*, d.kind AS doc_kind FROM facts f LEFT JOIN documents d ON d.id = f.document_id "
                 "WHERE f.hidden = 0 ORDER BY f.category, f.id")
     if len(rows) < 2:
-        return {"merged": 0}
+        return {"suggested": 0}
     lines = [f"[#{f['id']}] {f['category']} | {f['title']} | {f['organization'] or '-'} | {_period(f) or '-'} | "
              f"{(f['detail'] or '')[:140]} | from {f['doc_kind'] or 'manual entry'}{' | VERIFIED' if f['verified'] else ''}"
              for f in rows]
     r = llm.run("analysis", "consolidate_facts", CONSOLIDATE_SYSTEM, "\n".join(lines), CONSOLIDATE_SCHEMA,
                 max_tokens=8000, effort="medium")
     by_id = {f["id"]: f for f in rows}
-    merged = 0
+    suggested = 0
     for g in r.data["groups"]:
         keep = by_id.get(g["keep"])
         if not keep:
             continue
         for dup_id in g["duplicates"]:
             d = by_id.get(dup_id)
-            if not d or d["id"] == keep["id"] or d["category"] != keep["category"] or d["verified"]:
+            if not d or d["id"] == keep["id"] or d["category"] != keep["category"]:
                 continue
             patch = {k: d[k] for k in ("organization", "location", "start_date", "end_date", "evidence", "detail")
                      if d.get(k) and not keep.get(k)}
-            tags = {t.strip() for t in f"{keep.get('tags') or ''},{d.get('tags') or ''}".split(",") if t.strip()}
-            if tags:
+            had = {t.strip() for t in (keep.get("tags") or "").split(",") if t.strip()}
+            tags = had | {t.strip() for t in (d.get("tags") or "").split(",") if t.strip()}
+            if tags != had:
                 patch["tags"] = ", ".join(sorted(tags))[:400]
-            if patch:
-                patch["updated_at"] = db.now()
-                db.update("facts", keep["id"], patch)
-                keep.update(patch)
-            remember_absorbed(keep["id"], [d["title"], *(db.jload(d.get("absorbed"), []) or [])])
-            db.ex("DELETE FROM facts WHERE id = ?", (d["id"],))
-            by_id.pop(d["id"], None)
-            merged += 1
-    return {"merged": merged}
+            why = f"These look like the same thing: “{d['title']}” would be merged into “{keep['title']}”."
+            if suggestions.suggest_merge(keep, d, patch, why):
+                suggested += 1
+    return {"suggested": suggested}
 
 
 def has_facts() -> bool:

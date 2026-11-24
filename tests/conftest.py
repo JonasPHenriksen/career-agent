@@ -261,6 +261,17 @@ class FakeProvider:
         raise AssertionError(f"FakeProvider got an unexpected schema: {list(schema.get('properties', {}))}")
 
 
+def approve_waiting() -> int:
+    """Approve every change waiting under Pending changes, as you would by clicking: tests that only need facts in
+    the career database read a document and then approve what it suggested. Returns how many."""
+    from career_agent import suggestions
+
+    rows = db.q("SELECT id FROM fact_suggestions WHERE status = 'pending' ORDER BY id")
+    for s in rows:
+        suggestions.approve(s["id"])
+    return len(rows)
+
+
 @pytest.fixture()
 def fake(tmp_path):
     config.configure(tmp_path / "data")

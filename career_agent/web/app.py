@@ -18,6 +18,7 @@ from fastapi.templating import Jinja2Templates
 from .. import (adcheck, backup, collect, companies, config, cvdata, cvrender, db, emails, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
                 profile, rank, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
+from .. import suggestions
 
 HERE = Path(__file__).parent
 log = logging.getLogger(__name__)
@@ -643,8 +644,8 @@ async def application_voice_revise(request: Request, app_id: int):
 
 @app.post("/applications/{app_id}/answers")
 async def application_answers(request: Request, app_id: int):
-    """Your answers to the review screen's questions: what you confirmed is placed in your career database, and the
-    draft is revised to match."""
+    """Your answers to the review screen's questions: what you confirmed is suggested for your career database (it
+    waits for your approval there), and the draft is revised to match."""
     f = await form(request)
     a = need(tracker.app_with_job(app_id))
     answers = {q["id"]: {"verdict": f.get(f"v_{q['id']}") or "", "text": f.get(f"t_{q['id']}") or ""} for q in review.questions(a)}
@@ -654,8 +655,9 @@ async def application_answers(request: Request, app_id: int):
     n = result["placing"]
     said = []
     if n:
-        said.append(f"Putting {n} answer{'s' if n != 1 else ''} in your career database, then "
-                    + ("revising the draft to match…" if result["revised"] else "checking the facts again…"))
+        said.append(f"Suggesting {n} answer{'s' if n != 1 else ''} for your career database, where you approve "
+                    "them under Pending changes. Meanwhile "
+                    + ("the draft is revised to match…" if result["revised"] else "the facts are checked again…"))
     elif result["revised"]:
         said.append("Revising the draft to match…")
     if result["confirmed"]:
@@ -770,7 +772,8 @@ def cv_base_check(base_id: int):
 
 @app.post("/cv/base/{base_id}/answers")
 async def cv_base_answers(request: Request, base_id: int):
-    """Your answers about base CV lines the career database doesn't back: placed in the database, or the CV is changed."""
+    """Your answers about base CV lines the career database doesn't back: suggested for the database (and counted as
+    true meanwhile), or the CV is changed."""
     f = await form(request)
     base = need(cvdata.base(base_id))
     answers = {q["id"]: {"verdict": f.get(f"v_{q['id']}") or "", "text": f.get(f"t_{q['id']}") or ""}
@@ -780,7 +783,7 @@ async def cv_base_answers(request: Request, base_id: int):
         return go(f"/profile?tab=cv&base={base_id}#cv-check", err="Answer at least one question first.")
     said = []
     if result["placing"]:
-        said.append(f"{result['placing']} being put in your career database")
+        said.append(f"{result['placing']} kept as true and suggested for your career database (approve under Pending changes)")
     if result["changed"]:
         said.append(f"{result['changed']} line{'s' if result['changed'] != 1 else ''} changed in the base CV")
     line = ", ".join(said)
@@ -1049,7 +1052,8 @@ def profile_page(request: Request, tab: str = "about"):
         sections = profile.by_area(items) if c == "skill" else profile.by_place(items, index)
         grouped.append((c, label, items, sections if len(sections) > 1 else [("", "", items)]))
     deleted = history.recently_deleted("facts", 20) if tab == "facts" else []
-    added, added_total = profile.recently_added() if tab == "facts" else ([], 0)
+    changed, changed_total = profile.recently_changed() if tab == "facts" else ([], 0)
+    pending = suggestions.waiting() if tab == "facts" else []
     active_rows = db.q("SELECT kind FROM tasks WHERE kind IN ('analyze_document', 'build_style', 'consolidate_facts') "
                        "AND status IN ('queued', 'running')")
     n_docs = sum(1 for r in active_rows if r["kind"] == "analyze_document")
@@ -1082,7 +1086,8 @@ def profile_page(request: Request, tab: str = "about"):
                   job_kinds=jobkinds.KINDS, kinds_wanted=jobkinds.wanted_kinds(),
                   made_style=llm.made_by("style", ("style_guide",)),
                   tidy_busy=any(r["kind"] == "consolidate_facts" for r in active_rows), p=settings.get("profile"), docs=docs, grouped=grouped, deleted=deleted,
-                  added=added, added_total=added_total, recent_days=profile.RECENT_DAYS,
+                  changed=changed, changed_total=changed_total, recent_days=profile.RECENT_DAYS,
+                  pending=pending, n_pending=suggestions.count(), category_labels=profile.CATEGORY_LABELS,
                   kinds=profile.KINDS, kind_labels=profile.KIND_LABELS, outcomes=profile.OUTCOMES,
                   categories=profile.CATEGORIES, areas=profile.AREAS, depths=profile.DEPTHS, depth_labels=profile.DEPTH_LABELS,
                   style_guide=settings.get("style_guide"),
@@ -1191,6 +1196,7 @@ def document_page(request: Request, doc_id: int):
                   made=llm.made_by(f"doc:{doc_id}", ("analyze_document",)),
                   kind_labels=profile.KIND_LABELS, category_labels=profile.CATEGORY_LABELS,
                   facts=db.q("SELECT * FROM facts WHERE document_id = ? ORDER BY category, id", (doc_id,)),
+                  waiting=db.scalar("SELECT COUNT(*) FROM fact_suggestions WHERE document_id = ? AND status = 'pending'", (doc_id,)) or 0,
                   busy=tasks.active(ref=f"doc:{doc_id}"), error=tasks.last_error(f"doc:{doc_id}"))
 
 
@@ -1218,9 +1224,9 @@ async def document_reanalyze(request: Request, doc_id: int):
     model = chosen_model(f)
     tasks.enqueue("analyze_document", {"doc_id": doc_id, "replace": bool(model), **model}, ref=f"doc:{doc_id}")
     if model:
-        return go(f"/documents/{doc_id}", msg=with_model_msg(f, "Reading it again") + ": its unticked facts are replaced, "
-                                                                                     "ticked and hidden ones stay.")
-    return go(f"/documents/{doc_id}", msg="Analysing again. Facts already in your database are kept and merged.")
+        return go(f"/documents/{doc_id}", msg=with_model_msg(f, "Reading it again") + ": what its last reading suggested "
+                                                                                     "and you haven't decided is replaced.")
+    return go(f"/documents/{doc_id}", msg="Analysing again. What it finds waits for you under Career database → Pending changes.")
 
 
 @app.post("/redo")
@@ -1296,7 +1302,53 @@ def fact_delete(request: Request, fact_id: int):
 async def facts_tidy(request: Request):
     f = await form(request)
     tasks.enqueue("consolidate_facts", {**chosen_model(f)}, ref="facts")
-    return go("/profile?tab=facts", msg=with_model_msg(f, "Looking for duplicates") + "…")
+    return go("/profile?tab=facts", msg=with_model_msg(f, "Looking for duplicates")
+              + "… Any it finds wait for you under Pending changes.")
+
+
+def _name_change(what: str, title: str) -> None:
+    """History names the click after what it did, not after the address it was sent to."""
+    o = history.current()
+    if o is not None:
+        o.context = f"{what}: “{title[:120]}”"
+
+
+@app.post("/suggestions/{sid}/approve")
+async def suggestion_approve(request: Request, sid: int):
+    """Approve a suggested change, as it is or as you edited it in the form first."""
+    f = await form(request)
+    s = need(suggestions.get(sid))
+    _name_change("Kept a change" if s["status"] == "applied" else "Approved a suggested change", s["title"])
+    try:
+        r = suggestions.approve(sid, f if f.get("edited") else None)
+    except suggestions.Problem as e:
+        return go(f"/profile?tab=facts#suggestion-{sid}", err=str(e))
+    return go("/profile?tab=facts#pending", msg=r["said"])
+
+
+@app.post("/suggestions/{sid}/refuse")
+def suggestion_refuse(request: Request, sid: int):
+    s = need(suggestions.get(sid))
+    _name_change("Undid a change" if s["status"] == "applied" else "Refused a suggested change", s["title"])
+    try:
+        r = suggestions.refuse(sid)
+    except suggestions.Problem as e:
+        return go(f"/profile?tab=facts#suggestion-{sid}", err=str(e))
+    return go("/profile?tab=facts#pending", msg=r["said"])
+
+
+@app.post("/suggestions/document/{doc_id}/{choice}")
+def suggestions_for_document(request: Request, doc_id: int, choice: str):
+    """Everything one document's reading suggested, approved or refused in one go."""
+    if choice not in ("approve", "refuse"):
+        raise HTTPException(404)
+    d = need(db.q1("SELECT title, filename FROM documents WHERE id = ?", (doc_id,)))
+    name = d["title"] or d["filename"]
+    _name_change("Approved the suggestions from" if choice == "approve" else "Refused the suggestions from", name)
+    n, problems = suggestions.decide_all(doc_id, choice == "approve")
+    said = (f"{n} fact{'s' if n != 1 else ''} from {name} " + ("added to your career database." if choice == "approve"
+                                                                else "left out. They won't be suggested again."))
+    return go("/profile?tab=facts#pending", msg=said, err="; ".join(problems)[:600] or None)
 
 
 @app.post("/style")
@@ -1507,11 +1559,11 @@ async def knowledge_import(request: Request):
     def n(count: int, word: str) -> str:
         return f"{count} {word}{'' if count == 1 else 's'}"
 
-    msg = (f"From the agent folder: {n(r['facts_added'], 'new fact')}, {r['facts_merged']} merged with ones you had, "
+    msg = (f"From the agent folder: {n(r['facts_added'], 'new fact')} suggested, {r['facts_merged']} you already had, "
            f"{n(r['documents'], 'document')} added.")
     if r["unreadable"]:
         msg += f" {n(len(r['unreadable']), 'source file')} couldn't be read (scans or files inside archives)."
-    return go("/profile?tab=facts", msg=msg + " Tick the ones that are right.")
+    return go("/profile?tab=facts#pending", msg=msg + " Approve the ones that are right under Pending changes.")
 
 
 @app.post("/knowledge/settings")

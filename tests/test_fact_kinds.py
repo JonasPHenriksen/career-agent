@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from career_agent import db, profile, settings
 from career_agent.web.app import app
+from .conftest import approve_waiting
 
 
 def _fact(category: str, title: str, **kw) -> int:
@@ -21,6 +22,7 @@ def test_old_kinds_are_filed_under_the_new_ones(fake):
         {"category": "utility", "title": "Display switcher script"},
         {"category": "no_such_kind", "title": "Ignored"},
     ])
+    approve_waiting()
     kinds = {f["title"]: f["category"] for f in db.q("SELECT title, category FROM facts")}
     assert kinds == {"Likes clear plans": "about", "Driving licence B": "about", "Board member, chess club": "about",
                      "Won the hackathon": "project", "Display switcher script": "utility"}
@@ -31,8 +33,10 @@ def test_a_result_the_project_already_states_adds_nothing(fake):
           detail="Replaced two systems. Result: saves the customer approx. DKK 100,000 a year.")
     added, merged = profile.save_facts(None, [{"category": "achievement", "title": "Saves DKK 100,000 annually",
                                                "organization": "Acme"}])
+    approve_waiting()
     assert (added, merged) == (0, 1)
     added, _ = profile.save_facts(None, [{"category": "achievement", "title": "Cut build time by 40%", "organization": "Acme"}])
+    approve_waiting()
     assert added == 1, "a result no entry states yet is kept, as a project for you to file"
 
 
@@ -48,6 +52,7 @@ def test_merged_and_removed_facts_do_not_come_back(fake):
         {"category": "value", "title": "Interest in green solutions"},
         {"category": "project", "title": "Something new", "organization": "Acme"},
     ])
+    approve_waiting()
     assert (added, merged) == (1, 3)
     assert db.scalar("SELECT COUNT(*) FROM facts") == 2
 

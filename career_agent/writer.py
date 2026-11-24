@@ -709,7 +709,7 @@ def check_claims(letter: str, cv: str, tier: str | None = None, confirmed: list[
     lives = f"\n{' '.join(own)} They said so themselves, so it counts as backed.\n" if own else ""
     # Without this a sentence you'd said is true was flagged again after every revision, and asked about again.
     confirmed = [c for c in (confirmed or []) if c and c.strip()]
-    told = ("\nThe candidate confirmed these are true when reviewing this application. A sentence that says the same, "
+    told = ("\nThe candidate confirmed these are true when reviewing this application or their base CV. A sentence that says the same, "
             "even in other words, counts as backed; anything it adds beyond them still needs backing:\n"
             + "\n".join(f"- {c}" for c in confirmed) + "\n") if confirmed else ""
     system = (CHECK_SYSTEM + f"\n\nToday's date: {date.today().isoformat()}\n{lives}{told}\nCAREER DATABASE:\n"
@@ -737,7 +737,7 @@ def check_claims(letter: str, cv: str, tier: str | None = None, confirmed: list[
 def run_checks(app_id: int) -> dict:
     """The voice numbers and the fact check, here; the read for your voice is queued as its own small step, and
     only when the letter changed since it was last read."""
-    from . import tasks
+    from . import review, tasks
 
     app = db.q1("SELECT * FROM applications WHERE id = ?", (app_id,))
     v = voice.check(app["letter"] or "", app["language"])
@@ -750,7 +750,9 @@ def run_checks(app_id: int) -> dict:
         tasks.enqueue("read_voice", {"application_id": app_id}, ref=f"app:{app_id}")
     if not (app["letter"] or app["cv"]):
         return {"voice": v["score"]}
-    d = check_claims(app["letter"] or "", app["cv"] or "", confirmed=(db.jload(app.get("review"), {}) or {}).get("confirmed"))
+    # What you said is true here, and the lines of your base CV you said are true there: your own word.
+    confirmed = [*((db.jload(app.get("review"), {}) or {}).get("confirmed") or []), *review.base_confirmed()]
+    d = check_claims(app["letter"] or "", app["cv"] or "", confirmed=confirmed)
     d["checked_at"] = db.now()
     db.update("applications", app_id, {"claims": db.jdump(d)})
     return {"voice": v["score"], "claims": d["counts"]}

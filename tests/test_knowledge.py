@@ -10,7 +10,7 @@ import pytest
 
 from career_agent import db, ingest, knowledge, profile, retrieval, settings, watch, writer
 
-from .conftest import APPLICATION_TEXT, CV_TEXT
+from .conftest import APPLICATION_TEXT, CV_TEXT, approve_waiting
 
 PROFILE_MD = """# Sara Lund — career profile
 
@@ -131,6 +131,8 @@ def test_without_a_folder_the_prompt_is_unchanged(fake):
 def test_import_facts_brings_documents_and_facts(folder):
     report = knowledge.import_facts()
     assert report["documents"] == 3 and report["facts_added"] == 4 and report["skipped"] == 1
+    assert not db.scalar("SELECT COUNT(*) FROM facts"), "the facts wait for you under Pending changes"
+    assert approve_waiting() == 4
     old = db.q1("SELECT use_for_style, outcome FROM documents WHERE filename = 'Old template letter.txt'")
     assert (old["use_for_style"], old["outcome"]) == (0, "offer")
 
@@ -142,11 +144,12 @@ def test_import_facts_brings_documents_and_facts(folder):
 
     po = db.q1("SELECT * FROM facts WHERE category = 'experience'")
     assert po["evidence"] == "Product Owner, Danske Bank, København, 2022 – nu" and po["document_id"] == cv["id"]
-    assert (po["start_date"], po["end_date"]) == ("2022", "present") and not po["verified"]
+    assert (po["start_date"], po["end_date"]) == ("2022", "present") and po["verified"], "approved means checked by you"
     assert "confidential" in db.q1("SELECT tags FROM facts WHERE title LIKE 'Payment features%' AND category = 'project'")["tags"]
     assert db.q1("SELECT document_id FROM facts WHERE title = 'Climbing'")["document_id"] is None
 
     again = knowledge.import_facts()
+    approve_waiting()
     assert again["documents"] == 0 and again["facts_added"] == 0
     assert db.scalar("SELECT COUNT(*) FROM facts") == 4
 
@@ -195,6 +198,7 @@ def test_powerpoint_text_slide_by_slide(fake, tmp_path):
 def test_course_material_adds_no_facts(fake):
     doc_id, _ = ingest.import_bytes("forelaesning.txt", "Forelæsning 3: kvantemekanik og bølgefunktioner.".encode())
     profile.analyze_document(doc_id)
+    approve_waiting()
     doc = db.q1("SELECT kind, authored FROM documents WHERE id = ?", (doc_id,))
     assert (doc["kind"], doc["authored"]) == ("course_material", 0)
     assert db.scalar("SELECT COUNT(*) FROM facts WHERE document_id = ?", (doc_id,)) == 0
@@ -213,7 +217,8 @@ def test_profile_card_import_and_settings(folder, tmp_path):
 
     r = c.post("/knowledge/import", follow_redirects=False)
     assert r.status_code in (302, 303) and "tab=facts" in r.headers["location"]
-    assert db.scalar("SELECT COUNT(*) FROM facts") == 4
+    assert db.scalar("SELECT COUNT(*) FROM fact_suggestions WHERE status = 'pending'") == 4
+    assert "4 pending" in c.get("/profile?tab=facts").text
 
     r = c.post("/knowledge/settings", data={"folder": str(tmp_path / "missing"), "use": "1"}, follow_redirects=False)
     assert "err" in r.headers["location"] and settings.get("knowledge")["folder"] == str(folder / "Agents")
@@ -250,6 +255,7 @@ def test_only_the_letter_counts_as_the_letter(folder):
 
     (folder / "Job" / "Ansøgning.txt").write_text(LETTER_WITH_TABS, encoding="utf-8")
     knowledge.import_facts()
+    approve_waiting()
     doc = db.q1("SELECT id, text FROM documents WHERE filename = 'Ansøgning.txt'")
     assert "salary" not in doc["text"] and doc["text"].endswith("Sara Lund")
     assert not db.q("SELECT 1 FROM chunks WHERE document_id = ? AND text LIKE '%salary%'", (doc["id"],))
@@ -273,8 +279,10 @@ def test_a_letter_does_not_overwrite_what_the_cv_says(folder):
     role = {"category": "experience", "title": "Product Owner", "organization": "Danske Bank", "start_date": "2022",
             "end_date": "present", "detail": "Owns the payment features.", "evidence": "Product Owner, Danske Bank"}
     profile.save_facts(cv_id, [role], authoritative=True)
+    approve_waiting()
     longer = {**role, "detail": "A letter that says a lot more about the role, in many more words than the CV does."}
     profile.save_facts(letter_id, [longer], authoritative=False)
+    approve_waiting()
     assert db.q1("SELECT detail FROM facts WHERE category = 'experience'")["detail"] == "Owns the payment features."
 
 
