@@ -348,6 +348,12 @@ def base_confirmed() -> list[str]:
     return list(dict.fromkeys(out))
 
 
+def base_checks() -> list[dict]:
+    """Your base CVs' fact checks: a line a tailored CV keeps word for word from a base CV keeps the verdict that
+    check gave it, so a CV reset to the base needs no new check."""
+    return [c for c in (db.jload(b["claims"], {}) or {} for b in db.q("SELECT claims FROM cv_bases")) if c.get("snapshot")]
+
+
 def check_base(base_id: int | None = None, full: bool = False) -> dict:
     """Fact-check the base CV, line by line, and keep the result with it. Only lines that changed since the last
     check are read again (see writer.check_claims), unless `full`."""
@@ -358,7 +364,7 @@ def check_base(base_id: int | None = None, full: bool = False) -> dict:
         return {"skipped": "no base CV"}
     before = db.jload(base.get("claims"), {}) or {}
     confirmed = before.get("confirmed") or []
-    d = writer.check_claims("", cvdata.to_markdown(base["data"]), confirmed=confirmed, before=None if full else before)
+    d = writer.check_claims("", cvdata.to_markdown(base["data"]), confirmed=confirmed, before=before, full=full)
     d["checked_at"] = db.now()
     if confirmed:
         d["confirmed"] = confirmed

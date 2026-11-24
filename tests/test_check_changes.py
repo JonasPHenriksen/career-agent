@@ -121,3 +121,40 @@ def test_sentences_you_untick_are_kept_and_the_ticked_ones_rewritten(fake):
     a = tracker.app_with_job(a["id"])
     assert voice.settled_sentences(a) == ["Jeg vil gerne være product owner hos FinPay."]
     assert voice.left_sentences(a) == [], "a sentence you ticked isn't one you kept"
+
+
+def test_a_cv_reset_to_the_base_takes_the_base_checks_verdicts(fake):
+    from career_agent import cvdata, review
+
+    a = _draft()
+    review.check_base()  # the base CV's own check, with its snapshot
+    data = db.jload(tracker.app_with_job(a["id"])["cv_data"], {})
+    data["work"][0]["highlights"][0] = "Tailored for this job, in other words."
+    db.update("applications", a["id"], {"cv_data": db.jdump(data), "cv": cvdata.to_markdown(data)})
+    writer.run_checks(a["id"])
+    assert _marked(_sent(fake)[-1]) == ["Tailored for this job, in other words."]
+
+    calls = len(_sent(fake))
+    writer.reset_cv(a["id"])
+    writer.run_checks(a["id"])
+    assert len(_sent(fake)) == calls, "every line was judged by the base CV's check: no model"
+    done = _claims(a["id"])
+    assert done["summary"].startswith("All ") and "had been checked before" in done["summary"] and done["reused"]
+
+    db.update("facts", 1, {"detail": "Changed by hand."})  # a fact those verdicts leaned on: they're made again
+    writer.run_checks(a["id"])
+    assert len(_sent(fake)) == calls + 1
+
+
+def test_going_back_to_an_earlier_letter_costs_nothing(fake):
+    a = _draft()
+    first = a["letter"]
+    other = first.replace("Jeg søger stillingen som product owner hos FinPay.", "Jeg vil gerne arbejde hos FinPay.")
+    db.update("applications", a["id"], {"letter": other})
+    writer.run_checks(a["id"])
+    assert _claims(a["id"])["snapshot"]["earlier"], "the verdicts on the sentence that went are kept"
+    calls = len(_sent(fake))
+    db.update("applications", a["id"], {"letter": first})  # back to the first version, as from Versions
+    writer.run_checks(a["id"])
+    assert len(_sent(fake)) == calls
+    assert next(c for c in _claims(a["id"])["claims"] if c["text"] == TEAM)["status"] == "unsupported", "flags stand"

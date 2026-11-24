@@ -742,25 +742,32 @@ def _facts_seen() -> dict[str, str]:
     return {str(f["id"]): _fingerprint("\x1f".join(str(f.get(k) or "") for k in FIELDS)) for f in profile.visible_facts()}
 
 
-def _still_holds(old: dict, changed_facts: set[str], looser: bool) -> bool:
+EARLIER_KEPT = 300  # verdicts on text an application no longer has, kept so going back to it costs nothing
+
+
+def _still_holds(old: dict, facts_now: dict[str, str], facts_then: dict[str, str], looser: bool) -> bool:
     """Whether an earlier verdict on the very same words can stand. A flagged one is judged again when something
     that might back it now has come in (a fact, or something you confirmed); a backed one when a fact it leaned on
-    changed or went."""
+    changed or went. `facts_then` is what the facts said when the verdict was made, for verdicts that don't carry
+    their own fingerprints."""
     if old.get("status") in ("partly", "unsupported"):
         return not looser
-    return not ({str(i) for i in old.get("fact_ids") or []} & changed_facts)
+    prints = old.get("fp") or {str(i): facts_then.get(str(i)) for i in old.get("fact_ids") or []}
+    return all(p is not None and facts_now.get(i) == p for i, p in prints.items())
 
 
 def check_claims(letter: str, cv: str, tier: str | None = None, confirmed: list[str] | None = None,
-                 before: dict | None = None) -> dict:
+                 before: dict | None = None, also: list[dict] | None = None, full: bool = False) -> dict:
     """Fact-check a letter and CV. Returns {claims, counts, summary, snapshot}. `confirmed` is what you said is true
     when reviewing this application: your own word, like where you live.
 
     `before` is the previous check's result. Its snapshot keeps the verdict for every sentence and line, so only
     what's new or changed since is sent to the model, with the rest shown as context; the sentence after a changed
     one is read again too. An unchanged sentence keeps its verdict instead of being judged afresh (where it could
-    flip, and come back as a question you'd answered). Without `before`, or without a snapshot in it, everything
-    is checked."""
+    flip, and come back as a question you'd answered). The snapshot also keeps the backed verdicts on text the
+    application no longer has, so going back to an earlier version (or to your base CV) costs nothing; `also` are
+    other checks whose backed verdicts may be used the same way, such as your base CV's. With `full`, or without a
+    snapshot, everything is checked."""
     tier = tier or check_tier()
     lim = profile.limits()
     budget = lim["facts_chars_writing"] if tier == "writing" else lim["facts_chars_analysis"]
@@ -784,18 +791,32 @@ def check_claims(letter: str, cv: str, tier: str | None = None, confirmed: list[
     facts_now = _facts_seen()
     context_now = _fingerprint("\n".join([*own, *sorted(confirmed)]))
     snap = (before or {}).get("snapshot") or {}
-    kept: dict[int, dict] = {}
-    if snap.get("items"):
-        old = {}
-        for it in snap["items"]:
-            old.setdefault(it.get("key"), it)
+    # Where an earlier verdict may come from, first match first: the last check (whose flags stand while nothing
+    # that could back them came in), the backed verdicts on this application's earlier versions, and other checks.
+    sources: list[tuple[dict, dict, bool]] = []
+    if not full and snap.get("items"):
         facts_then = snap.get("facts") or {}
-        changed_facts = {i for i in set(facts_now) | set(facts_then) if facts_now.get(i) != facts_then.get(i)}
-        looser = bool(changed_facts) or snap.get("context") != context_now
-        kept = {i: old[k] for i, k in enumerate(keys) if k in old and _still_holds(old[k], changed_facts, looser)}
-        for i, k in enumerate(keys):  # the sentence after a new one is read again: "it" and "there" point back
-            if units[i][0] == "letter" and k not in old and i + 1 < len(units) and units[i + 1][0] == "letter":
-                kept.pop(i + 1, None)
+        sources.append(({it.get("key"): it for it in reversed(snap["items"])}, facts_then,
+                        facts_now != facts_then or snap.get("context") != context_now))
+    if not full:
+        sources.append(({it.get("key"): it for it in reversed(snap.get("earlier") or [])}, snap.get("facts") or {}, True))
+        for other in also or []:
+            o = (other or {}).get("snapshot") or {}
+            sources.append(({it.get("key"): it for it in reversed([*(o.get("items") or []), *(o.get("earlier") or [])])},
+                            o.get("facts") or {}, True))
+    kept: dict[int, dict] = {}
+    source_of: dict[int, int] = {}
+    for i, k in enumerate(keys):
+        for n, (old, facts_then, looser) in enumerate(sources):
+            if k in old:
+                source_of.setdefault(i, n)
+                if _still_holds(old[k], facts_now, facts_then, looser):
+                    kept[i], source_of[i] = old[k], n
+                    break
+    for i in range(len(units) - 1):  # the sentence after a new one is read again: "it" and "there" point back
+        if units[i][0] == "letter" and i not in source_of and units[i + 1][0] == "letter":
+            kept.pop(i + 1, None)
+    from_earlier = sum(1 for i in kept if source_of[i] > 0 or not snap.get("items"))
     todo = [i for i in range(len(units)) if i not in kept]
     verdicts: dict[int, dict] = {}
     if todo:
@@ -824,12 +845,21 @@ def check_claims(letter: str, cv: str, tier: str | None = None, confirmed: list[
         else:
             continue  # no verdict came back for it: it is read again next time
         it["key"] = keys[i]
+        it["fp"] = {str(f): facts_now[str(f)] for f in it.get("fact_ids") or [] if str(f) in facts_now}
         if it["status"] in ("partly", "unsupported") and any(_same(text, c) for c in confirmed):  # the very sentence you confirmed
             it.update(status="supported", note="You confirmed this is true.")
         items.append(it)
     _verify_against_documents([it for it in fresh if it["status"] != "not_a_claim" and it["kind"] != "other"], tier)
-    claims = [{k: v for k, v in it.items() if k != "key"} for it in items
+    claims = [{k: v for k, v in it.items() if k not in ("key", "fp")} for it in items
               if it["status"] != "not_a_claim" and it["kind"] != "other"]
+    # Backed verdicts on text this version no longer has, newest first: going back to it costs nothing.
+    now_keys, earlier = set(keys), []
+    for it in [*(snap.get("items") or []), *(snap.get("earlier") or [])]:
+        if it.get("key") not in now_keys and it.get("status") not in ("partly", "unsupported"):
+            now_keys.add(it.get("key"))
+            earlier.append(it if it.get("fp") is not None else
+                           {**it, "fp": {str(f): (snap.get("facts") or {}).get(str(f)) for f in it.get("fact_ids") or []}})
+    earlier = earlier[:EARLIER_KEPT]
     counts = dict(Counter(c["status"] for c in claims))
     problems = counts.get("partly", 0) + counts.get("unsupported", 0)
     if not kept:
@@ -837,12 +867,16 @@ def check_claims(letter: str, cv: str, tier: str | None = None, confirmed: list[
     elif todo:
         done = (f"Checked the {len(todo)} new or changed of {len(units)} sentences and lines (the others kept their "
                 "verdict)")
+    elif from_earlier:
+        done = (f"All {len(units)} sentences and lines had been checked before, in an earlier version or in your base "
+                "CV, so nothing was sent to a model")
     else:
         done = f"Nothing changed in the {len(units)} sentences and lines since the last check"
     summary = (f"{done}: {counts.get('supported', 0)} backed by your career database"
                + (f", {problems} to look at before sending." if problems else ", nothing unsupported found."))
     return {"claims": claims, "counts": counts, "summary": summary, "checked": len(verdicts), "kept": len(kept),
-            "snapshot": {"items": items, "facts": facts_now, "context": context_now}}
+            "reused": from_earlier, "snapshot": {"items": items, "facts": facts_now, "context": context_now,
+                                                  "earlier": earlier}}
 
 
 def run_checks(app_id: int, full: bool = False) -> dict:
@@ -864,8 +898,8 @@ def run_checks(app_id: int, full: bool = False) -> dict:
         return {"voice": v["score"]}
     # What you said is true here, and the lines of your base CV you said are true there: your own word.
     confirmed = [*((db.jload(app.get("review"), {}) or {}).get("confirmed") or []), *review.base_confirmed()]
-    d = check_claims(app["letter"] or "", app["cv"] or "", confirmed=confirmed,
-                     before=None if full else db.jload(app.get("claims"), None))
+    d = check_claims(app["letter"] or "", app["cv"] or "", confirmed=confirmed, before=db.jload(app.get("claims"), None),
+                     also=review.base_checks(), full=full)
     d["checked_at"] = db.now()
     db.update("applications", app_id, {"claims": db.jdump(d)})
     return {"voice": v["score"], "claims": d["counts"]}

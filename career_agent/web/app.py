@@ -619,7 +619,8 @@ def application_cv_reset(app_id: int):
     if not result:
         return go(f"/applications/{app_id}?tab=cv", err="You have no base CV yet. Add one under Profile → Your CV.")
     tasks.enqueue("check_application", {"application_id": app_id}, ref=f"app:{app_id}")
-    msg = f"The CV is your base CV again ({result['base']['title']}). The previous one is under Versions. Fact-checking now…"
+    msg = (f"The CV is your base CV again ({result['base']['title']}). The previous one is under Versions. Lines your "
+           "base CV's own check has judged keep their verdict, so only anything new is checked…")
     if not result["same_language"]:
         msg += " Your base CV isn't in this application's language, so the CV is now in the base's language."
     return go(f"/applications/{app_id}?tab=cv", msg=msg)
