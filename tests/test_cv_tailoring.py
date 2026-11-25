@@ -1,7 +1,7 @@
 """A job's CV is your base CV, tailored lightly: its top and its order change for the job, the rest is yours."""
 from __future__ import annotations
 
-from career_agent import cvdata, cvrender, db, tracker, writer
+from career_agent import cvdata, cvrender, db, jobs, tracker, writer
 
 from .test_cv import _draft
 
@@ -67,3 +67,20 @@ def test_a_project_brought_in_from_the_database_keeps_its_own_dates(fake, monkey
     a = _draft()
     data = db.jload(tracker.app_with_job(a["id"])["cv_data"], {})
     assert data["projects"][0]["name"] == "Event platform" and data["projects"][0]["start"] == "2024"
+
+
+def test_the_ads_words_your_career_database_backs_are_given_to_the_writer(fake):
+    a = _draft()
+    job = jobs.get(a["job_id"])
+    base = cvdata.base()["data"]
+    words = writer.ad_words(job, base)
+    assert "Scrum" not in words and "SQL" not in words, "already on the CV"
+    assert "Kubernetes" not in words, "nothing in the career database backs it: never offered"
+
+    db.insert("facts", {"category": "skill", "title": "Kubernetes", "detail": "Ran the payment services on Kubernetes.",
+                        "verified": 1, "hidden": 0, "source": "you", "created_at": db.now(), "updated_at": db.now()})
+    assert "Kubernetes" in writer.ad_words(job, base)
+    writer.revise(a["id"], "Make it fit the ad.", part="cv")
+    sent = next(user for system, user, schema in reversed(fake.calls) if schema is cvdata.TAILOR_SCHEMA and "<cv>" in user)
+    line = sent.split("THE AD'S OWN WORDS THAT THE CV DOESN'T USE YET: ", 1)[1].split("\n", 1)
+    assert "Kubernetes" in line[0] and "never add a skill the candidate doesn't have" in line[1]

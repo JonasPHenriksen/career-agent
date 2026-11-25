@@ -134,3 +134,25 @@ def test_texts_that_run_long_are_shortened_unless_they_are_your_own(fake):
     assert data["work"][0]["highlights"][0] == yours and data["work"][0]["highlights"][1] != new
     assert data["label"] != "Software Engineer · Backend, data pipelines, integrations and AI agents"
     assert any("made a little shorter" in n for n in notes)
+
+
+def test_a_column_that_squeezes_the_page_is_shortened(fake, monkeypatch):
+    a = _draft()
+    plain = fake.answer
+
+    def answer(system, user, schema):  # asked to shorten the sidebar, it leaves out two skills
+        data = plain(system, user, schema)
+        if schema is cvdata.TAILOR_SCHEMA and "longer than the page holds at the usual spacing" in user:
+            data["cv"]["skills"][0]["keywords"] = data["cv"]["skills"][0]["keywords"][:3]
+        return data
+
+    monkeypatch.setattr(fake, "answer", answer)
+    crowded = lambda data: len(data["skills"][0]["keywords"]) > 3
+    monkeypatch.setattr(writer, "_cv_pages", lambda data, language=None: 1)  # it fits: at a tighter spacing
+    monkeypatch.setattr(writer, "_cv_room", lambda data, language, spacing=None:
+                        {"side": -0.9 if crowded(data) else 0.5, "main": 0.2})
+    data, notes = _tailor(fake, a)
+    asked = _asked(fake, "longer than the page holds at the usual spacing")
+    assert len(asked) == 1 and "the sidebar is about 1 line longer" in asked[0]
+    assert "Leave the main column as it is" in asked[0], "the column with the gap is not the one to cut"
+    assert len(data["skills"][0]["keywords"]) == 3 and not any("still fills" in n for n in notes)

@@ -308,8 +308,41 @@ def _cv_task(job: dict, language: str, instructions: str | None, told: list[str]
             + _job_context(job, language, instructions))
 
 
+def _words(text: str) -> str:
+    return re.sub(r"[^\w+#]+", " ", (text or "").lower()).strip()
+
+
+def ad_words(job: dict, cv: dict) -> list[str]:
+    """The ad's own words for skills, tools and domains (its keywords) that the CV doesn't name, and that something in
+    your career database may back: the keyword is found there as a phrase (a name such as Infor or SAP as that very
+    word, any other word by its stem, so "Unit Testing" is found from "unit tests"). The writer decides which the
+    database really backs, and the fact check checks what it writes."""
+    keywords = [k.strip() for k in (db.jload(job.get("details"), {}) or {}).get("keywords") or [] if k and k.strip()]
+    if not keywords:
+        return []
+    on_cv = " " + _words(" ".join([cv.get("label") or "", cvdata.to_markdown(cv)])) + " "
+    facts = " " + _words(" ".join(f"{r['title']} {r['detail'] or ''} {r['tags'] or ''}" for r in db.q(
+        "SELECT title, detail, tags FROM facts WHERE hidden = 0"))) + " "
+    out = []
+    def part(word: str) -> str:
+        low = word.lower()
+        if any(c.isupper() or c.isdigit() for c in word):  # a name (Infor, M3, SAP, Kafka): that very word
+            return re.escape(low) + "s?"
+        return re.escape(low if len(low) <= 4 else low[:max(4, len(low) - 3)]) + r"[\w+#]*"  # a word: its stem
+
+    for k in keywords:
+        if not _words(k) or f" {_words(k)} " in on_cv:
+            continue
+        words = re.findall(r"[\w+#]+", k)
+        # The keyword as a phrase, so "Power Automate" isn't found from "Power Platform" and "automate"; "D365 FO"
+        # is found from "D365FO" too.
+        if words and re.search(r"(?<![\w+#])" + " ?".join(part(w) for w in words) + r"(?![\w+#])", facts):
+            out.append(k)
+    return list(dict.fromkeys(out))
+
+
 def _cv_tailor_task(job: dict, language: str, instructions: str | None, base: dict, current: dict | None = None,
-                    told: list[str] | None = None) -> str:
+                    told: list[str] | None = None, words: list[str] | None = None) -> str:
     """Tailor the candidate's own CV (the base) with small changes, or revise an already tailored one."""
     import json
 
@@ -319,6 +352,10 @@ def _cv_tailor_task(job: dict, language: str, instructions: str | None, base: di
     return (f"Tailor the candidate's CV for the job below.\n\n{cvdata.TAILOR_RULES.format(language=lang, pages=_cv_pages(base))}\n\n"
             f"Return cv, changes, used_fact_ids and notes. {cv_notes_rule(told)}\n\n"
             f"THE CV ({what}):\n<cv>\n{doc}\n</cv>\n\n"
+            + (f"THE AD'S OWN WORDS THAT THE CV DOESN'T USE YET: {'; '.join(words)}.\nWhere the career database "
+               "clearly backs one, use the ad's wording for it, in a skill group or a point, so a recruiter searching for "
+               "that word finds it. Leave out every one the database doesn't back: never add a skill the candidate "
+               "doesn't have.\n\n" if words else "")
             + _job_context(job, language, instructions))
 
 
@@ -334,6 +371,7 @@ def _cv_pages(data: dict, language: str | None = None) -> int:
 
 PAGE_TRIES = 4  # passes at most to bring a CV back to its length and fill the room it leaves
 ROOM_LINES = 2  # free lines in a column worth filling: less than that is about full
+CROWD_LINES = 0.5  # a column longer than the page by this much at your base CV's spacing squeezes the whole page
 POINT_LINES = 2  # a point, or an entry's description, on at most two lines
 PROFILE_LINES = 4  # the profile on at most four lines, like your base CV's
 
@@ -385,6 +423,18 @@ def _shorter(pages: int, limit: int, room: dict, added: bool = False) -> str:
     return ask + "Change nothing else."
 
 
+def _crowded(room: dict) -> str:
+    """What to cut when the CV fits only with its lines closer together than yours: the column that is too long."""
+    side, main = room.get("side", 0), room.get("main", 0)
+    col, other, n = ("sidebar", "main column", side) if side < main else ("main column", "sidebar", main)
+    how = ("leave out the skills or interests that matter least for this job, or join small groups of skills"
+           if col == "sidebar" else "leave out the points that matter least for this job, or say them more tightly")
+    return (f"This CV fits on its page only with its lines set closer together than the candidate's own CV: the {col} "
+            f"is {_lines(n)} longer than the page holds at the usual spacing, so the whole page is squeezed and the "
+            f"{other} ends with empty lines. Shorten the {col} by at least that: {how}. Leave the {other} as it is. "
+            "Change nothing else.")
+
+
 def _fuller(room: dict, left_out: list[str], points: list[str]) -> str:
     """How to use the room a CV leaves: in the column that has it, first with what the candidate's own CV has."""
     side, main = room.get("side", 0), room.get("main", 0)
@@ -409,7 +459,9 @@ def fit_pages(job: dict, language: str, system: str, base: dict, data: dict,
     """Your base CV's length is the limit, and the room on the page is for content. A CV that runs over is shortened
     where it runs over, by about as much as it does (cutting hobbies never shortened a long work section). A CV
     that fits, but has room for more at your base CV's line spacing, is filled: room it has only because its lines
-    are set further apart than yours is room for content. A fill that overshoots is trimmed back, and if no pass is
+    are set further apart than yours is room for content. And a CV that fits only because its lines are set closer
+    together than yours has one column too long, which leaves the other ending in empty lines: that column is
+    shortened. A fill that overshoots is trimmed back, and if no pass is
     left, the last CV that fitted is kept. At most PAGE_TRIES passes. Returns the CV, its changes and notes for you."""
     limit = _cv_pages(base["data"], base.get("language"))
     target = _cv_spacing(base["data"], base.get("language")) if limit == 1 else None
@@ -421,13 +473,17 @@ def fit_pages(job: dict, language: str, system: str, base: dict, data: dict,
         if pages <= limit:
             fitted = (data, list(changes))
             room = _cv_room(data, language, target) if target else {}
-            if max(room.get("side", 0), room.get("main", 0)) < ROOM_LINES:
+            if min(room.get("side", 0), room.get("main", 0)) < -CROWD_LINES:  # one column squeezes the page
+                ask, filling = _crowded(room), False
+            elif max(room.get("side", 0), room.get("main", 0)) >= ROOM_LINES:
+                ask, filling = _fuller(room, cvdata.left_out_of_sidebar(base["data"], data),
+                                       cvdata.left_out_points(base["data"], data)), True
+            else:
                 break
-            ask, filling = _fuller(room, cvdata.left_out_of_sidebar(base["data"], data),
-                                   cvdata.left_out_points(base["data"], data)), True
         else:
             ask, filling = _shorter(pages, limit, _cv_room(data, language) if limit == 1 else {}, added), False
-        again = llm.run("writing", "revise_cv", system, _cv_tailor_task(job, language, ask, base["data"], data),
+        words = ad_words(job, data) if filling else None  # room to fill: the ad's words the CV can back are worth it
+        again = llm.run("writing", "revise_cv", system, _cv_tailor_task(job, language, ask, base["data"], data, words=words),
                         cvdata.TAILOR_SCHEMA, max_tokens=16000, effort=effort or "medium").data
         new = cvdata.clean({**again["cv"], "main_order": data.get("main_order")})
         if cvdata.is_empty(new):
@@ -456,7 +512,8 @@ def tailor_cv(job: dict, language: str, instructions: str | None, system: str, p
     base = cvdata.base_for(language)  # your base CV in this language if you have one, so nothing needs translating
     if not base:
         return None
-    task = _cv_tailor_task(job, language, instructions, base["data"], current, told)
+    task = _cv_tailor_task(job, language, instructions, base["data"], current, told,
+                           words=ad_words(job, current or base["data"]))
     d = llm.run("writing", purpose, system, task, cvdata.TAILOR_SCHEMA, max_tokens=16000, effort=effort).data
     # The order of the main sections is the CV's own: another only when your instructions ask for it.
     order = d.get("main_order") if (instructions or "").strip() else None
