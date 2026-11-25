@@ -146,6 +146,8 @@ class FakeProvider:
             if "Shorter" in user or "Shorten it" in user:
                 cv["work"][0]["highlights"] = cv["work"][0]["highlights"][:1]
                 return {"cv": cv, "changes": ["Kept one point per job."], "used_fact_ids": [], "notes": [], "leave_out_photo": no_photo}
+            if "room to spare" in user:  # asked to use the room on the page: nothing it wants to add
+                return {"cv": cv, "changes": [], "used_fact_ids": [], "notes": [], "leave_out_photo": no_photo}
             cv["work"][0]["highlights"].reverse()
             return {"cv": cv, "changes": ["Put the support result first: the ad is about payments."], "used_fact_ids": [1], "notes": [],
                     "leave_out_photo": no_photo}

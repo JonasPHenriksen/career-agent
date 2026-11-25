@@ -15,18 +15,22 @@
 #let measuring = d.at("measure", default: false)
 #let tight = d.at("tight", default: ())
 #let squeeze(body) = text(tracking: -0.12pt, spacing: 85%, body)
+// Tool names stay on one line: "X++", "C++" and "CI/CD" are never broken at the + or the /. Done in the layout,
+// so the PDF's text (what an applicant tracking system reads) is exactly the words.
+#let unbroken(body) = { show regex("\w+\+\+|\w+/\w+"): box; body }
 #let fitted(kind, body) = if measuring {
+  let shown = unbroken(body)
   layout(size => {
     let w = size.width
-    let h = measure(block(width: w, body)).height
+    let h = measure(block(width: w, shown)).height
     let one = measure(block(width: w, [x])).height
     let lines = calc.round((h - one) / (measure(block(width: w, [x \ x])).height - one)) + 1
-    let short = lines > 1 and measure(block(width: w * (1 + 0.15 / (lines - 1)), body)).height < h
-    let helps = measure(block(width: w, squeeze(body))).height < h
+    let short = lines > 1 and measure(block(width: w * (1 + 0.15 / (lines - 1)), shown)).height < h
+    let helps = measure(block(width: w, squeeze(shown))).height < h
     [#metadata((kind: kind, text: body, lines: lines, short: short, tighten: helps)) <cvtext>]
-    body
+    shown
   })
-} else if body in tight { squeeze(body) } else { body }
+} else if body in tight { squeeze(unbroken(body)) } else { unbroken(body) }
 
 #set document(title: d.header.name + " – CV", author: d.header.name)
 #set page(paper: "a4", margin: (x: 0pt, top: 0pt, bottom: 8pt),
@@ -51,8 +55,7 @@
   #if i.text != "" { linebreak(); text(size: base * 0.9, fitted("side", i.text)) }
 ]
 
-#grid(columns: (side, 1fr),
-  [
+#let sidebar-col = [
     #block(fill: primary, width: 100%, inset: (x: 16pt, top: 20pt, bottom: 14pt))[
       #set text(fill: white)
       #set par(leading: 0.75em)
@@ -68,13 +71,17 @@
       }))
       // One contact detail per line. A line that is too wide (a long web address) is set smaller, down to
       // three quarters of the size, before it is allowed to wrap.
+      // The headline is measured too: one that only fits set smaller is reported, to be made shorter.
       #{
         let lines = ()
         if d.header.label != "" { lines.push(d.header.label) }
         for l in d.header.lines { lines.push(if l.url != "" { link(l.url, l.text) } else { l.text }) }
-        for l in lines {
+        for (n, l) in lines.enumerate() {
           block(above: 0.75em, below: 0pt, layout(size => {
             let w = measure(l).width
+            if measuring and n == 0 and d.header.label != "" {
+              [#metadata((kind: "headline", text: l, lines: 1, short: false, tighten: false, fits: w <= size.width)) <cvtext>]
+            }
             if w > size.width { text(size: 1em * calc.max(size.width / w * 0.99, 0.75), l) } else { l }
           }))
         }
@@ -86,8 +93,8 @@
         for i in s.items { side-item(i) }
       }
     ]
-  ],
-  [
+]
+#let main-col = [
     #if d.profile.text != "" {
       block(fill: tint, width: 100%, inset: (x: 16pt, top: 12pt, bottom: 12pt))[
         #title(d.profile.title)
@@ -100,5 +107,18 @@
         for e in s.entries { entry(e) }
       }
     ]
-  ],
-)
+]
+
+#grid(columns: (side, 1fr), sidebar-col, main-col)
+
+// How full each column is, for cvrender.py (asked for with "room"): the height each column needs and the page holds,
+// and the height of a line of text in it. Measured apart from the page, so the CV itself is laid out the same.
+#if d.at("room", default: false) {
+  context {
+    let sw = page.width * side
+    let mw = page.width - sw
+    let line(width, size) = measure(block(width: width, text(size: size, [x \ x]))).height - measure(block(width: width, text(size: size, [x]))).height
+    [#metadata((side: measure(block(width: sw, sidebar-col)).height.pt(), main: measure(block(width: mw, main-col)).height.pt(),
+      page: (page.height - 8pt).pt(), side_line: line(sw - 32pt, base * 0.9).pt(), main_line: line(mw - 32pt, base).pt())) <cvroom>]
+  }
+}

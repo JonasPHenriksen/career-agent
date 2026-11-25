@@ -1,4 +1,4 @@
-"""A job's CV reads as written for it: projects and points from the career database, and its own section order."""
+"""A job's CV is your base CV, tailored lightly: its top and its order change for the job, the rest is yours."""
 from __future__ import annotations
 
 from career_agent import cvdata, cvrender, db, tracker, writer
@@ -21,11 +21,12 @@ def _answer_with(fake, monkeypatch, order: list[str], project: dict | None = Non
     monkeypatch.setattr(fake, "answer", answer)
 
 
-def test_the_writer_is_asked_to_make_the_cv_read_as_written_for_the_job(fake):
+def test_the_writer_is_asked_to_tailor_lightly(fake):
     _draft()
     sent = next(user for system, user, schema in reversed(fake.calls) if schema is cvdata.TAILOR_SCHEMA)
-    assert "make it read as if it was written for this job" in sent and "Change as little as you can" not in sent
-    assert "from the base CV or the career database" in sent and "main_order" in sent
+    assert "Tailor only its top and its order" in sent and "make it read as if it was written for this job" not in sent
+    assert "the CV's projects as they are" in sent and "swap at most one point" in sent, "your projects and points stay"
+    assert "no list of personal qualities" in sent and f"at most {cvdata.HEADLINE_CHARS} characters" in sent
     assert "Never change an employer, a job title, a date or a number" in sent, "what stays, stays"
 
 
@@ -33,9 +34,13 @@ PROJECT = {"name": "Event platform", "start": "2024", "end": "2025", "descriptio
            "highlights": ["C#/.NET with DDD and CQRS."]}
 
 
-def test_each_cv_gets_the_section_order_that_suits_its_job(fake, monkeypatch):
+def test_a_cv_keeps_your_section_order_unless_you_ask_for_another(fake, monkeypatch):
     _answer_with(fake, monkeypatch, ["projects", "work"], PROJECT)
     a = _draft()
+    data = db.jload(tracker.app_with_job(a["id"])["cv_data"], {})
+    assert "main_order" not in data, "the writer's own idea of an order doesn't change your CV's"
+
+    writer.revise(a["id"], "Put the projects first.", part="cv")  # asked for: then it does
     data = db.jload(tracker.app_with_job(a["id"])["cv_data"], {})
     assert data["main_order"] == ["projects", "work", "education"], "the rest follows in the usual order"
     heading = {k: cvrender._title(data, k, "da") for k in ("work", "projects", "education")}

@@ -175,7 +175,7 @@ def test_dates_and_employers_from_your_cv_are_put_back():
     assert len(notes) == 3 and "Jul 2024" in notes[1] and "correct it under Profile" in notes[1]
 
 
-def test_a_cv_that_runs_longer_than_yours_is_cut_once(fake, monkeypatch):
+def test_a_cv_that_runs_longer_than_yours_is_cut_to_fit(fake, monkeypatch):
     a = _draft()
     def pages(data, language=None):  # the tailored CV (support result first, two points) runs to a second page
         points = data["work"][0]["highlights"]
@@ -186,7 +186,8 @@ def test_a_cv_that_runs_longer_than_yours_is_cut_once(fake, monkeypatch):
     data, notes = writer.tailor_cv(job, "da", None, writer.writer_system("da", job))
     assert len(data["work"][0]["highlights"]) == 1, "the second call left a point out"
     assert any(n == "CV: Kept one point per job." for n in notes) and not any("still fills" in n for n in notes)
-    assert "Shorten it to fit 1 page(s)" in fake.calls[-1][1]
+    asked = [user for system, user, schema in fake.calls if schema is cvdata.TAILOR_SCHEMA and "fills 2 pages" in user]
+    assert len(asked) == 1 and "Shorten it to fit 1 page(s)" in asked[0], "cut once: then it fits"
 
 
 def _picture(width: int = 900, height: int = 700) -> bytes:

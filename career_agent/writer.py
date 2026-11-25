@@ -332,82 +332,241 @@ def _cv_pages(data: dict, language: str | None = None) -> int:
         return 1
 
 
+PAGE_TRIES = 4  # passes at most to bring a CV back to its length and fill the room it leaves
+ROOM_LINES = 2  # free lines in a column worth filling: less than that is about full
+POINT_LINES = 2  # a point, or an entry's description, on at most two lines
+PROFILE_LINES = 4  # the profile on at most four lines, like your base CV's
+
+
+def _lines(n: float) -> str:
+    n = max(1, round(abs(n)))
+    return f"about {n} line{'s' if n != 1 else ''}"
+
+
+def _cv_room(data: dict, language: str, spacing: float | None = None) -> dict:
+    from . import cvrender
+
+    try:
+        return cvrender.room(data, language, spacing)
+    except Exception:  # noqa: BLE001 - measuring is a nicety; a draft must not fail on it
+        return {}
+
+
+def _cv_spacing(data: dict, language: str | None) -> float | None:
+    from . import cvrender
+
+    try:
+        return cvrender.spacing(data, language)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _shorter(pages: int, limit: int, room: dict, added: bool = False) -> str:
+    """What to cut when the CV runs over: from the column that runs over, by about how much it does."""
+    side, main = room.get("side", 0), room.get("main", 0)
+    ask = f"This CV now fills {pages} pages; the candidate's own CV fills {limit}. "
+    if added:
+        ask += "What you just added to use the spare room was more than the room. "
+    if not room or (side >= 0 and main >= 0):
+        return ask + (f"Shorten it to fit {limit} page(s): " + ("take back part of what you added. " if added else
+                      "leave out the points, skills or interests that matter least for this job. ") + "Change nothing else.")
+    if main < 0:
+        ask += (f"The main column runs over the page by {_lines(main)}. Shorten it by at least that and a line more: "
+                + ("take back part of what you added there, " if added else "")
+                + "leave out the points that matter least for this job, or say them more tightly. Keep every job, "
+                "education and project. ")
+        if side >= 0:
+            ask += ("The sidebar is not what runs over, so leave it as it is: taking skills or interests out of it "
+                    "doesn't make the page shorter. ")
+    if side < 0:
+        ask += (f"The sidebar runs over the page by {_lines(side)}. Shorten it by at least that: "
+                + ("take back part of what you added there, or " if added else "")
+                + "leave out the skills or interests that matter least for this job, or join small groups of skills. ")
+    return ask + "Change nothing else."
+
+
+def _fuller(room: dict, left_out: list[str], points: list[str]) -> str:
+    """How to use the room a CV leaves: in the column that has it, first with what the candidate's own CV has."""
+    side, main = room.get("side", 0), room.get("main", 0)
+    where = [f"the sidebar has room for {_lines(side)} more" if side >= ROOM_LINES else "",
+             f"the main column has room for {_lines(main)} more" if main >= ROOM_LINES else ""]
+    ask = ("This CV fits on its page with room to spare: " + " and ".join(w for w in where if w)
+           + ". Fill that room with content, as close to full as you can without going over: ")
+    uses = []
+    if side >= ROOM_LINES:
+        uses.append("in the sidebar, skills, languages or interests that matter for this job"
+                    + (" (the candidate's own CV has these that this one left out: " + "; ".join(left_out) + ")" if left_out else "")
+                    + ", or a group of skills the career database backs")
+    if main >= ROOM_LINES:
+        uses.append("in the main column, first the candidate's own points that this CV left out"
+                    + (" (" + " | ".join(points) + ")" if points else "")
+                    + ", then a point from their real work that the career database backs and that matters for this job")
+    return ask + "; ".join(uses) + ". Keep everything that is on the CV now and change nothing else."
+
+
+def fit_pages(job: dict, language: str, system: str, base: dict, data: dict,
+              effort: str | None = None) -> tuple[dict, list[str], list[str]]:
+    """Your base CV's length is the limit, and the room on the page is for content. A CV that runs over is shortened
+    where it runs over, by about as much as it does (cutting hobbies never shortened a long work section). A CV
+    that fits, but has room for more at your base CV's line spacing, is filled: room it has only because its lines
+    are set further apart than yours is room for content. A fill that overshoots is trimmed back, and if no pass is
+    left, the last CV that fitted is kept. At most PAGE_TRIES passes. Returns the CV, its changes and notes for you."""
+    limit = _cv_pages(base["data"], base.get("language"))
+    target = _cv_spacing(base["data"], base.get("language")) if limit == 1 else None
+    changes: list[str] = []
+    fitted: tuple[dict, list[str]] | None = None  # the last CV that fitted, with its changes
+    added = False
+    for _ in range(PAGE_TRIES):
+        pages = _cv_pages(data, language)
+        if pages <= limit:
+            fitted = (data, list(changes))
+            room = _cv_room(data, language, target) if target else {}
+            if max(room.get("side", 0), room.get("main", 0)) < ROOM_LINES:
+                break
+            ask, filling = _fuller(room, cvdata.left_out_of_sidebar(base["data"], data),
+                                   cvdata.left_out_points(base["data"], data)), True
+        else:
+            ask, filling = _shorter(pages, limit, _cv_room(data, language) if limit == 1 else {}, added), False
+        again = llm.run("writing", "revise_cv", system, _cv_tailor_task(job, language, ask, base["data"], data),
+                        cvdata.TAILOR_SCHEMA, max_tokens=16000, effort=effort or "medium").data
+        new = cvdata.clean({**again["cv"], "main_order": data.get("main_order")})
+        if cvdata.is_empty(new):
+            break
+        new["language"] = language
+        if data.get("photo") is False:
+            new["photo"] = False
+        data, added = new, filling
+        changes += [f"CV: {c.strip()}" for c in again["changes"][:5] if c.strip()]
+    notes = []
+    if _cv_pages(data, language) > limit:
+        if fitted:  # the last pass ran over: the CV as it was when it last fitted
+            data, changes = fitted
+        else:
+            notes.append(f"The CV still fills more than {limit} page(s). Ask for “Fit it on one page” or trim it under CV.")
+    return data, changes, notes
+
+
 def tailor_cv(job: dict, language: str, instructions: str | None, system: str, purpose: str = "write_cv",
               current: dict | None = None, effort: str | None = None,
               told: list[str] | None = None) -> tuple[dict, list[str]] | None:
     """The CV for this job as data, made from your base CV, with the list of changes. None if you have no base CV.
-    `told` is what the letter's notes already say, so the CV's notes don't say it again."""
+    `told` is what the letter's notes already say, so the CV's notes don't say it again. After the writer: texts that
+    run long are shortened, the CV is brought to your base CV's length and its room filled (fit_pages), and what
+    that changed is checked for long lines once more."""
     base = cvdata.base_for(language)  # your base CV in this language if you have one, so nothing needs translating
     if not base:
         return None
     task = _cv_tailor_task(job, language, instructions, base["data"], current, told)
     d = llm.run("writing", purpose, system, task, cvdata.TAILOR_SCHEMA, max_tokens=16000, effort=effort).data
-    # The order of the main sections is chosen for this job; a revision that doesn't choose keeps the one it had.
-    data = cvdata.clean({**d["cv"], "main_order": d.get("main_order") or (current or {}).get("main_order")})
+    # The order of the main sections is the CV's own: another only when your instructions ask for it.
+    order = d.get("main_order") if (instructions or "").strip() else None
+    data = cvdata.clean({**d["cv"], "main_order": order or (current or {}).get("main_order")})
     if cvdata.is_empty(data):  # a model that returned nothing usable: keep what we had
         data = current or cvdata.clean(base["data"])
     data["language"] = language
     changes = [f"CV: {c.strip()}" for c in d["changes"][:8] if c.strip()] or ["CV: your base CV, unchanged."]
-    notes = list(d["notes"])
-    # Your CV's length is the limit: if the result runs longer (a translation often does), it is cut once to fit.
-    limit, pages = _cv_pages(base["data"], base.get("language")), _cv_pages(data, language)
-    if pages > limit:
-        fit = (f"This CV now fills {pages} pages; the candidate's own CV fills {limit}. Shorten it to fit {limit} page(s): leave out "
-               "the points, skills or interests that matter least for this job. Change nothing else.")
-        again = llm.run("writing", "revise_cv", system, _cv_tailor_task(job, language, fit, base["data"], data),
-                        cvdata.TAILOR_SCHEMA, max_tokens=16000, effort=effort or "medium").data
-        shorter = cvdata.clean({**again["cv"], "main_order": again.get("main_order") or data.get("main_order")})
-        if not cvdata.is_empty(shorter):
-            shorter["language"] = language
-            data = shorter
-            changes += [f"CV: {c.strip()}" for c in again["changes"][:5] if c.strip()]
-        if _cv_pages(data, language) > limit:
-            notes.append(f"The CV still fills more than {limit} page(s). Ask for “Fit it on one page” or trim it under CV.")
     data.pop("photo", None)
-    cvdata.carry_colour(current, data)
-    if d.get("leave_out_photo"):  # the ad asks for applications without a photo
+    if d.get("leave_out_photo"):  # the ad asks for applications without a photo: decided first, it changes the room
         data["photo"] = False
         if not any("photo" in c.lower() for c in changes):
             changes.append("CV: your photo is left out, because the ad asks for applications without one.")
+    shortened = tidy_lines(job, language, system, data, base["data"], effort, final=False)
+    data, more, notes = fit_pages(job, language, system, base, data, effort)
+    cvdata.carry_colour(current, data)
     kept = cvdata.keep_base_facts(base["data"], data)
-    return data, changes + kept + notes + shorten_spills(job, language, system, data, effort)
+    last = tidy_lines(job, language, system, data, base["data"], effort)
+    return data, changes + more + _one_note(shortened + last) + kept + list(d["notes"]) + notes + [
+        n for n in last if not SHORTENED.match(n)]
 
 
-SPILL_SCHEMA = J.obj(lines=J.arr(J.obj(n=J.i("The line's number"), text=J.s("The line, a little shorter"))))
+SPILL_SCHEMA = J.obj(lines=J.arr(J.obj(n=J.i("The line's number"), text=J.s("The line, shorter"))))
+SHORTENED = re.compile(r"CV: (\d+) texts? made a little shorter")
 
 
-def shorten_spills(job: dict, language: str, system: str, data: dict, effort: str | None = None) -> list[str]:
-    """Lines of the CV whose last word or so would sit on a line of its own, even set a touch tighter, are shortened
-    just enough to end a line earlier: on a one-page CV that line is worth more than the words. Only those lines go to
-    the model, and a line comes back only if it got shorter. Changes `data` in place; returns notes for you."""
+def _one_note(notes: list[str]) -> list[str]:
+    """The texts shortened before and after fitting, as one note."""
+    n = sum(int(m.group(1)) for m in map(SHORTENED.match, notes) if m)
+    return [f"CV: {n} text{'s' if n != 1 else ''} made a little shorter, so no line holds just a word and nothing runs "
+            "longer than its place."] if n else []
+
+
+def _too_long(data: dict, language: str, base: dict) -> list[dict]:
+    """Texts on the CV longer than their place allows, unless they are word for word from your base CV (your own
+    wording is yours to keep): points and descriptions over POINT_LINES lines, a profile over PROFILE_LINES, a
+    headline that only fits set smaller."""
+    from . import cvrender
+
+    yours = cvdata.all_texts(base)
+    out = []
+    for t in cvrender.measured(data, language):
+        lines = int(t["lines"])
+        if t["text"].strip() in yours:
+            continue
+        if t["kind"] in ("bullet", "text") and lines > POINT_LINES:
+            out.append({**t, "why": "point"})
+        elif t["kind"] == "profile" and lines > PROFILE_LINES:
+            out.append({**t, "why": "profile"})
+        elif t["kind"] == "headline" and not t.get("fits", True):
+            out.append({**t, "why": "headline"})
+    return out
+
+
+def tidy_lines(job: dict, language: str, system: str, data: dict, base: dict, effort: str | None = None,
+               final: bool = True) -> list[str]:
+    """Texts that run long on the printed page are shortened: a line whose last word or so would sit on a line of its
+    own even set a touch tighter (on a one-page CV that line is worth more than the words), a point over two lines, a
+    profile over four, a headline that doesn't fit on its line. Only those texts go to the model, and a text comes back
+    only if it got shorter. Changes `data` in place; returns notes for you, and with `final` what is still too long."""
     from . import cvrender
 
     try:
-        short = cvrender.spills(data, language)
+        spilling = [{**x, "why": "spill"} for x in cvrender.spills(data, language)]
+        long = _too_long(data, language, base)
     except Exception:  # noqa: BLE001 - a CV that can't be typeset is reported where it is shown
         return []
-    if not short:
+    todo = list({x["text"]: x for x in [*long, *spilling]}.values())  # a long point that also spills: once, as long
+    if not todo:
         return []
     where = " at ".join(x for x in (job.get("title"), job.get("company_name")) if x) or "this job"
-    task = (f"These lines are from the candidate's CV for {where}. On the printed page each ends with a word or so on a "
-            "line of its own, which costs a whole line on a one-page CV. Make each just short enough to end a line "
-            "earlier: leave out a word or two or a short phrase, or say it more tightly. Keep every fact, name, number "
-            "and tool, the language and the candidate's voice. A line that lists skills may instead leave out the one "
-            "that matters least for this job. Return every line with its number.\n\n"
-            + "\n".join(f"[{n}] {x['text']}" for n, x in enumerate(short, 1)))
+    asks = {
+        "spill": ("Each of these ends with a word or so on a line of its own, which costs a whole line on a one-page CV. "
+                  "Make each just short enough to end a line earlier: leave out a word or two or a short phrase, or say it "
+                  "more tightly. Keep every fact, name, number and tool. A line that lists skills may instead leave out "
+                  "the one that matters least for this job."),
+        "point": (f"Each of these points takes more than {POINT_LINES} lines. Make each fit on {POINT_LINES}: keep what was "
+                  "done, the tools and the result that matter most for this job, and leave out how it was done."),
+        "profile": (f"The profile takes more than {PROFILE_LINES} lines. Make it fit on {PROFILE_LINES}: facts only, what "
+                    "this employer needs most first, and no list of personal qualities."),
+        "headline": f"The headline doesn't fit on its line. Make it at most {cvdata.HEADLINE_CHARS} characters.",
+    }
+    parts, n = [], 0
+    for why in ("spill", "point", "profile", "headline"):
+        group = [x for x in todo if x["why"] == why]
+        if group:
+            parts.append(asks[why] + "\n" + "\n".join(f"[{n + i}] {x['text']}" for i, x in enumerate(group, 1)))
+            n += len(group)
+    ordered = [x for why in ("spill", "point", "profile", "headline") for x in todo if x["why"] == why]
+    task = (f"These texts are from the candidate's CV for {where}. Keep the language and the candidate's voice. "
+            "Return every text with its number.\n\n" + "\n\n".join(parts))
     d = llm.run("writing", "revise_cv", system, task, SPILL_SCHEMA, max_tokens=4000, effort=effort or "medium").data
     done = 0
     for r in d["lines"]:
-        if 1 <= r["n"] <= len(short):
-            old, new = short[r["n"] - 1]["text"], " ".join((r.get("text") or "").split())
+        if 1 <= r["n"] <= len(ordered):
+            old, new = ordered[r["n"] - 1]["text"], " ".join((r.get("text") or "").split())
             if new and len(new) < len(old) and cvdata.replace_text(data, old, new):
                 done += 1
-    left = cvrender.spills(data, language)
-    notes = [f"CV: {done} line{'s' if done != 1 else ''} made a little shorter, so no line holds just a word."] if done else []
-    if left:
-        notes.append("CV: " + ("this line still ends" if len(left) == 1 else f"{len(left)} lines still end")
-                     + " with a word or so on a line of its own: " + "; ".join(f"“…{x['text'][-60:]}”" for x in left[:3])
-                     + ". Shorten it under Edit the CV's data if you want the line back.")
+    notes = [f"CV: {done} text{'s' if done != 1 else ''} made a little shorter, so no line holds just a word and "
+             "nothing runs longer than its place."] if done else []
+    if final:
+        left = cvrender.spills(data, language)
+        if left:
+            notes.append("CV: " + ("this line still ends" if len(left) == 1 else f"{len(left)} lines still end")
+                         + " with a word or so on a line of its own: " + "; ".join(f"“…{x['text'][-60:]}”" for x in left[:3])
+                         + ". Shorten it under Edit the CV's data if you want the line back.")
+        still = _too_long(data, language, base)
+        if still:
+            notes.append("CV: still longer than its place: " + "; ".join(f"“{x['text'][:60]}…”" for x in still[:3])
+                         + ". Shorten it under Edit the CV's data.")
     return notes
 
 

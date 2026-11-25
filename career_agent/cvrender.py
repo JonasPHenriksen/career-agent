@@ -13,7 +13,7 @@ import re
 import shutil
 from pathlib import Path
 
-from . import config, settings
+from . import config, cvdata, settings
 
 TEMPLATE = Path(__file__).parent / "cv_templates" / "sidebar.typ"
 FALLBACK_FONTS = ["Charter", "Georgia", "Libertinus Serif"]
@@ -75,8 +75,6 @@ def remove_photo() -> None:
     settings.update("cv", {"photo": ""})  # the file stays, so undoing this in History brings the photo back
 
 
-def _dates(e: dict) -> str:
-    return " – ".join(x for x in ((e.get("start") or "").strip(), (e.get("end") or "").strip()) if x)
 
 
 def _title(data: dict, key: str, lang: str) -> str:
@@ -106,12 +104,12 @@ def model(data: dict, language: str | None = None, profile: dict | None = None, 
         out = []
         for e in data.get(key) or []:
             if key == "work":
-                a, b, c, d = e.get("name"), e.get("location"), e.get("position"), _dates(e)
+                a, b, c, d = e.get("name"), e.get("location"), e.get("position"), cvdata.period(e, lang)
             elif key == "education":
                 a, b, c = e.get("institution"), e.get("degree"), e.get("area")
-                d = " • ".join(x for x in ((e.get("location") or "").strip(), _dates(e)) if x)
+                d = " • ".join(x for x in ((e.get("location") or "").strip(), cvdata.period(e, lang)) if x)
             else:
-                a, b, c, d = e.get("name"), _dates(e), "", ""
+                a, b, c, d = e.get("name"), cvdata.period(e, lang), "", ""
             out.append({"a": a or "", "b": b or "", "c": c or "", "d": d or "", "text": (e.get("description") or "").strip(),
                         "bullets": [h.strip() for h in e.get("highlights") or [] if h and h.strip()]})
         return out
@@ -167,16 +165,62 @@ def fit_spacing(folder: Path, m: dict) -> float:
     return SPACINGS[lo]
 
 
-def _measure(folder: Path, m: dict) -> tuple[list[str], list[dict]]:
+def _measure(folder: Path, m: dict) -> tuple[list[str], list[dict], list[dict]]:
     """Lay the CV out once in measuring mode (see the template): the texts to set a touch tighter, because that saves
-    a line, and the texts whose last line still holds only a word or so ({kind, text}), to be shortened."""
+    a line; the texts whose last line still holds only a word or so ({kind, text}), to be shortened; and every text
+    with the number of lines it is printed on ({kind, text, lines}, and for the headline whether it fits at full size)."""
     import typst
 
     (folder / "data.json").write_text(json.dumps({**m, "measure": True}, ensure_ascii=False), encoding="utf-8")
     found = json.loads(typst.query(str(folder / "main.typ"), "<cvtext>", field="value", root=str(folder)))
     tight = sorted({f["text"] for f in found if f["tighten"]})
     short = [{"kind": f["kind"], "text": f["text"]} for f in found if f["short"] and not f["tighten"]]
-    return tight, list({s["text"]: s for s in short}.values())
+    texts = [{"kind": f["kind"], "text": f["text"], "lines": f["lines"] - (1 if f["tighten"] else 0),
+              **({"fits": f["fits"]} if "fits" in f else {})} for f in found]
+    return tight, list({s["text"]: s for s in short}.values()), list({t["text"]: t for t in texts}.values())
+
+
+def _room(folder: Path, m: dict, spacing: float | None = None) -> dict:
+    """{"side", "main"}: how many lines of text each column has left on the page; negative is how far a column runs
+    over. At `spacing`, or else at the spacing the CV is printed with (and at the tightest one when a column runs over
+    even there, the most it can hold)."""
+    import typst
+
+    def heights(at: float) -> dict:
+        look = {**m["design"], "spacing": at}
+        (folder / "data.json").write_text(json.dumps({**m, "design": look, "room": True}, ensure_ascii=False), encoding="utf-8")
+        return json.loads(typst.query(str(folder / "main.typ"), "<cvroom>", field="value", root=str(folder)))[0]
+
+    h = heights(spacing or m["design"].get("spacing", SPACINGS[0]))
+    if spacing is None and max(h["side"], h["main"]) > h["page"]:
+        h = heights(SPACINGS[0])
+    (folder / "data.json").write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")  # back to the CV as printed
+    return {"side": round((h["page"] - h["side"]) / h["side_line"], 1),
+            "main": round((h["page"] - h["main"]) / h["main_line"], 1)}
+
+
+def room(data: dict, language: str | None = None, spacing: float | None = None) -> dict:
+    """How many lines of text the sidebar and the main column have left on the first page: {"side", "main"},
+    negative where a column runs over the page. At the spacing the CV is printed with, or at `spacing` (such as your
+    base CV's, to tell content from lines set further apart). Empty if it couldn't be measured."""
+    folder = render(data, language)
+    path = folder / ("room.json" if spacing is None else f"room-{spacing:.2f}.json")
+    if not path.exists() and spacing is not None:
+        path.write_text(json.dumps(_room(folder, json.loads((folder / "data.json").read_text(encoding="utf-8")), spacing)),
+                        encoding="utf-8")
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def spacing(data: dict, language: str | None = None) -> float:
+    """The line spacing this CV is printed with (see fit_spacing)."""
+    return json.loads((render(data, language) / "data.json").read_text(encoding="utf-8"))["design"].get("spacing", SPACINGS[0])
+
+
+def measured(data: dict, language: str | None = None) -> list[dict]:
+    """Every text on the CV with the number of lines it is printed on: [{kind, text, lines}], where kind is bullet,
+    text, profile, side or headline (which also says whether it fits on its line at full size)."""
+    path = render(data, language) / "measure.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
 
 
 def spills(data: dict, language: str | None = None) -> list[dict]:
@@ -200,9 +244,11 @@ def render(data: dict, language: str | None = None) -> Path:
     shutil.copyfile(TEMPLATE, folder / "main.typ")
     if m["photo"]:
         shutil.copyfile(photo_path(), folder / m["photo"])
-    m["tight"], short = _measure(folder, m)
+    m["tight"], short, texts = _measure(folder, m)
     (folder / "spills.json").write_text(json.dumps(short, ensure_ascii=False), encoding="utf-8")
+    (folder / "measure.json").write_text(json.dumps(texts, ensure_ascii=False), encoding="utf-8")
     fit_spacing(folder, m)
+    (folder / "room.json").write_text(json.dumps(_room(folder, m)), encoding="utf-8")
     typst.compile(str(folder / "main.typ"), output=str(folder / "cv.pdf"), root=str(folder))
     typst.compile(str(folder / "main.typ"), output=str(folder / "page-{p}.png"), root=str(folder), format="png", ppi=130.0)
     return folder
