@@ -84,3 +84,18 @@ def test_the_ads_words_your_career_database_backs_are_given_to_the_writer(fake):
     sent = next(user for system, user, schema in reversed(fake.calls) if schema is cvdata.TAILOR_SCHEMA and "<cv>" in user)
     line = sent.split("THE AD'S OWN WORDS THAT THE CV DOESN'T USE YET: ", 1)[1].split("\n", 1)
     assert "Kubernetes" in line[0] and "never add a skill the candidate doesn't have" in line[1]
+
+
+def test_a_skill_you_only_have_insight_in_is_never_offered_or_added(fake):
+    a = _draft()
+    job = jobs.get(a["job_id"])
+    base = cvdata.base()["data"]
+    fid = db.insert("facts", {"category": "skill", "title": "Kubernetes", "depth": "insight", "verified": 1,
+                              "detail": "The team's services ran on Kubernetes.", "hidden": 0, "source": "you",
+                              "created_at": db.now(), "updated_at": db.now()})
+    assert "Kubernetes" not in writer.ad_words(job, base), "you know of it, but haven't used it"
+    db.update("facts", fid, {"depth": "coursework"})
+    assert "Kubernetes" in writer.ad_words(job, base), "used in a course counts as used"
+    assert "never one marked [insight only]" in cvdata.TAILOR_RULES
+    assert "Never one marked [insight only]" in writer.CV_RULES
+    assert "[insight only]" in writer.CHECK_SYSTEM, "the fact check marks it as partly backed"

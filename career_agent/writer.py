@@ -283,7 +283,7 @@ CV_RULES = """- Use only facts from the career database. Keep every job title, e
 - Include every position from the last 15 years. Older or unrelated roles can be shortened to one line, but don't hide gaps by dropping roles.
 - Put the most relevant experience and bullets first. Rephrasing is fine; adding substance is not.
 - Headline and summary present the candidate for this role, honestly.
-- Skills: only skills in the database, most relevant first.
+- Skills: only skills in the database, most relevant first. Never one marked [insight only]: the candidate knows of it but hasn't used it.
 - No name or contact details (added automatically)."""
 
 def cv_notes_rule(told: list[str] | None = None) -> str:
@@ -315,14 +315,15 @@ def _words(text: str) -> str:
 def ad_words(job: dict, cv: dict) -> list[str]:
     """The ad's own words for skills, tools and domains (its keywords) that the CV doesn't name, and that something in
     your career database may back: the keyword is found there as a phrase (a name such as Infor or SAP as that very
-    word, any other word by its stem, so "Unit Testing" is found from "unit tests"). The writer decides which the
-    database really backs, and the fact check checks what it writes."""
+    word, any other word by its stem, so "Unit Testing" is found from "unit tests"). A skill marked "insight only"
+    backs nothing here: you know of it but haven't used it. The writer decides which the database really backs, and
+    the fact check checks what it writes."""
     keywords = [k.strip() for k in (db.jload(job.get("details"), {}) or {}).get("keywords") or [] if k and k.strip()]
     if not keywords:
         return []
     on_cv = " " + _words(" ".join([cv.get("label") or "", cvdata.to_markdown(cv)])) + " "
     facts = " " + _words(" ".join(f"{r['title']} {r['detail'] or ''} {r['tags'] or ''}" for r in db.q(
-        "SELECT title, detail, tags FROM facts WHERE hidden = 0"))) + " "
+        "SELECT title, detail, tags FROM facts WHERE hidden = 0 AND coalesce(depth, '') != 'insight'"))) + " "
     out = []
     def part(word: str) -> str:
         low = word.lower()
@@ -950,6 +951,7 @@ kind:
 
 status:
 - For facts: supported only if the database says it. partly if anything is added, broadened or exaggerated (bigger numbers, wider scope, stronger wording, wrong dates). unsupported if the database doesn't say it. Lessons ("this taught me…"), time words ("last year", "sidste år"), scope words ("among other things", "every day", "bl.a."), and characterisations ("security-critical", "fintech", "deep sector expertise") are facts too and must be backed; check time words against today's date and the dates in the database.
+- A skill marked [insight only] in the database backs knowing of it, not using it: listing it as a skill, or saying they used or worked with it, is partly.
 - When the candidate says they have NOT done something, don't know a tool, or are new to a field ("X is new to me", "I haven't worked with Y"): supported, unless the database shows they do have it (then unsupported, and say what the database shows). A database can't record what someone hasn't done, and naming a gap honestly is wanted.
 - For motivation: unsupported if it claims history or long-standing feelings ("I have long admired…", "I have always…"); otherwise not_a_claim.
 - For other: not_a_claim.
