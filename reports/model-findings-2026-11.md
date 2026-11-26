@@ -14,12 +14,15 @@ purpose; the settings below are what the app now uses.
 
 | Step | Model | Basis |
 |---|---|---|
-| Letter, CV, voice read, style guide, interview prep | Claude Opus 5.5, high effort | Tested for the letter: best openings and most willing to take a position; high is where the gain stops |
+| Letter, CV, style guide, interview prep | Claude Opus 5.5, high effort | Tested for the letter: best openings and most willing to take a position; high is where the gain stops |
 | Screening, reading ads, scoring, reading documents, reading replies | Claude Sonnet 5.5, high effort | Not tested. Chosen when local models were dropped |
 | Fact check | Claude Sonnet 5.5, high effort | "Fact check with" is set to the Analysis model: comparing claims with the career database doesn't need the writing model. Sonnet has checked every draft since 16 November; the test's own checker was Opus at medium |
+| Voice read | Claude Sonnet 5.5, high effort | Not tested. Set to follow the Analysis model: it judges how each sentence sounds and only suggests plainer versions, which you accept or not |
 
-Every step follows the Writing or Analysis model and effort at the top of Settings. Settings → Model and effort for
-each step can still give one step another; none is set.
+Every step follows the Writing or Analysis model and effort at the top of Settings. Under Settings → Model and
+effort for each step, a step's model and its effort can each follow the other picker instead, or be set to one
+fixed version or level. Only the voice read has a setting of its own: it follows the Analysis model, and with it
+the Analysis effort.
 
 ## Since the test
 
@@ -29,6 +32,8 @@ each step can still give one step another; none is set.
   them differed from the pickers: the fact check, the style guide and interview prep ran on Sonnet. The style
   guide and interview prep now run on Opus. The fact check was put back on Sonnet the same day, with "Fact check
   with" set to the Analysis model. Opus for scoring and reading documents was tried that day and taken back.
+- **A step can follow either picker** (26 November), for its model and its effort separately. The voice read was
+  moved to the Analysis model that day, so it runs on Sonnet.
 - **The call log for 20–26 November**, before that change: 1,126 calls, 2 failed, about 245 minutes of model time
   and 1.9 million output tokens. Sonnet wrote 80% of them: scoring and reading ads a quarter each, screening
   about a fifth, the fact check a tenth. Screening a list of jobs took 6 seconds and 400 tokens a call at high
