@@ -8,14 +8,33 @@ measurements: between two runs of the same setting the share of flagged claims m
 Cloud models were used through Claude Code (a subscription), never the pay-per-call API. Testing stopped here on
 purpose; the settings below are what the app now uses.
 
+*Settings and "Since the test" updated 26 November 2026. The findings are unchanged.*
+
 ## What the app uses now
 
-| Step | Model | Why |
+| Step | Model | Basis |
 |---|---|---|
-| Letter, CV, fact check | Claude Opus, high effort | Best openings and most willing to take a position; high is where the gain stops |
-| Screening, reading ads, scoring, reading documents | Local Gemma 4 26B | Fast enough, private, and these steps didn't show a need for more |
+| Letter, CV, voice read, style guide, interview prep | Claude Opus 5.5, high effort | Tested for the letter: best openings and most willing to take a position; high is where the gain stops |
+| Screening, reading ads, scoring, reading documents, reading replies | Claude Sonnet 5.5, high effort | Not tested. Chosen when local models were dropped |
+| Fact check | Claude Sonnet 5.5, high effort | "Fact check with" is set to the Analysis model: comparing claims with the career database doesn't need the writing model. Sonnet has checked every draft since 16 November; the test's own checker was Opus at medium |
 
-Every step can be given another model and effort under Settings → Model and effort for each step.
+Every step follows the Writing or Analysis model and effort at the top of Settings. Settings → Model and effort for
+each step can still give one step another; none is set.
+
+## Since the test
+
+- **Local models are no longer used** (16 November). The analysis steps moved from Gemma 4 26B to Claude Sonnet
+  without a comparison run.
+- **Every step follows the two pickers** (26 November). Until then each step had its own saved model, and three of
+  them differed from the pickers: the fact check, the style guide and interview prep ran on Sonnet. The style
+  guide and interview prep now run on Opus. The fact check was put back on Sonnet the same day, with "Fact check
+  with" set to the Analysis model. Opus for scoring and reading documents was tried that day and taken back.
+- **The call log for 20–26 November**, before that change: 1,126 calls, 2 failed, about 245 minutes of model time
+  and 1.9 million output tokens. Sonnet wrote 80% of them: scoring and reading ads a quarter each, screening
+  about a fifth, the fact check a tenth. Screening a list of jobs took 6 seconds and 400 tokens a call at high
+  effort, so high costs little on the simple steps.
+- **If the plan's usage limit is ever reached**, the first thing to lower is the Analysis effort (high to medium),
+  not the writing.
 
 ## Findings
 
@@ -55,5 +74,6 @@ Every step can be given another model and effort under Settings → Model and ef
 
 ## Not tested
 
-Local models other than Gemma 4; Claude as the model for screening, reading ads or scoring; whether a reader other
-than the candidate prefers the same letters.
+Local models other than Gemma 4; Sonnet against another model or a lower effort for screening, reading ads or
+scoring; Sonnet against Opus as the fact checker on the same drafts; whether a reader other than the candidate
+prefers the same letters.
