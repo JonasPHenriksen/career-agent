@@ -248,7 +248,8 @@ def test_each_step_can_have_its_own_model_and_effort(fake, fake_claude, monkeypa
         return type(p).__name__.replace("Provider", ""), p.model, getattr(p, "effort", None)
 
     assert built("writing", "write_letter") == ("ClaudeCode", "claude-opus-5-5", "high"), "the tier's model and effort"
-    assert built("writing", "revise_letter", "medium") == ("ClaudeCode", "claude-opus-5-5", "medium"), "the step's usual effort"
+    assert built("writing", "revise_letter", "medium") == ("ClaudeCode", "claude-opus-5-5", "high"), \
+        "a step you haven't set follows the Writing effort, not the call's own"
     assert built("analysis", "fit_score", "medium")[:2] == ("Ollama", "gemma4:26b-mlx")
 
     cfg = settings.get("llm")
@@ -266,8 +267,15 @@ def test_each_step_can_have_its_own_model_and_effort(fake, fake_claude, monkeypa
 
     assert llm.step_provider("score") == "claude_code" and llm.step_provider("read_ad") == "ollama"
     assert llm.step_provider("fact_check") == "claude_code", "a cloud writer also checks the facts"
-    assert built("writing", "voice_read", "medium") == ("ClaudeCode", "claude-opus-5-5", "medium"), \
-        "the voice read is its own step: left on the usual, the Writing model at medium"
+    assert built("writing", "voice_read", "medium") == ("ClaudeCode", "claude-opus-5-5", "high"), \
+        "the voice read is its own step: left alone, the Writing model and effort"
+    cfg = settings.get("llm")
+    cfg["writing"]["effort"] = "xhigh"
+    settings.set("llm", cfg)
+    assert built("writing", "voice_read", "medium")[2] == "xhigh" and built("writing", "revise_cv", "medium")[2] == "xhigh", \
+        "changing the Writing effort changes every step left on it"
+    cfg["writing"]["effort"] = "high"
+    settings.set("llm", cfg)
     cfg["steps"]["fact_check"] = {"provider": "claude_code", "model": "claude-sonnet-5-5"}
     settings.set("llm", cfg)
     assert built("check", "claim_check")[1] == "claude-sonnet-5-5" and built("writing", "voice_read")[1] == "claude-opus-5-5", \

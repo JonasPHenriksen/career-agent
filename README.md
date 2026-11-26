@@ -28,7 +28,7 @@ To let it work through everything on its own and then switch itself off:
 ./agent run
 ```
 
-It starts everything, checks your job sources, reads and scores new jobs, writes drafts for strong matches, and
+It starts everything, checks your job sources, reads and scores new jobs, writes drafts for your best-ranked jobs, and
 stops everything when the queue is empty (or after 6 hours: `--max-hours 2` changes that). Review the results the
 next time you start it. Stopping in the middle of work is safe: unfinished tasks go back in the queue and run on the next start.
 While it runs, the Mac is kept from idle-sleeping so long jobs can finish (closing the lid still sleeps it).
@@ -64,7 +64,7 @@ The count next to *Today* in the menu is how many are waiting on you.
 ```
 job sources ──► quick screening ──► read the ad ──► fit score (0-100, with matches, gaps, best angle)
                                                         │
-                       strong match (≥ 80, max 5 a day) ▼
+                       best-ranked (until 5 drafts wait) ▼
                         letter + tailored CV in your voice ──► fact check + voice check
                                                         │
                                    you review, edit, ask for changes ("make it shorter")
@@ -321,7 +321,7 @@ Your contact details are never sent: they're added to the PDFs locally.
 ## Running it only when you want it
 
 By default nothing runs on its own: `./agent start` starts everything and `./agent stop` stops everything. While
-it runs it checks job sources, drafts applications and sends macOS notifications (strong match found, draft ready,
+it runs it checks job sources, drafts applications and sends macOS notifications (drafting an application, draft ready,
 a daily summary). `./agent stop --keep-ollama` leaves Ollama running if you use it for other things.
 
 If you'd rather have it start at login and stay in the background, run `scripts/install-autostart.sh` (undo with

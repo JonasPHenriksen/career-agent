@@ -188,6 +188,10 @@ def llm_ready() -> tuple[bool, str]:
 # Today
 # ---------------------------------------------------------------------------------------
 
+# Today lists jobs ranked at least this high that have no draft yet (it was 15 under the old drafting threshold of 80).
+MATCH_FLOOR = 65
+
+
 @app.get("/")
 def today(request: Request):
     p = settings.get("profile")
@@ -203,7 +207,6 @@ def today(request: Request):
         {"done": n_facts > 0 and bool(settings.get("style_guide")), "title": "Check your career database and style", "text": "Built automatically from your documents.", "href": "/profile?tab=facts"},
         {"done": n_sources > 0 or n_jobs > 0, "title": "Add jobs", "text": "Paste a job link, or add a job-search feed to watch.", "href": "/jobs"},
     ]
-    threshold = jobs.setting_int(settings.get("automation"), "auto_draft_threshold", 80)
     drafts = rank.urgent_first(db.q(
         "SELECT a.*, j.title AS job_title, j.company_name, j.fit_score, j.deadline, j.details, j.posted_at, "
         "j.created_at AS job_created_at, j.gone_at, j.open_said_at, j.checked_at, j.check_note "
@@ -212,11 +215,11 @@ def today(request: Request):
     for a in drafts:
         a["claims_d"] = db.jload(a["claims"], {}) or {}
         a["voice_d"] = db.jload(a["voice"], {}) or {}
-    matches = [j for j in rank.best_first(db.q(
+    matches = [j for j in rank.best_first(db.q(  # the next best after the drafts, worth a look
         "SELECT j.* FROM jobs j WHERE j.fit_score >= ? AND j.status IN ('new', 'shortlisted') "
         "AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.job_id = j.id) "
-        f"AND {jobs.open_sql()}", (max(threshold - 15, 50), date.today().isoformat())))
-        if j["rank"]["score"] >= max(threshold - 15, 50)][:8]
+        f"AND {jobs.open_sql()}", (MATCH_FLOOR, date.today().isoformat())))
+        if j["rank"]["score"] >= MATCH_FLOOR][:8]
     for j in matches:
         j["urgency"] = rank.urgency(j)
     interviews = db.q("SELECT a.*, j.title AS job_title, j.company_name FROM applications a JOIN jobs j ON j.id = a.job_id "
@@ -1432,11 +1435,6 @@ def insights_page(request: Request):
                   skills=insights.skills_demand(), ranks=insights.company_rankings(), spend=insights.spend())
 
 
-# The effort each step asks for when you haven't chosen one ("" = the Writing model's own effort setting).
-STEP_USUAL_EFFORT = {"screen": "low", "read_ad": "low", "score": "medium", "read_document": "medium", "reply": "low",
-                     "fact_check": "medium", "voice": "medium"}
-
-
 @app.get("/settings")
 def settings_page(request: Request):
     st = llm.status()
@@ -1453,7 +1451,8 @@ def settings_page(request: Request):
                   data_dir=str(config.DATA_DIR), efforts=["low", "medium", "high", "xhigh", "max"],
                   search=retrieval.status(), letter_max=writer.LETTER_MAX,
                   steps=[{"key": k, "label": label, "tier": {"check": writer.check_tier()}.get(tier, tier),
-                          "own": llm.step_settings(k), "usual_effort": STEP_USUAL_EFFORT.get(k, "")} for k, label, tier, _ in llm.STEPS],
+                          "own": llm.step_settings(k)} for k, label, tier, _ in llm.STEPS],
+                  check_tier=writer.check_tier(), model_label=llm.model_label,
                   model_groups=llm.model_choices(),
                   claude_code_models=llm.plan.choices()[0], claude_code_earlier=llm.plan.choices()[1],
                   claude_plan=llm.plan.status(), claude_plan_busy=tasks.active(ref="claude-models"), redo_kinds=redo.KINDS, redo_counts={k: len(v) for k, v in redo.candidates().items()},
@@ -1536,7 +1535,6 @@ async def settings_automation(request: Request):
 
     settings.update("automation", {
         "auto_score": bool(f.get("auto_score")), "auto_draft": bool(f.get("auto_draft")),
-        "auto_draft_threshold": num("auto_draft_threshold", 80, 0, 100),
         "auto_draft_daily_cap": num("auto_draft_daily_cap", 5, 0, 50),
         "followup_days": num("followup_days", 10, 1, 90), "ghost_days": num("ghost_days", 30, 7, 365),
         "notifications": bool(f.get("notifications")), "on_hold": bool(f.get("on_hold")),

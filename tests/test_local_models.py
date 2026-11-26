@@ -65,7 +65,7 @@ def test_a_local_model_thinks_when_you_switch_it_on_on_any_step(fake, monkeypatc
     settings.update("llm", {"writing": {"provider": "ollama", "model": "gemma4:31b-mlx", "effort": "high"},
                             "analysis": {"provider": "ollama", "model": "gemma4:26b-mlx", "effort": "medium"}})
     assert llm._build("writing", None, "write_letter").think, "writing thinks by default, as before"
-    assert not llm._build("writing", "medium", "revise_letter").think, "a step that usually goes quicker doesn't"
+    assert llm._build("writing", "medium", "revise_letter").think, "every writing step follows the Writing setting"
     assert not llm._build("analysis", "medium", "fit_score").think
     cfg = settings.get("llm")
     cfg["steps"] = {"score": {"effort": "high"}, "letter": {"effort": "low"}}
@@ -89,13 +89,13 @@ def test_effort_choices_fit_each_steps_model(fake, tmp_path, monkeypatch):
         return page[start:page.index("</select>", start)]
 
     score = effort_select("score")  # the Analysis model is local
-    assert "thinking off" in score and "usual (thinking off)" in score and ">xhigh<" not in score
+    assert "thinking off" in score and "the Analysis effort: thinking off" in score and ">xhigh<" not in score
     letter = effort_select("letter")  # its own local model, effort max = thinking on
     assert 'value="high" selected>thinking on' in letter
     prep = effort_select("prep")  # the Writing model is Claude
     options = prep[prep.index("<option"):]
-    assert ">xhigh<" in options and "usual (high)" in options and "thinking" not in options
-    assert 'data-usual-local="usual (thinking on)"' in prep, "ready for when you pick a local model"
+    assert ">xhigh<" in options and "the Writing effort: high" in options and "thinking" not in options
+    assert 'data-usual-local="the Writing effort: thinking on"' in prep, "ready for when you pick a local model"
     import re
     assert all("autocomplete=\"off\"" in s for s in re.findall(r'<select[^>]*name="\w+_(?:model|effort)"[^>]*>', page)), \
         "a reload never brings back old choices"

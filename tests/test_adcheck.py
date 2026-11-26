@@ -111,20 +111,20 @@ def test_writing_stops_before_any_model_call_when_the_ad_is_gone(fake, monkeypat
 
 
 def test_auto_drafting_skips_a_gone_ad_and_takes_the_next(fake, monkeypatch):
-    settings.update("automation", {"auto_draft": True, "auto_draft_daily_cap": 1, "auto_draft_threshold": 70})
+    settings.update("automation", {"auto_draft": True, "auto_draft_daily_cap": 1})
     gone, up = _job("https://a.example/job/1", fit_score=90), _job("https://b.example/job/2", fit_score=85)
     monkeypatch.setattr(adcheck, "page_state", lambda url, title: ("gone", "x") if "a.example" in url else ("open", "y"))
     assert jobs.draft_best() == [up]
     assert db.q1("SELECT gone_at FROM jobs WHERE id = ?", (gone,))["gone_at"]
 
 
-def test_a_daily_limit_of_0_writes_no_drafts(fake, monkeypatch):
-    settings.update("automation", {"auto_draft": True, "auto_draft_daily_cap": 0, "auto_draft_threshold": 70})
+def test_a_limit_of_0_writes_no_drafts(fake, monkeypatch):
+    settings.update("automation", {"auto_draft": True, "auto_draft_daily_cap": 0})
     _job("https://b.example/job/2", fit_score=95)
     monkeypatch.setattr(adcheck, "page_state", lambda url, title: ("open", "y"))
-    assert jobs.draft_best() == [] and not db.q1("SELECT 1 FROM applications")
-    settings.update("automation", {"auto_draft_daily_cap": 1, "auto_draft_threshold": 0})
-    assert len(jobs.draft_best()) == 1, "a threshold of 0 is 0, not the default 80"
+    assert jobs.draft_best() == [] and not db.q1("SELECT 1 FROM applications"), "a limit of 0 is 0, not the default 5"
+    settings.update("automation", {"auto_draft_daily_cap": 1})
+    assert len(jobs.draft_best()) == 1
 
 
 def test_the_regular_check_looks_at_what_you_might_spend_time_on(fake):
@@ -225,7 +225,7 @@ def test_only_a_gone_job_with_nothing_sent_is_removed_this_way(fake):
 def test_auto_drafting_leaves_an_ad_up_for_months_for_you_to_ask_about_first(fake, monkeypatch):
     from datetime import timedelta
 
-    settings.update("automation", {"auto_draft": True, "auto_draft_daily_cap": 2, "auto_draft_threshold": 70})
+    settings.update("automation", {"auto_draft": True, "auto_draft_daily_cap": 2})
     monkeypatch.setattr(adcheck, "page_state", lambda url, title: ("open", "up"))
     old = _job("https://a.example/job/1", fit_score=95, posted_at=(date.today() - timedelta(days=200)).isoformat())
     dated = _job("https://a.example/job/2", fit_score=90, posted_at=(date.today() - timedelta(days=200)).isoformat(),

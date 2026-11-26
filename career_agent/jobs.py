@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 
 from . import companies, db, fetch, jobkinds, llm, notify, places, profile, retrieval, settings, tasks
 from .llm import jsonutil as J
@@ -901,15 +901,23 @@ def score(job_id: int) -> dict:
 
 
 def maybe_auto_draft(job_id: int) -> bool:
-    """Draft the best matches, but only once the current batch of reading and scoring is done.
+    """Draft the best jobs, but only once the current batch of reading and scoring is done.
 
-    Drafting as each job finished meant the first five over the threshold won, not the best five.
+    Drafting as each job finished meant the first five to arrive won, not the best five.
     Returns True when this job got an application."""
     busy = db.scalar("SELECT COUNT(*) FROM tasks WHERE kind IN ('parse_job', 'score_job') "
                      "AND status IN ('queued', 'running') AND COALESCE(ref, '') != ?", (f"job:{job_id}",))
     if busy:
         return False  # the last job to finish will pick the best
     return job_id in draft_best()
+
+
+def top_up_drafts() -> list[int]:
+    """Fill the drafts back up when no jobs are being read or scored (otherwise the last one to finish does it).
+    The regular maintenance calls this, so drafts you've dealt with are replaced even on a day without new jobs."""
+    if db.scalar("SELECT COUNT(*) FROM tasks WHERE kind IN ('parse_job', 'score_job') AND status IN ('queued', 'running')"):
+        return []
+    return draft_best()
 
 
 def setting_int(group: dict, key: str, default: int) -> int:
@@ -921,46 +929,49 @@ def setting_int(group: dict, key: str, default: int) -> int:
         return default
 
 
+WAITING = ("drafting", "draft")  # drafts still waiting for your review, automatic or ones you started
+
+
+def drafts_waiting() -> int:
+    return db.scalar(f"SELECT COUNT(*) FROM applications WHERE status IN ({','.join('?' * len(WAITING))})",
+                     WAITING) or 0
+
+
 def draft_best() -> list[int]:
-    """Create applications for the highest-scoring eligible jobs, up to what is left of today's limit."""
+    """Draft the highest-ranked open jobs until this many drafts wait for your review (Settings → Automation, 5 by
+    default). Drafts you started yourself count too, so with 3 waiting it writes 2, and with 5 or more none.
+    There is no minimum score: the best jobs there are get drafted. When jobs tie at the last place, all of them are
+    drafted, even if that makes more than the limit."""
     a = settings.get("automation")
     if not a.get("auto_draft"):
         return []
-    left = setting_int(a, "auto_draft_daily_cap", 5) - (db.scalar(
-        "SELECT COUNT(*) FROM applications WHERE auto_drafted = 1 AND created_at >= ?", (_utc_midnight(),)) or 0)
+    left = setting_int(a, "auto_draft_daily_cap", 5) - drafts_waiting()
     if left <= 0:
         return []
     from . import rank
 
-    threshold = setting_int(a, "auto_draft_threshold", 80)
-    # The threshold is for the ranked score (fit, less the points for distance and a big employer); the most
+    # Ranked by the score the jobs list sorts by (fit, less the points for distance and a big employer); the most
     # urgent first on ties. An ad up for months without a deadline is left for you to ask about first.
     rows = rank.urgent_first([j for j in rank.annotate(db.q(
-        "SELECT j.* FROM jobs j WHERE j.status NOT IN ('dismissed', 'filtered') AND j.fit_score >= ? "
+        "SELECT j.* FROM jobs j WHERE j.status NOT IN ('dismissed', 'filtered') AND j.fit_score IS NOT NULL "
         "AND NOT EXISTS (SELECT 1 FROM applications ap WHERE ap.job_id = j.id) "
         "AND (j.company_id IS NULL OR NOT COALESCE((SELECT blocked FROM companies c WHERE c.id = j.company_id), 0)) "
-        f"AND {open_sql()}", (threshold, date.today().isoformat()))) if j["rank"]["score"] >= threshold])
+        f"AND {open_sql()}", (date.today().isoformat(),))) if j["rank"]["score"] is not None])
     from . import adcheck
 
     best = []
     for job in sorted(rows, key=lambda j: -j["rank"]["score"]):  # stable: the urgent order stays on ties
-        if len(best) == left:
-            break
+        if len(best) >= left and job["rank"]["score"] < best[-1]["rank"]["score"]:
+            break  # the limit is reached and this one doesn't tie with the last
         if job["urgency"]["long_running"]:  # up for months without a date: you ask them first, then press Write
             continue
         if adcheck.still_up(job["id"]):  # never write for an ad that's gone
             best.append(job)
-    rows = best
-    for job in rows:
+    for job in best:
         create_application(job["id"], auto=True)
-        notify.send("Strong match found", f"{job['title']} at {job['company_name'] or '?'} scored {job['fit_score']}. Drafting your application…")
-    return [j["id"] for j in rows]
-
-
-def _utc_midnight() -> str:
-    """Start of today (local time), as a UTC timestamp string."""
-    local_midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
-    return local_midnight.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        notify.send("Drafting an application", f"{job['title']} at {job['company_name'] or '?'} is one of your "
+                                               f"best-ranked jobs (ranked {job['rank']['score']}). Drafting it now…")
+    return [j["id"] for j in best]
 
 
 def create_application(job_id: int, auto: bool = False, instructions: str | None = None, draft: bool = True) -> int:

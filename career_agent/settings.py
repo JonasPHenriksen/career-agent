@@ -44,14 +44,15 @@ DEFAULTS: dict[str, Any] = {
         "redact_for_cloud": True,
         "concurrency": 0,  # 0 = automatic (1 for local models, 3 for cloud)
         "embed_model": "bge-m3",  # local Ollama embedding model for semantic search
-        "steps": {},  # per step (see llm.STEPS): {"provider", "model", "effort"}; missing = the tier's model, usual effort
+        "steps": {},  # per step (see llm.STEPS): {"provider", "model", "effort"}; missing = the tier's model and effort
         "check_with": "auto",  # which model fact-checks drafts: "auto", "writing" or "analysis"
         "claude_code_path": "",  # the `claude` program; "" = find it (PATH, ~/.local/bin, the Claude desktop app)
     },
     "automation": {
         "auto_score": True,
         "auto_draft": True,
-        "auto_draft_threshold": 80,
+        # How many drafts may wait for your review: the best-ranked jobs are drafted until there are this many
+        # (no minimum score; ties at the last place all get one). The name is from when it was a limit per day.
         "auto_draft_daily_cap": 5,
         "followup_days": 10,
         "ghost_days": 30,

@@ -89,7 +89,7 @@ def parse_choice(value: str | None) -> dict | None:
 
 
 def step_settings(step: str | None) -> dict:
-    """Your choice for one step under Settings ({} = use the tier's model and the usual effort)."""
+    """Your choice for one step under Settings ({} = the Writing or Analysis model and effort)."""
     return dict((settings.get("llm").get("steps") or {}).get(step or "") or {})
 
 
@@ -143,16 +143,17 @@ def _build(tier: str, effort: str | None, purpose: str | None = None):
     override = _ctx.get().get("override") or {}
     if override.get("provider"):  # a redo with another model: same step, different model
         t.update(provider=override["provider"], model=override["model"])
-    # Effort: the one picked for this run, else the step's setting, else what the step usually uses, else the tier's.
-    effort = override.get("effort") or own.get("effort") or effort
+    # Effort: the one picked for this run, else the step's own, else the Writing or Analysis effort in Settings, so
+    # the two pickers at the top set every step you haven't changed. The call's own effort only fills in for a tier
+    # saved without one.
+    effort = override.get("effort") or own.get("effort") or t.get("effort") or effort
     provider, model = t.get("provider"), t.get("model")
     if not provider or not model:
         raise LLMConfigError("No AI model is set up yet. Open Settings → AI models.")
     if provider == "ollama":
         # A local model has no effort levels, only thinking first or not: on at high or above, on any step.
-        level = effort or t.get("effort") or "high"
         return OllamaProvider(model=model, base_url=cfg.get("ollama_url") or "http://localhost:11434",
-                              num_ctx=int(cfg.get("ollama_num_ctx") or 32768), think=thinks(level))
+                              num_ctx=int(cfg.get("ollama_num_ctx") or 32768), think=thinks(effort or "high"))
     if provider == "claude_code":
         if cfg.get("local_only"):
             raise LLMConfigError("Local-only mode is on, so cloud models (Claude Code too) are blocked.")
@@ -160,7 +161,7 @@ def _build(tier: str, effort: str | None, purpose: str | None = None):
         if not binary:
             raise LLMConfigError("Claude Code wasn't found on this Mac. Install it, or set its path in Settings → AI models.")
         return ClaudeCodeProvider(model=model, binary=binary, token=keychain.get(CLAUDE_CODE_TOKEN) or "",
-                                  effort=effort or t.get("effort"))
+                                  effort=effort)
     raise LLMConfigError(f"Unknown AI provider '{provider}'.")
 
 
@@ -194,7 +195,8 @@ def _log(purpose: str, provider: str, model: str, r: ProviderReply | None, ms: i
 
 def run(tier: str, purpose: str, system: str, user: str, schema: dict | None = None,
         max_tokens: int = 8000, effort: str | None = None) -> LLMResponse:
-    """Call the model configured for `tier`. With a schema, returns parsed + coerced JSON in .data."""
+    """Call the model configured for `tier`. With a schema, returns parsed + coerced JSON in .data.
+    The effort comes from Settings (see _build); `effort` here is only used for a tier saved without one."""
     prov = _build(tier, effort, purpose)
     if getattr(prov, "is_cloud", False) and settings.get("llm").get("redact_for_cloud", True):
         system, user = privacy.redact(system), privacy.redact(user)
@@ -379,6 +381,7 @@ def _ollama_up(url: str) -> bool:
 
 
 def test_tier(tier: str) -> str:
-    r = run(tier, "connection_test", "You are a connection test.",
-            "Reply with the single word OK.", max_tokens=2000, effort="low")
+    with using(model="||low"):  # a one-word answer: no need for the tier's effort
+        r = run(tier, "connection_test", "You are a connection test.",
+                "Reply with the single word OK.", max_tokens=2000)
     return f"{r.provider} · {r.model} answered “{r.text.strip()[:40]}” in {r.duration_ms / 1000:.1f}s"

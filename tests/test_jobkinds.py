@@ -296,7 +296,7 @@ def _scored_jobs(fake, scores: list[int], score: bool = True) -> list[int]:
 
 def test_drafting_waits_for_the_batch_and_takes_the_best(fake):
     _facts()
-    settings.update("automation", {"auto_draft": True, "auto_draft_threshold": 80, "auto_draft_daily_cap": 2})
+    settings.update("automation", {"auto_draft": True, "auto_draft_daily_cap": 2})
     ids = _scored_jobs(fake, [82, 84, 92, 90, 70], score=False)
     queue = db.q("SELECT * FROM tasks WHERE kind = 'score_job' ORDER BY id")
     assert len(queue) == 5
@@ -323,19 +323,47 @@ def test_drafting_does_nothing_while_other_jobs_are_still_being_read(fake):
     assert jobs.maybe_auto_draft(job_id) is True
 
 
-def test_drafting_ties_go_to_the_most_urgent_and_respect_what_is_left_of_the_limit(fake):
+def test_drafting_ties_go_to_the_most_urgent_and_all_of_them_get_a_draft(fake):
     _facts()
     settings.update("automation", {"auto_draft": True, "auto_draft_daily_cap": 3})
-    ids = _scored_jobs(fake, [90, 90, 90, 85])
+    ids = _scored_jobs(fake, [90, 90, 90, 85, 80])
     db.ex("DELETE FROM tasks")
     db.update("jobs", ids[0], {"deadline": "2031-03-01"})
     db.update("jobs", ids[1], {"deadline": "2031-01-01"})
     db.update("jobs", ids[2], {"deadline": None})
-    first = jobs.create_application(ids[3], auto=True, draft=False)  # one of today's three is already used
+    first = jobs.create_application(ids[4], auto=True, draft=False)  # one draft already waits: two places left
     assert first
-    assert jobs.draft_best() == [ids[2], ids[1]], \
-        "the two left: the one without a date (apply as soon as possible) first, then the nearest deadline"
-    assert jobs.draft_best() == [], "the limit is used up"
+    assert jobs.draft_best() == [ids[2], ids[1], ids[0]], \
+        "three tie for the two places, so all three: no date (apply as soon as possible) first, then the nearest deadline"
+    assert jobs.draft_best() == [], "four drafts wait, more than the three wanted"
+    assert not db.q1("SELECT id FROM applications WHERE job_id = ?", (ids[3],))
+
+
+def test_drafts_waiting_count_and_there_is_no_minimum_score(fake):
+    """With 3 drafts waiting and 5 wanted, 2 more are written, whatever their score; with 5 waiting, none."""
+    _facts()
+    settings.update("automation", {"auto_draft": True, "auto_draft_daily_cap": 5})
+    ids = _scored_jobs(fake, [60, 55, 50, 45, 40, 35, 30, 25])
+    db.ex("DELETE FROM tasks")
+    for job_id in ids[5:]:  # three drafts you started yourself, still waiting for your review
+        jobs.create_application(job_id, draft=False)
+    assert jobs.drafts_waiting() == 3
+    assert jobs.draft_best() == [ids[0], ids[1]], "the two best, though neither is anywhere near 80"
+    assert jobs.draft_best() == [], "five drafts wait"
+    db.ex("UPDATE applications SET status = 'applied' WHERE job_id = ?", (ids[0],))  # one sent
+    db.ex("UPDATE applications SET status = 'ready' WHERE job_id = ?", (ids[1],))  # one reviewed, ready to send
+    db.ex("DELETE FROM tasks")
+    assert jobs.top_up_drafts() == [ids[2], ids[3]], "sent and ready-to-send drafts no longer wait for your review"
+    tasks.enqueue("score_job", {"job_id": 9999}, ref="job:9999")
+    db.ex("UPDATE applications SET status = 'applied' WHERE job_id = ?", (ids[2],))
+    assert jobs.top_up_drafts() == [], "while jobs are being scored, the last one to finish tops up instead"
+    db.ex("DELETE FROM tasks")
+    maintenance = tasks._handlers()["maintenance"]
+    settings.update("automation", {"on_hold": True})
+    assert "drafted" not in maintenance({}), "on hold: nothing is drafted on its own"
+    settings.update("automation", {"on_hold": False})
+    assert maintenance({})["drafted"] == 1 and db.q1("SELECT id FROM applications WHERE job_id = ?", (ids[4],)), \
+        "the regular maintenance replaces the sent draft, on a day without new jobs"
 
 
 def test_drafting_skips_blocked_companies_and_past_deadlines(fake):

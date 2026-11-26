@@ -119,8 +119,10 @@
 {%- endif -%}
 {%- endmacro %}
 
-{% macro usual_label(kind, effort) -%}
-{%- if kind == 'local' %}usual (thinking {{ 'on' if effort in ('high', 'xhigh', 'max') else 'off' }}){% elif effort %}usual ({{ effort }}){% else %}usual{% endif -%}
+{#- The first effort option of a step in Settings: the effort of the Writing or Analysis model it follows. -#}
+{% macro usual_label(kind, effort, tier='') -%}
+{%- set value = ('thinking ' ~ ('on' if effort in ('high', 'xhigh', 'max') else 'off')) if kind == 'local' else (effort or '') -%}
+{%- if tier %}the {{ tier|capitalize }} effort{{ ': ' ~ value if value }}{% else %}usual{{ ' (' ~ value ~ ')' if value }}{% endif -%}
 {%- endmacro %}
 
 {% macro model_picker() -%}

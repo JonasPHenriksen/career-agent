@@ -102,6 +102,8 @@ def _handlers() -> dict:
         result = tracker.maintenance()
         collect.remind()  # the to-do to collect your saved searches, dated when one is REMIND_DAYS days old
         result["reminders"] = todos.notify_due()  # dated to-dos whose day has come: one notification each
+        if not on_hold():  # drafts you've sent or removed are replaced, also on a day without new jobs
+            result["drafted"] = len(jobs.top_up_drafts())
         return result
 
     return {
