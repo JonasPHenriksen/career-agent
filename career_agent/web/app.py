@@ -1487,13 +1487,18 @@ async def settings_models(request: Request):
 
 @app.post("/settings/steps")
 async def settings_steps(request: Request):
-    """A model and an effort for each step; a step left on "the usual" follows the Writing or Analysis model."""
+    """A model and an effort for each step. A step follows its own picker at the top (Writing or Analysis) unless
+    it's set to follow the other one ("tier|writing") or to one fixed model ("claude_code|claude-opus-5-5")."""
     f = await form(request)
     steps = {}
-    for key, _, _, _ in llm.STEPS:
-        choice = llm.parse_choice(f.get(f"{key}_model")) or {}
+    for key, _, tier, _ in llm.STEPS:
+        raw = f.get(f"{key}_model") or ""
+        choice = llm.parse_choice(raw) or {}
+        follow = raw.removeprefix("tier|") if raw.startswith("tier|") else ""
+        home = writer.check_tier() if tier == "check" else tier
         effort = f.get(f"{key}_effort") if f.get(f"{key}_effort") in llm.EFFORTS else ""
         entry = {**({"provider": choice["provider"], "model": choice["model"]} if choice.get("provider") else {}),
+                 **({"tier": follow} if follow in llm.TIERS and follow != home else {}),
                  **({"effort": effort} if effort else {})}
         if entry:
             steps[key] = entry

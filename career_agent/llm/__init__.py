@@ -88,8 +88,12 @@ def parse_choice(value: str | None) -> dict | None:
     return out or None
 
 
+TIERS = ("writing", "analysis")
+
+
 def step_settings(step: str | None) -> dict:
-    """Your choice for one step under Settings ({} = the Writing or Analysis model and effort)."""
+    """Your choice for one step under Settings: {"tier": "writing"} to follow the other picker than its own,
+    {"provider", "model"} for one fixed model, and/or {"effort"}. {} = its own picker's model and effort."""
     return dict((settings.get("llm").get("steps") or {}).get(step or "") or {})
 
 
@@ -103,6 +107,8 @@ def step_provider(step: str, choice: str | None = None) -> str:
     own = step_settings(step)
     if own.get("provider") and own.get("model"):
         return own["provider"]
+    if own.get("tier") in TIERS:
+        return (settings.get("llm").get(own["tier"]) or {}).get("provider") or ""
     tier = STEP_TIER.get(step, "analysis")
     if tier == "check":
         from ..writer import check_tier
@@ -140,6 +146,8 @@ def _build(tier: str, effort: str | None, purpose: str | None = None):
     own = step_settings(STEP_OF.get(purpose or ""))  # this step's own model and effort, if you set one
     if own.get("provider") and own.get("model"):
         t.update(provider=own["provider"], model=own["model"])
+    elif own.get("tier") in TIERS:  # set to follow the other picker: its model and its effort
+        t = dict(cfg.get(own["tier"]) or {})
     override = _ctx.get().get("override") or {}
     if override.get("provider"):  # a redo with another model: same step, different model
         t.update(provider=override["provider"], model=override["model"])

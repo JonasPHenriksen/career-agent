@@ -295,6 +295,46 @@ def test_each_step_can_have_its_own_model_and_effort(fake, fake_claude, monkeypa
                                                             "voice_read", "place_answers"}
 
 
+def test_a_step_can_follow_the_other_picker(fake, fake_claude, monkeypatch):
+    """An analysis step set to "the Writing model" uses the Writing model and effort, and follows them when they change."""
+    monkeypatch.setattr(llm, "_test_provider", None)
+    path, _ = fake_claude
+    settings.update("llm", {"claude_code_path": str(path), "check_with": "analysis",
+                            "writing": {"provider": "claude_code", "model": "claude-opus-5-5", "effort": "high"},
+                            "analysis": {"provider": "claude_code", "model": "claude-sonnet-5-5", "effort": "medium"}})
+    c = TestClient(app)
+    c.post("/settings/steps", data={"score_model": "tier|writing", "letter_model": "tier|analysis",
+                                    "read_ad_model": "tier|analysis", "fact_check_model": "tier|writing"},
+           follow_redirects=False)
+    assert settings.get("llm")["steps"] == {"score": {"tier": "writing"}, "letter": {"tier": "analysis"},
+                                            "fact_check": {"tier": "writing"}}, \
+        "following its own picker is no setting at all (reading an ad already follows Analysis)"
+
+    def built(tier, purpose):
+        p = llm._build(tier, "low", purpose)
+        return p.model, p.effort
+
+    assert built("analysis", "fit_score") == ("claude-opus-5-5", "high"), "the Writing model and the Writing effort"
+    assert built("writing", "write_letter") == ("claude-sonnet-5-5", "medium")
+    assert built(writer.check_tier(), "claim_check") == ("claude-opus-5-5", "high")
+    assert built("analysis", "parse_job") == ("claude-sonnet-5-5", "medium"), "other steps are untouched"
+    settings.update("llm", {"writing": {"provider": "claude_code", "model": "claude-opus-5", "effort": "xhigh"}})
+    assert built("analysis", "fit_score") == ("claude-opus-5", "xhigh"), "a change to the Writing picker reaches it"
+    assert llm.step_provider("score") == "claude_code"
+
+    page = c.get("/settings").text
+    row = page[page.index('name="score_model"'):page.index('id="effort_score"')]
+    assert 'value="tier|writing"' in row and "selected>the Writing model: Claude Opus 5 (Claude Code)" in row
+    effort = page[page.index('id="effort_score"'):]
+    effort = effort[:effort.index("</select>")]
+    assert "the Writing effort: xhigh" in effort, "its effort follows the Writing picker too"
+    c.post("/settings/steps", data={"score_model": "tier|writing", "score_effort": "low"}, follow_redirects=False)
+    assert settings.get("llm")["steps"] == {"score": {"tier": "writing", "effort": "low"}}
+    assert built("analysis", "fit_score") == ("claude-opus-5", "low"), "an effort of its own still wins"
+    c.post("/settings/steps", data={"score_model": ""}, follow_redirects=False)
+    assert settings.get("llm")["steps"] == {} and built("analysis", "fit_score")[0] == "claude-sonnet-5-5"
+
+
 def test_effort_reaches_claude_and_can_be_picked_everywhere(fake, fake_claude, monkeypatch):
     from career_agent.web import app as web
 

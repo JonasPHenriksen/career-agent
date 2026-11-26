@@ -131,7 +131,16 @@
       if (!target) return;
       const wrap = s.dataset.effort && document.querySelector(s.dataset.effort);
       const sync = () => {
-        const provider = s.value ? s.value.split("|")[0] : (s.dataset.usualProvider || "claude_code");
+        const opt = s.selectedOptions[0];
+        // An option that follows a picker at the top (Settings → steps) says which provider and effort that is.
+        const provider = (opt && opt.dataset.provider) || (s.value ? s.value.split("|")[0] : (s.dataset.usualProvider || "claude_code"));
+        const claude = (opt && opt.dataset.effortClaude) || s.dataset.effortClaude;
+        const local = (opt && opt.dataset.effortLocal) || s.dataset.effortLocal;
+        if (claude && (target.dataset.usualClaude !== claude || target.dataset.usualLocal !== local)) {
+          target.dataset.usualClaude = claude;
+          target.dataset.usualLocal = local;
+          delete target.dataset.kind;  // rebuild the options with the new first label
+        }
         fillEffort(target, provider === "ollama" ? "local" : "claude");
         if (wrap) wrap.hidden = !s.value;
       };
