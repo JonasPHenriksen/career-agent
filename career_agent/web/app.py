@@ -1488,18 +1488,26 @@ async def settings_models(request: Request):
 @app.post("/settings/steps")
 async def settings_steps(request: Request):
     """A model and an effort for each step. A step follows its own picker at the top (Writing or Analysis) unless
-    it's set to follow the other one ("tier|writing") or to one fixed model ("claude_code|claude-opus-5-5")."""
+    it's set to follow the other one ("tier|writing") or to one fixed model ("claude_code|claude-opus-5-5"). Its
+    effort is that picker's unless it's set to the other picker's ("tier|analysis") or to one level ("high")."""
     f = await form(request)
     steps = {}
+
+    def follows(value: str) -> str:
+        return value.removeprefix("tier|") if value.startswith("tier|") else ""
+
     for key, _, tier, _ in llm.STEPS:
         raw = f.get(f"{key}_model") or ""
         choice = llm.parse_choice(raw) or {}
-        follow = raw.removeprefix("tier|") if raw.startswith("tier|") else ""
         home = writer.check_tier() if tier == "check" else tier
-        effort = f.get(f"{key}_effort") if f.get(f"{key}_effort") in llm.EFFORTS else ""
+        model_tier = follows(raw) if follows(raw) in llm.TIERS and not choice.get("provider") else home
+        raw_effort = f.get(f"{key}_effort") or ""
+        effort = raw_effort if raw_effort in llm.EFFORTS else ""
+        effort_tier = follows(raw_effort)
         entry = {**({"provider": choice["provider"], "model": choice["model"]} if choice.get("provider") else {}),
-                 **({"tier": follow} if follow in llm.TIERS and follow != home else {}),
-                 **({"effort": effort} if effort else {})}
+                 **({"tier": model_tier} if model_tier != home else {}),
+                 **({"effort": effort} if effort else {}),
+                 **({"effort_tier": effort_tier} if effort_tier in llm.TIERS and effort_tier != model_tier else {})}
         if entry:
             steps[key] = entry
     cfg = settings.get("llm")

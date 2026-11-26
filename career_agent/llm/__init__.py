@@ -92,8 +92,9 @@ TIERS = ("writing", "analysis")
 
 
 def step_settings(step: str | None) -> dict:
-    """Your choice for one step under Settings: {"tier": "writing"} to follow the other picker than its own,
-    {"provider", "model"} for one fixed model, and/or {"effort"}. {} = its own picker's model and effort."""
+    """Your choice for one step under Settings. Model: {"tier": "writing"} to follow the other picker than its own,
+    or {"provider", "model"} for one fixed model. Effort: {"effort_tier": "analysis"} to follow a picker's effort
+    other than the model's, or {"effort": "high"} for one fixed level. {} = its own picker's model and effort."""
     return dict((settings.get("llm").get("steps") or {}).get(step or "") or {})
 
 
@@ -151,10 +152,11 @@ def _build(tier: str, effort: str | None, purpose: str | None = None):
     override = _ctx.get().get("override") or {}
     if override.get("provider"):  # a redo with another model: same step, different model
         t.update(provider=override["provider"], model=override["model"])
-    # Effort: the one picked for this run, else the step's own, else the Writing or Analysis effort in Settings, so
-    # the two pickers at the top set every step you haven't changed. The call's own effort only fills in for a tier
-    # saved without one.
-    effort = override.get("effort") or own.get("effort") or t.get("effort") or effort
+    # Effort: the one picked for this run, else the step's own level, else the picker it follows for effort, else the
+    # picker its model follows, so the two pickers at the top set every step you haven't changed. The call's own
+    # effort only fills in for a tier saved without one.
+    picked = (cfg.get(own["effort_tier"]) or {}).get("effort") if own.get("effort_tier") in TIERS else None
+    effort = override.get("effort") or own.get("effort") or picked or t.get("effort") or effort
     provider, model = t.get("provider"), t.get("model")
     if not provider or not model:
         raise LLMConfigError("No AI model is set up yet. Open Settings → AI models.")

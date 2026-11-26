@@ -76,7 +76,7 @@
 
 <section class="card" id="steps">
   <h2>Model and effort for each step</h2>
-  <p class="small text-2">Every step uses the Writing or Analysis model and effort above unless you pick another here, so changing those two changes every step left on them. A step can also follow the other of the two, or one fixed model version. For a Claude model, effort is how carefully it works: higher is slower and uses more of your Claude plan. A local model has no effort levels, only whether it thinks before answering: better answers, but slower. To use another model once, use the picker next to any button; to redo finished work, see below.</p>
+  <p class="small text-2">Every step uses the Writing or Analysis model and effort above unless you pick another here, so changing those two changes every step left on them. A step's model and its effort can each follow the other of the two instead, or be set to one fixed model version or level. For a Claude model, effort is how carefully it works: higher is slower and uses more of your Claude plan. A local model has no effort levels, only whether it thinks before answering: better answers, but slower. To use another model once, use the picker next to any button; to redo finished work, see below.</p>
   <form method="post" action="/settings/steps">
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Step</th><th>Model</th><th>Effort / thinking</th></tr></thead>
@@ -91,16 +91,21 @@
           {%- set follow_cfg = cfg[follows] or {} %}
           {%- set usual_effort = follow_cfg.effort %}
           {%- set kind = effort_kind(st_.own.provider or follow_cfg.provider) %}
-          <td><select name="{{ st_.key }}_model" aria-label="Model for: {{ st_.label }}" autocomplete="off" data-effort-select="#effort_{{ st_.key }}" data-usual-provider="{{ home_cfg.provider }}"
-                      data-effort-claude="{{ usual_label('claude', home_cfg.effort, home) }}" data-effort-local="{{ usual_label('local', home_cfg.effort, home) }}">
+          {#- Its effort: the picker its model follows (""), the other picker's ("tier|…"), or one level. -#}
+          {%- set effort_other = 'analysis' if follows == 'writing' else 'writing' %}
+          {%- set effort_other_cfg = cfg[effort_other] or {} %}
+          {%- set effort_current = st_.own.effort or ('tier|' ~ effort_other if st_.own.effort_tier == effort_other else '') %}
+          <td><select name="{{ st_.key }}_model" aria-label="Model for: {{ st_.label }}" autocomplete="off" data-effort-select="#effort_{{ st_.key }}" data-usual-provider="{{ home_cfg.provider }}" data-home="{{ home }}">
             <option value="">the {{ home|capitalize }} model{% if home_cfg.model %}: {{ model_label(home_cfg.provider, home_cfg.model) }}{% endif %}</option>
-            <option value="tier|{{ other }}" data-provider="{{ other_cfg.provider }}" data-effort-claude="{{ usual_label('claude', other_cfg.effort, other) }}" data-effort-local="{{ usual_label('local', other_cfg.effort, other) }}" {{ 'selected' if follows == other }}>the {{ other|capitalize }} model{% if other_cfg.model %}: {{ model_label(other_cfg.provider, other_cfg.model) }}{% endif %}</option>
+            <option value="tier|{{ other }}" data-provider="{{ other_cfg.provider }}" data-follows="{{ other }}" {{ 'selected' if follows == other }}>the {{ other|capitalize }} model{% if other_cfg.model %}: {{ model_label(other_cfg.provider, other_cfg.model) }}{% endif %}</option>
             {% for group, items in model_groups %}<optgroup label="{{ group }}">{% for value, label in items %}<option value="{{ value }}" {{ 'selected' if st_.own.provider and value == st_.own.provider ~ '|' ~ st_.own.model }}>{{ label }}</option>{% endfor %}</optgroup>{% endfor %}
             {% if st_.own.provider and not (st_.own.provider ~ '|' ~ st_.own.model) in model_groups|map(attribute=1)|sum(start=[])|map(attribute=0)|list %}<option value="{{ st_.own.provider }}|{{ st_.own.model }}" selected>{{ st_.own.model }} (not available now)</option>{% endif %}
           </select></td>
           <td><select id="effort_{{ st_.key }}" name="{{ st_.key }}_effort" aria-label="Effort for: {{ st_.label }}" autocomplete="off"
-                      data-usual-claude="{{ usual_label('claude', usual_effort, follows) }}" data-usual-local="{{ usual_label('local', usual_effort, follows) }}">
-            {{ effort_options(kind, st_.own.effort, usual_label(kind, usual_effort, follows)) }}
+                      data-usual-claude="{{ usual_label('claude', usual_effort, follows) }}" data-usual-local="{{ usual_label('local', usual_effort, follows) }}"
+                      data-other-value="tier|{{ effort_other }}" data-other-claude="{{ usual_label('claude', effort_other_cfg.effort, effort_other) }}" data-other-local="{{ usual_label('local', effort_other_cfg.effort, effort_other) }}"
+                      {% for t in ('writing', 'analysis') %}data-{{ t }}-claude="{{ usual_label('claude', (cfg[t] or {}).effort, t) }}" data-{{ t }}-local="{{ usual_label('local', (cfg[t] or {}).effort, t) }}" {% endfor %}>
+            {{ effort_options(kind, effort_current, usual_label(kind, usual_effort, follows), other=('tier|' ~ effort_other, usual_label(kind, effort_other_cfg.effort, effort_other))) }}
           </select></td></tr>
       {% endfor %}</tbody>
     </table></div>

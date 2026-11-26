@@ -132,14 +132,19 @@
       const wrap = s.dataset.effort && document.querySelector(s.dataset.effort);
       const sync = () => {
         const opt = s.selectedOptions[0];
-        // An option that follows a picker at the top (Settings → steps) says which provider and effort that is.
+        // An option that follows a picker at the top (Settings → steps) says which provider that is.
         const provider = (opt && opt.dataset.provider) || (s.value ? s.value.split("|")[0] : (s.dataset.usualProvider || "claude_code"));
-        const claude = (opt && opt.dataset.effortClaude) || s.dataset.effortClaude;
-        const local = (opt && opt.dataset.effortLocal) || s.dataset.effortLocal;
-        if (claude && (target.dataset.usualClaude !== claude || target.dataset.usualLocal !== local)) {
-          target.dataset.usualClaude = claude;
-          target.dataset.usualLocal = local;
-          delete target.dataset.kind;  // rebuild the options with the new first label
+        if (s.dataset.home) {
+          // A step in Settings: its effort is the picker its model follows ("") or the other picker's ("tier|…").
+          const follows = (opt && opt.dataset.follows) || s.dataset.home;
+          const other = follows === "writing" ? "analysis" : "writing";
+          const want = {usualClaude: target.dataset[follows + "Claude"], usualLocal: target.dataset[follows + "Local"],
+                        otherValue: "tier|" + other, otherClaude: target.dataset[other + "Claude"],
+                        otherLocal: target.dataset[other + "Local"]};
+          if (Object.keys(want).some((k) => target.dataset[k] !== want[k])) {
+            Object.assign(target.dataset, want);
+            delete target.dataset.kind;  // rebuild the options with the new labels
+          }
         }
         fillEffort(target, provider === "ollama" ? "local" : "claude");
         if (wrap) wrap.hidden = !s.value;
@@ -157,8 +162,10 @@
     sel.innerHTML = "";
     const usual = kind === "local" ? sel.dataset.usualLocal : sel.dataset.usualClaude;
     if (usual) add("", usual, !cur);
+    const other = kind === "local" ? sel.dataset.otherLocal : sel.dataset.otherClaude;
+    if (sel.dataset.otherValue && other) add(sel.dataset.otherValue, other, cur === sel.dataset.otherValue);
     if (kind === "local") {
-      add("low", "thinking off", !!cur && !thinking);
+      add("low", "thinking off", ["low", "medium"].includes(cur));
       add("high", "thinking on", thinking);
     } else {
       ["low", "medium", "high", "xhigh", "max"].forEach((e) => add(e, e + (sel.dataset.suffix || ""), cur === e));

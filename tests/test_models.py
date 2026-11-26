@@ -335,6 +335,54 @@ def test_a_step_can_follow_the_other_picker(fake, fake_claude, monkeypatch):
     assert settings.get("llm")["steps"] == {} and built("analysis", "fit_score")[0] == "claude-sonnet-5-5"
 
 
+def test_a_steps_effort_can_follow_either_picker(fake, fake_claude, monkeypatch):
+    """The effort is chosen apart from the model: the Analysis model at the Writing effort, and the other way round."""
+    monkeypatch.setattr(llm, "_test_provider", None)
+    path, _ = fake_claude
+    settings.update("llm", {"claude_code_path": str(path), "check_with": "analysis",
+                            "writing": {"provider": "claude_code", "model": "claude-opus-5-5", "effort": "high"},
+                            "analysis": {"provider": "claude_code", "model": "claude-sonnet-5-5", "effort": "medium"}})
+    c = TestClient(app)
+    c.post("/settings/steps", data={"score_effort": "tier|writing", "letter_effort": "tier|analysis",
+                                    "read_ad_model": "tier|writing", "read_ad_effort": "tier|analysis",
+                                    "cv_model": "tier|analysis", "cv_effort": "tier|analysis",
+                                    "reply_model": "claude_code|claude-haiku-5-5", "reply_effort": "tier|writing"},
+           follow_redirects=False)
+    assert settings.get("llm")["steps"] == {
+        "score": {"effort_tier": "writing"}, "letter": {"effort_tier": "analysis"},
+        "read_ad": {"tier": "writing", "effort_tier": "analysis"}, "cv": {"tier": "analysis"},
+        "reply": {"provider": "claude_code", "model": "claude-haiku-5-5", "effort_tier": "writing"}}, \
+        "an effort that's the same picker as the model's is no setting at all"
+
+    def built(tier, purpose):
+        p = llm._build(tier, "low", purpose)
+        return p.model, p.effort
+
+    assert built("analysis", "fit_score") == ("claude-sonnet-5-5", "high"), "the Analysis model at the Writing effort"
+    assert built("writing", "write_letter") == ("claude-opus-5-5", "medium"), "the Writing model at the Analysis effort"
+    assert built("analysis", "parse_job") == ("claude-opus-5-5", "medium")
+    assert built("writing", "write_cv") == ("claude-sonnet-5-5", "medium")
+    assert built("analysis", "classify_response") == ("claude-haiku-5-5", "high")
+    settings.update("llm", {"writing": {"effort": "xhigh"}})
+    assert built("analysis", "fit_score") == ("claude-sonnet-5-5", "xhigh"), "a change to the Writing effort reaches it"
+
+    page = c.get("/settings").text
+
+    def effort_select(step):
+        start = page.index(f'id="effort_{step}"')
+        return page[start:page.index("</select>", start)]
+
+    score = effort_select("score")
+    assert 'value="tier|writing" selected>the Writing effort: xhigh' in score and ">the Analysis effort: medium<" in score
+    letter = effort_select("letter")
+    assert 'value="tier|analysis" selected>the Analysis effort: medium' in letter
+    plain = effort_select("screen")
+    assert ">the Analysis effort: medium<" in plain and 'value="tier|writing" >the Writing effort: xhigh' in plain \
+        and "selected" not in plain, "every step offers the other picker's effort, none chosen"
+    c.post("/settings/steps", data={"score_effort": ""}, follow_redirects=False)
+    assert settings.get("llm")["steps"] == {} and built("analysis", "fit_score") == ("claude-sonnet-5-5", "medium")
+
+
 def test_effort_reaches_claude_and_can_be_picked_everywhere(fake, fake_claude, monkeypatch):
     from career_agent.web import app as web
 

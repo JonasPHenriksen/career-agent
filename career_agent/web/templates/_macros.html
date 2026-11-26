@@ -108,12 +108,14 @@
 </div>
 {%- endmacro %}
 
-{#- Effort options that fit the model: five levels for Claude, thinking on/off for a local model.
+{#- Effort options that fit the model: five levels for Claude, thinking on/off for a local model. `other` is an
+    extra choice before them (a step in Settings following the other picker's effort): (value, label).
     static/app.js rebuilds them the same way when you pick another model. -#}
-{% macro effort_options(kind, current='', usual=None, suffix='') -%}
+{% macro effort_options(kind, current='', usual=None, suffix='', other=None) -%}
 {%- if usual is not none %}<option value="">{{ usual }}</option>{% endif -%}
+{%- if other %}<option value="{{ other[0] }}" {{ 'selected' if current == other[0] }}>{{ other[1] }}</option>{% endif -%}
 {%- if kind == 'local' -%}
-<option value="low" {{ 'selected' if current and current not in ('high', 'xhigh', 'max') }}>thinking off</option><option value="high" {{ 'selected' if current in ('high', 'xhigh', 'max') }}>thinking on</option>
+<option value="low" {{ 'selected' if current in ('low', 'medium') }}>thinking off</option><option value="high" {{ 'selected' if current in ('high', 'xhigh', 'max') }}>thinking on</option>
 {%- else -%}
 {%- for e in ['low', 'medium', 'high', 'xhigh', 'max'] %}<option value="{{ e }}" {{ 'selected' if current == e }}>{{ e }}{{ suffix }}</option>{% endfor -%}
 {%- endif -%}
