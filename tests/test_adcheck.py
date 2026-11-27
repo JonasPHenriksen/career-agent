@@ -95,6 +95,21 @@ def test_a_job_is_gone_only_when_no_copy_is_up(fake, monkeypatch):
     assert db.q1("SELECT gone_at FROM jobs WHERE id = ?", (job,))["gone_at"] == first, "a page that can't be read changes nothing"
 
 
+def test_an_expired_board_copy_is_not_gone_while_the_page_you_apply_on_is_up(fake, monkeypatch):
+    board, form = "https://www.jobindex.dk/vis-job/h1234567", "https://app.jobmatch.example/abc?client=jobindex"
+    states = {board: ("gone", 'jobindex.dk says "Annoncen er udløbet"'), form: ("open", "up on app.jobmatch.example")}
+    asked = []
+    monkeypatch.setattr(adcheck, "page_state", lambda url, title: asked.append(url) or states[url])
+    job = _job(board, apply_url=form, status="shortlisted")
+    assert adcheck.check_job(job) == {"state": "open", "note": "up on app.jobmatch.example (gone from jobindex.dk)"}
+    assert db.q1("SELECT gone_at FROM jobs WHERE id = ?", (job,))["gone_at"] is None
+    states[form] = ("unknown", "couldn't tell")
+    assert adcheck.check_job(job)["state"] == "gone", "an apply page that says nothing doesn't keep it open"
+    states[board] = ("open", "up on jobindex.dk")
+    asked.clear()
+    assert adcheck.check_job(job)["state"] == "open" and asked == [board], "the apply page is only looked at when needed"
+
+
 def test_writing_stops_before_any_model_call_when_the_ad_is_gone(fake, monkeypatch):
     monkeypatch.setattr(adcheck, "page_state", lambda url, title: ("gone", "jobbank.dk says the page doesn't exist"))
     db.insert("facts", {"category": "skill", "title": "Python", "created_at": db.now()})

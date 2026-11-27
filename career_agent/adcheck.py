@@ -4,7 +4,8 @@ and when you open the application or the job, so you don't spend time on a job t
 No model is asked: the ad's page is fetched and read for plain signs. Gone means the site says there is no such page
 (404), the address now leads somewhere else on the same site (the job list), the page says so ("Opslag ikke fundet",
 "no longer available") and isn't the ad, its "valid through" date has passed, or a Workday ad page no longer carries
-the ad. A job found in several places counts as open while any copy is up. A page that can't be read (blocked, no
+the ad. A job found in several places counts as open while any copy is up, and a board's copy found gone sends the
+check on to the page you apply on, which often stays up after the board's copy expires. A page that can't be read (blocked, no
 answer, built in the browser) changes nothing; it's looked at again next time."""
 from __future__ import annotations
 
@@ -109,6 +110,15 @@ def _addresses(job: dict) -> list[str]:
     return list(dict.fromkeys(urls))[:MAX_COPIES]
 
 
+def _apply_pages(job: dict, seen: list[str]) -> list[str]:
+    """Where the ad sends you to apply. A board's copy often expires while the employer's own page still takes
+    applications (Jobindex itself says to click through and see), so these are looked at before calling an ad gone."""
+    rows = db.q("SELECT apply_url FROM jobs WHERE (id = ? OR duplicate_of = ?) AND apply_url LIKE 'http%' "
+                "ORDER BY id = ? DESC, id", (job["id"], job["id"], job["id"]))
+    urls = [r["apply_url"] for r in rows if r["apply_url"] not in seen]
+    return list(dict.fromkeys(urls))[:MAX_COPIES]
+
+
 def check_job(job_id: int) -> dict:
     """Look at the ad (and its copies) and record what was found: {"state", "note"}."""
     job = db.q1("SELECT * FROM jobs WHERE id = ?", (job_id,))
@@ -116,7 +126,10 @@ def check_job(job_id: int) -> dict:
         return {"state": "unknown", "note": "job deleted"}
     if job["duplicate_of"]:  # a copy set aside: its original stands for it
         return check_job(job["duplicate_of"])
-    found = [(url, *page_state(url, job["title"])) for url in _addresses(job)]
+    addresses = _addresses(job)
+    found = [(url, *page_state(url, job["title"])) for url in addresses]
+    if any(f[1] == "gone" for f in found) and not any(f[1] == "open" for f in found):
+        found += [(url, *page_state(url, job["title"])) for url in _apply_pages(job, addresses)]
     up = [f for f in found if f[1] == "open"]
     gone = [f for f in found if f[1] == "gone"]
     if up:
