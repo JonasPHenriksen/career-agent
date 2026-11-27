@@ -89,17 +89,43 @@ def add_event(app_id: int, type_: str, occurred_at: str | None = None, summary: 
         "application_id": app_id, "company_id": app["company_id"], "type": type_, "occurred_at": when,
         "summary": summary, "content": content, "feedback": feedback or None, "created_at": db.now(),
     })
-    patch: dict = {"last_event_at": when, "updated_at": db.now()}
-    if type_ == "applied" and not app["applied_at"]:
-        patch["applied_at"] = when
-    if type_ in RESPONSE_TYPES and not app["first_response_at"]:
-        patch["first_response_at"] = when
-    new_status = STATUS_FROM_EVENT.get(type_)
-    if new_status:
-        patch["status"] = new_status
-        patch["closed_at"] = when if new_status in CLOSED else None
-    db.update("applications", app_id, patch)
+    refresh(app_id)
     return ev_id
+
+
+def delete_event(app_id: int, event_id: int) -> bool:
+    """Remove an event from the timeline; the application goes back to what the events left say."""
+    if not db.q1("SELECT 1 FROM events WHERE id = ? AND application_id = ?", (event_id, app_id)):
+        return False
+    db.ex("DELETE FROM events WHERE id = ? AND application_id = ?", (event_id, app_id))
+    refresh(app_id)
+    return True
+
+
+def refresh(app_id: int) -> None:
+    """Status, sent date, first reply, last event and closed date, worked out again from the whole timeline in the
+    order things happened, so a reply logged late, an event with an earlier date, or a removed event all count.
+    A "no response" mark gives way to a reply logged after it, and "applied" never undoes a later step. With no event that sets a status, the application
+    keeps a status from before sending, or goes back to Ready to send."""
+    a = db.q1("SELECT * FROM applications WHERE id = ?", (app_id,))
+    if not a:
+        return
+    evs = db.q("SELECT * FROM events WHERE application_id = ? ORDER BY occurred_at, id", (app_id,))
+    replies = [e for e in evs if e["type"] in RESPONSE_TYPES]
+    status, closed = None, None
+    for e in evs:
+        s = STATUS_FROM_EVENT.get(e["type"])
+        if not s or (s == "ghosted" and any(r["id"] > e["id"] for r in replies)) or (s == "applied" and status):
+            continue  # sending is where it starts: it never undoes a later step dated before it
+        status, closed = s, (e["occurred_at"] if s in CLOSED else None)
+    if status is None:
+        status = a["status"] if a["status"] in ("drafting", "draft", "ready") else "ready"
+    applied = [e["occurred_at"] for e in evs if e["type"] == "applied"]
+    patch = {"status": status, "closed_at": closed, "applied_at": applied[0] if applied else None,
+             "first_response_at": replies[0]["occurred_at"] if replies else None,
+             "last_event_at": evs[-1]["occurred_at"] if evs else None}
+    if any(a[k] != v for k, v in patch.items()):
+        db.update("applications", app_id, {**patch, "updated_at": db.now()})
 
 
 def set_status(app_id: int, status: str) -> None:
@@ -141,7 +167,11 @@ def classify_response(app_id: int, text: str) -> dict:
 
 
 def maintenance() -> dict:
-    """Mark long-silent applications as ghosted. Runs a few times a day."""
+    """Bring every tracked application in line with its timeline, then mark long-silent ones as ghosted. Runs a few
+    times a day."""
+    for r in db.q("SELECT DISTINCT application_id AS id FROM events UNION "
+                  "SELECT id FROM applications WHERE status NOT IN ('drafting', 'draft', 'ready')"):
+        refresh(r["id"])
     a = settings.get("automation")
     ghost_days = int(a.get("ghost_days") or 30)
     rows = db.q("SELECT id FROM applications WHERE status = 'applied' AND first_response_at IS NULL "

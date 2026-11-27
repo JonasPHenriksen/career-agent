@@ -998,8 +998,10 @@ async def application_event(request: Request, app_id: int):
 
 @app.post("/applications/{app_id}/event/{event_id}/delete")
 def application_event_delete(request: Request, app_id: int, event_id: int):
-    db.ex("DELETE FROM events WHERE id = ? AND application_id = ?", (event_id, app_id))
-    return go(f"/applications/{app_id}?tab=timeline", msg="Event removed. (The status isn't changed automatically.)")
+    if not tracker.delete_event(app_id, event_id):
+        return go(f"/applications/{app_id}?tab=timeline", err="That event was already removed.")
+    status = tracker.STATUS_LABELS.get(db.q1("SELECT status FROM applications WHERE id = ?", (app_id,))["status"], "")
+    return go(f"/applications/{app_id}?tab=timeline", msg=f"Event removed. Status: {status}.")
 
 
 @app.post("/applications/{app_id}/prep")

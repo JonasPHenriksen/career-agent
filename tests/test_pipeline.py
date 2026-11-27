@@ -150,11 +150,48 @@ def test_ghosting_and_followups(fake):
     tracker.add_event(app_id, "applied", occurred_at=db.days_ago(12))
     assert [f["id"] for f in tracker.followups_due()] == [app_id]
     assert tracker.maintenance()["ghosted"] == 0
-    db.update("applications", app_id, {"applied_at": db.days_ago(40)})
+    db.ex("UPDATE events SET occurred_at = ? WHERE application_id = ? AND type = 'applied'", (db.days_ago(40), app_id))
     assert tracker.maintenance()["ghosted"] == 1
     assert tracker.app_with_job(app_id)["status"] == "ghosted"
     m = companies.metrics(jobs.get(job_id)["company_id"])
     assert m["ghosted"] == 1 and m["score"] < 50
+
+
+def test_the_application_follows_its_timeline(fake):
+    _import_docs()
+    job_id = jobs.add_from_text(JOB_TEXT)
+    jobs.parse(job_id, use_text=True)
+    app_id = jobs.create_application(job_id)
+    tracker.add_event(app_id, "applied", occurred_at="2026-11-23T12:00:00")
+    wrong = tracker.add_event(app_id, "rejected_generic", occurred_at="2026-11-27T12:00:00")
+    right = tracker.add_event(app_id, "rejected_generic", occurred_at="2026-11-25T12:00:00")
+    tracker.delete_event(app_id, wrong)
+    a = tracker.app_with_job(app_id)
+    assert (a["status"], a["first_response_at"], a["closed_at"]) == ("rejected", "2026-11-25T12:00:00", "2026-11-25T12:00:00")
+    assert insights.response_stats()["median_wait"] == 2.0, "the removed reply no longer counts"
+    assert companies.metrics(a["company_id"])["median_days"] == 2.0
+
+    tracker.delete_event(app_id, right)
+    a = tracker.app_with_job(app_id)
+    assert (a["status"], a["first_response_at"], a["closed_at"]) == ("applied", None, None), "back to waiting"
+    assert a["last_event_at"] == "2026-11-23T12:00:00"
+
+    tracker.add_event(app_id, "interview_invite", occurred_at="2026-11-26T12:00:00")
+    tracker.add_event(app_id, "info_request", occurred_at="2026-11-24T12:00:00")
+    a = tracker.app_with_job(app_id)
+    assert (a["status"], a["first_response_at"]) == ("interview", "2026-11-24T12:00:00"), \
+        "a reply with an earlier date counts as the first, and doesn't undo the later interview"
+
+    other = jobs.create_application(jobs.add_from_text(JOB_TEXT.replace("Product Owner", "Product Manager")))
+    tracker.add_event(other, "applied", occurred_at="2026-10-01T12:00:00")
+    tracker.add_event(other, "ghosted", occurred_at="2026-11-01T12:00:00")
+    tracker.add_event(other, "rejected_generic", occurred_at="2026-10-20T12:00:00")
+    assert tracker.app_with_job(other)["status"] == "rejected", "a reply logged after the no-response mark wins"
+
+    tracker.set_status(app_id, "withdrawn")
+    withdrawn = db.q1("SELECT id FROM events WHERE application_id = ? AND type = 'withdrawn'", (app_id,))["id"]
+    tracker.delete_event(app_id, withdrawn)
+    assert tracker.app_with_job(app_id)["status"] == "interview", "removing it undoes a status set by hand"
 
 
 def test_rss_source_and_triage(fake, monkeypatch):
