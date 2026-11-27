@@ -29,6 +29,8 @@ templates.env.globals["model_choices"] = llm.model_choices  # for the "with whic
 templates.env.globals["effort_kind"] = llm.effort_kind  # what effort means for a model: levels or thinking on/off
 templates.env.globals["still_open_email"] = emails.still_open  # the ad notices offer an email asking whether it's open
 templates.env.globals["ad_uncertain"] = adcheck.uncertain
+templates.env.globals["kept_app"] = tracker.kept  # a sent application: its delete and dismiss buttons are greyed out
+templates.env.globals["kept_note"] = tracker.KEPT_NOTE
 
 
 def chosen_model(f: dict) -> dict:
@@ -171,6 +173,12 @@ def need(row):
     if not row:
         raise HTTPException(404, "Not found")
     return row
+
+
+def _kept_for_job(job_id: int) -> bool:
+    """The job has a sent application, so it can't be deleted or dismissed (tracker.kept)."""
+    a = db.q1("SELECT status FROM applications WHERE job_id = ?", (job_id,))
+    return bool(a) and tracker.kept(a["status"])
 
 
 def llm_ready() -> tuple[bool, str]:
@@ -434,6 +442,8 @@ async def job_status(request: Request, job_id: int):
     if f.get("status") != "dismissed":
         jobs.set_status(job_id, f.get("status", ""))
         return go(nxt)
+    if _kept_for_job(job_id):
+        return go(back(request, f"/jobs/{job_id}"), err=tracker.KEPT_NOTE)
     gone = jobs.dismiss(job_id)
     if not gone:
         return go(nxt)
@@ -497,6 +507,8 @@ async def job_notes(request: Request, job_id: int):
 
 @app.post("/jobs/{job_id}/delete")
 def job_delete(request: Request, job_id: int):
+    if _kept_for_job(job_id):
+        return go(back(request, f"/jobs/{job_id}"), err=tracker.KEPT_NOTE)
     db.ex("DELETE FROM jobs WHERE id = ?", (job_id,))
     return go("/jobs", msg="Job deleted.")
 
@@ -1037,6 +1049,9 @@ def application_restore(request: Request, app_id: int, version_id: int):
 
 @app.post("/applications/{app_id}/delete")
 def application_delete(request: Request, app_id: int):
+    a = need(db.q1("SELECT status FROM applications WHERE id = ?", (app_id,)))
+    if tracker.kept(a["status"]):
+        return go(f"/applications/{app_id}?tab=history", err=tracker.KEPT_NOTE)
     db.ex("DELETE FROM applications WHERE id = ?", (app_id,))
     return go("/tracker", msg="Application deleted.")
 

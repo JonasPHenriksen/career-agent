@@ -58,6 +58,12 @@
 </details>
 {%- endmacro %}
 
+{#- A remove button greyed out because the application was sent (tracker.kept); hovering it says why. aria-disabled
+    rather than disabled, so the reason shows in every browser and the button can still be reached with the keyboard. -#}
+{% macro kept_button(label, cls='btn small ghost danger', name=none) -%}
+<button type="button" class="{{ cls }}" aria-disabled="true" title="{{ kept_note }}"{% if name %} aria-label="{{ name }}"{% endif %}>{{ label }}</button>
+{%- endmacro %}
+
 {% macro ad_state(job, app=none, next='/jobs') -%}
 {% if job.gone_at and not job.open_said_at %}
 <div class="card danger" role="alert" style="margin-bottom:1rem">

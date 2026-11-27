@@ -20,6 +20,15 @@ APP_STATUSES = [
 ]
 STATUS_LABELS = dict(APP_STATUSES)
 CLOSED = {"accepted", "rejected", "ghosted", "withdrawn"}
+UNSENT = ("drafting", "draft", "ready")
+KEPT_NOTE = ("Sent, so it stays: its replies count in Insights and on the company's page. "
+             "Sent by mistake? Remove its events on the Timeline first.")
+
+
+def kept(status: str | None) -> bool:
+    """An application past the draft stage (sent, interviewing, closed) can't be deleted, nor its job removed or
+    dismissed: it's the record behind the response numbers. Removing its events puts it back to a draft."""
+    return bool(status) and status not in UNSENT
 BOARD = [
     ("Drafts", ("drafting", "draft")),
     ("Ready", ("ready",)),

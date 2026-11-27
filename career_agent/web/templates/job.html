@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline, when_due, progress, model_picker, made_by, ad_state, ask_first %}
+{% from "_macros.html" import score, grade, deadline, when_due, progress, model_picker, made_by, ad_state, ask_first, kept_button %}
 {% block title %}{{ job.title or 'Job' }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/jobs">Jobs</a>{% if source %} · found by {{ source.name }}{% endif %} · added {{ job.created_at|ago }}</div>
@@ -22,7 +22,8 @@
     {% endif %}
     {% if job.url %}<a class="btn" href="{{ job.url }}" target="_blank" rel="noopener noreferrer">Open ad ↗</a>{% endif %}
     {% if job.status != 'shortlisted' %}<form method="post" action="/jobs/{{ job.id }}/status" class="inline"><input type="hidden" name="status" value="shortlisted"><button class="btn">☆ Shortlist</button></form>{% endif %}
-    {% if job.status != 'dismissed' %}<form method="post" action="/jobs/{{ job.id }}/status" class="inline"{% if app and app.status in ('drafting', 'draft', 'ready') %} data-confirm="Not for me: remove your draft for this job? Copies of the ad are set aside too. You can undo it."{% endif %}><input type="hidden" name="status" value="dismissed"><button class="btn ghost">Not for me</button></form>
+    {% if app and kept_app(app.status) %}{{ kept_button('Not for me', 'btn ghost') }}
+    {% elif job.status != 'dismissed' %}<form method="post" action="/jobs/{{ job.id }}/status" class="inline"{% if app and app.status in ('drafting', 'draft', 'ready') %} data-confirm="Not for me: remove your draft for this job? Copies of the ad are set aside too. You can undo it."{% endif %}><input type="hidden" name="status" value="dismissed"><button class="btn ghost">Not for me</button></form>
     {% else %}<form method="post" action="/jobs/{{ job.id }}/status" class="inline"><input type="hidden" name="status" value="new"><button class="btn ghost">Restore</button></form>{% endif %}
   </div>
 </header>
@@ -172,7 +173,8 @@
 
     <div class="row end">
       {% if job.parse_status == 'parsed' %}<form method="post" action="/jobs/{{ job.id }}/reparse" class="inline row">{{ made_by(made.parse, 'Read') }}{{ model_picker() }}<button class="btn small ghost">Read the ad again</button></form>{% endif %}
-      <form method="post" action="/jobs/{{ job.id }}/delete" data-confirm="Delete this job{{ ' and its application' if app }}?" class="inline"><button class="btn small ghost danger">Delete job</button></form>
+      {% if app and kept_app(app.status) %}{{ kept_button('Delete job') }}{% else %}
+      <form method="post" action="/jobs/{{ job.id }}/delete" data-confirm="Delete this job{{ ' and its application' if app }}?" class="inline"><button class="btn small ghost danger">Delete job</button></form>{% endif %}
     </div>
   </div>
 </div>

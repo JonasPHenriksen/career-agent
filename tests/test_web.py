@@ -108,3 +108,28 @@ def test_jobs_the_app_could_not_read_say_so_and_point_to_the_paste_box(fake):
     for j in (locked, broken):
         db.update("jobs", j, {"parse_status": "parsed"})
     assert "Needs the ad text" not in c.get("/jobs").text, "the tab goes away when there's nothing to paste"
+
+
+def test_a_sent_application_and_its_job_cannot_be_removed(fake):
+    _, job_id, app_id = _seed()
+    c = TestClient(app)
+    note = tracker.KEPT_NOTE.replace("'", "&#39;")
+    page = c.get(f"/jobs/{job_id}").text
+    assert f'aria-disabled="true" title="{note}">Delete job</button>' in page
+    assert f'aria-disabled="true" title="{note}">Not for me</button>' in page
+    assert f'action="/jobs/{job_id}/delete"' not in page
+    assert f'aria-label="Not for me">✕</button>' in c.get("/jobs?view=all").text
+    assert f'title="{note}">Delete application</button>' in c.get(f"/applications/{app_id}?tab=history").text
+
+    r = c.post(f"/jobs/{job_id}/delete", follow_redirects=False)
+    assert r.status_code == 303 and "err=" in r.headers["location"] and jobs.get(job_id)
+    c.post(f"/jobs/{job_id}/status", data={"status": "dismissed"}, follow_redirects=False)
+    assert jobs.get(job_id)["status"] != "dismissed"
+    c.post(f"/applications/{app_id}/delete", follow_redirects=False)
+    assert db.q1("SELECT 1 FROM applications WHERE id = ?", (app_id,)), "the guard is on the server too"
+
+    for e in tracker.timeline(app_id):
+        tracker.delete_event(app_id, e["id"])
+    assert f'action="/applications/{app_id}/delete"' in c.get(f"/applications/{app_id}?tab=history").text
+    c.post(f"/applications/{app_id}/delete", follow_redirects=False)
+    assert not db.q1("SELECT 1 FROM applications WHERE id = ?", (app_id,)), "back to a draft: it can go"

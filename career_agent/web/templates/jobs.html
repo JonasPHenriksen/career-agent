@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline, when_due %}
+{% from "_macros.html" import score, grade, deadline, when_due, kept_button %}
 {% block title %}Jobs{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -98,7 +98,9 @@
       {% if j.status != 'shortlisted' %}
       <form method="post" action="/jobs/{{ j.id }}/status" class="inline"><input type="hidden" name="status" value="shortlisted"><button class="btn small ghost" title="Shortlist">☆</button></form>
       {% endif %}
-      {% if j.status != 'dismissed' %}
+      {% if kept_app(j.app_status) %}
+      {{ kept_button('✕', 'btn small ghost', 'Not for me') }}
+      {% elif j.status != 'dismissed' %}
       <form method="post" action="/jobs/{{ j.id }}/status" class="inline"{% if j.app_status in ('drafting', 'draft', 'ready') %} data-confirm="Not for me: remove your draft for this job? Copies of the ad are set aside too. You can undo it."{% endif %}><input type="hidden" name="status" value="dismissed"><button class="btn small ghost" title="Not for me{{ ': removes your draft' if j.app_status in ('drafting', 'draft', 'ready') }}">✕</button></form>
       {% else %}
       <form method="post" action="/jobs/{{ j.id }}/status" class="inline"><input type="hidden" name="status" value="new"><button class="btn small ghost" title="Restore">↺</button></form>

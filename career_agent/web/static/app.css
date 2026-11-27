@@ -138,6 +138,8 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 1.25rem 0; }
 .btn.danger { color: var(--bad); }
 .btn.small { padding: .28rem .6rem; font-size: .84rem; }
 .btn[disabled], .btn.busy { opacity: .6; cursor: progress; }
+.btn[aria-disabled="true"], .btn[aria-disabled="true"]:hover { opacity: .45; cursor: not-allowed; background: var(--surface); }
+.btn.ghost[aria-disabled="true"], .btn.ghost[aria-disabled="true"]:hover { background: transparent; }
 form.inline { display: inline; }
 
 label { display: block; font-weight: 550; font-size: .9rem; margin-bottom: .3rem; }

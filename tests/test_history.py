@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from career_agent import config, db, history, profile, settings, tasks
+from career_agent import config, db, history, profile, settings, tasks, tracker
 from career_agent.web.app import app
 
 from .test_web import _seed
@@ -72,6 +72,9 @@ def test_an_application_comes_back_with_its_drafts_and_timeline(fake):
     doc_id, job_id, app_id = _seed()
     with history.op("save", source="you"):
         db.insert("app_versions", {"application_id": app_id, "label": "v1", "letter": "Kære Mette", "created_at": db.now()})
+        for e in tracker.timeline(app_id):  # a sent application can't be deleted: make it a draft with a note
+            tracker.delete_event(app_id, e["id"])
+        tracker.add_event(app_id, "note", summary="Spoke to Mette at the fair")
     versions = db.q("SELECT * FROM app_versions WHERE application_id = ? ORDER BY id", (app_id,))
     events = db.q("SELECT * FROM events WHERE application_id = ? ORDER BY id", (app_id,))
     application = _row("applications", app_id)

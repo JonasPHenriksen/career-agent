@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline, progress, status, model_picker, made_by, ad_state, ask_first, email_block %}
+{% from "_macros.html" import score, grade, deadline, progress, status, model_picker, made_by, ad_state, ask_first, email_block, kept_button %}
 {% block title %}{{ a.job_title or 'Application' }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/tracker">Applications</a> · <a href="/jobs/{{ a.job_id }}">job details</a>{% if a.auto_drafted %} · drafted automatically{% endif %}</div>
@@ -508,7 +508,8 @@
   </ul>
   {% else %}<p class="empty">No earlier versions.</p>{% endif %}
   <hr>
-  <form method="post" action="/applications/{{ a.id }}/delete" data-confirm="Delete this application and its history? The job stays."><button class="btn small ghost danger">Delete application</button></form>
+  {% if kept_app(a.status) %}{{ kept_button('Delete application') }}{% else %}
+  <form method="post" action="/applications/{{ a.id }}/delete" data-confirm="Delete this application and its history? The job stays."><button class="btn small ghost danger">Delete application</button></form>{% endif %}
 </section>
 {% endif %}
 {% endblock %}
