@@ -30,11 +30,13 @@ def test_the_rule_checks_find_each_hole_found_before(fake):
     unread = _job("Unread", "Horsens", 40, parse_status="error", parse_error="This page doesn't look like a single job ad.")
     old_cap = _job("Old cap", "Skanderborg", 36, fit='{"dealbreakers": ["Skanderborg may be more than 50 km away"]}')
     talks = _job("Talks", "Aarhus", 70, fit='{"basis": 2, "summary": "A good match, and Aarhus is 40 km away."}')
+    old_talk = _job("Old talk", "Aarhus", 66, fit='{"summary": "Aarhus is inside your limit, and you know Python."}')
+    _job("Old quiet", "Aarhus", 66, fit='{"summary": "You know Python."}')
     assert _found("no_place") == [no_place], "a remote job needs no place"
     assert _found("unmeasured") == [region]
     assert _found("teaser") == [teaser]
     assert _found("scored_unread") == [unread]
-    assert sorted(_found("place_in_fit")) == sorted([old_cap, talks])
+    assert sorted(_found("place_in_fit")) == sorted([old_cap, talks, old_talk]), "an old fit that keeps quiet is fine"
     assert _found("work_mode") == [], "the ads say how the work is done"
     assert fine not in sum((c["items"] for c in health.checks()), []) and "1 × no place" in health.summary()
 
@@ -59,8 +61,11 @@ def test_the_weekly_check_compares_ads_with_what_was_stored(fake):
     wrong = _job("Wrong place", "København", 70)
     _job("Right", "Horsens", 70)
 
+    db.ex("UPDATE jobs SET fit = ? WHERE id = ?", ('{"basis": 2, "summary": "You know Python."}', wrong))
+
     def answer(system, user, schema):
-        assert schema is health.AUDIT_SCHEMA and "fit_summary" in user and "<ad>" in user
+        assert schema is health.AUDIT_SCHEMA and "<ad>" in user
+        assert ("fit_summary" in user) == ("Wrong place" in user), "an older fit's summary is a rule check's job"
         if "Wrong place" in user:
             return {"full_ad": True, "issues": [{"field": "location", "stored": "København", "ad_says": "Horsens",
                                                  "severity": "major"}]}

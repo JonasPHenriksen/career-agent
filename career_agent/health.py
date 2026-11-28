@@ -41,10 +41,12 @@ def _place_in_fit(r: dict) -> str | None:
     if not fit:
         return None
     breakers = " ".join(str(d) for d in fit.get("dealbreakers") or [])
-    if (fit.get("basis") or 0) < jobs.FIT_BASIS:
-        return "an older fit capped by a deal-breaker about distance" if _PLACE_TALK.search(breakers) else None
     m = _PLACE_TALK.search(f"{fit.get('summary') or ''} {breakers}")
-    return f"the fit talks about place (\"{m.group(0)}\")" if m else None
+    if not m:
+        return None
+    if (fit.get("basis") or 0) < jobs.FIT_BASIS:  # found by the first weekly check, 2026-11-28: 293 of 305
+        return f"a fit made before place was taken out of it (\"{m.group(0)}\")"
+    return f"the fit talks about place (\"{m.group(0)}\")"
 
 
 def checks() -> list[dict]:
@@ -148,8 +150,9 @@ def _stored(job: dict) -> str:
     fields = {"title": job["title"], "company": job["company_name"], "location": job["location"],
               "main_location": d.get("main_location"), "work_mode": job["work_mode"], "seniority": job["seniority"],
               "employment_type": job["employment_type"], "deadline": job["deadline"],
-              "deadline_note": d.get("deadline_note"), "language": job["language"],
-              "fit_summary": fit.get("summary")}
+              "deadline_note": d.get("deadline_note"), "language": job["language"]}
+    if (fit.get("basis") or 0) >= jobs.FIT_BASIS:  # an older fit's summary may talk about place: a rule check's job
+        fields["fit_summary"] = fit.get("summary")
     return json.dumps({k: v or "" for k, v in fields.items()}, ensure_ascii=False, indent=1)
 
 
