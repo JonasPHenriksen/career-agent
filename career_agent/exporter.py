@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date
 from io import BytesIO
 from pathlib import Path
@@ -69,13 +70,24 @@ def contact_line(p: dict) -> str:
     return "  ·  ".join(text.replace(" ", " ") for group in contact_groups(p) for text, _ in group)
 
 
+ASCII_LETTERS = str.maketrans({"æ": "ae", "Æ": "Ae", "ø": "oe", "Ø": "Oe", "å": "aa", "Å": "Aa",
+                               "ä": "ae", "Ä": "Ae", "ö": "oe", "Ö": "Oe", "ü": "ue", "Ü": "Ue", "ß": "ss"})
+
+
+def _file_part(text: str) -> str:
+    """Plain letters and digits, words joined by _ (a hyphen inside a word stays): æ ø å become ae oe aa,
+    other accents are dropped, and anything else (spaces, &, dots, slashes) goes."""
+    text = unicodedata.normalize("NFKD", unicodedata.normalize("NFC", text).translate(ASCII_LETTERS))
+    return "_".join(re.findall(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", text.encode("ascii", "ignore").decode()))
+
+
 def filename(kind: str, ext: str, company: str | None, language: str | None) -> str:
+    """Jonas_Henriksen_CV_Bredana.pdf: no spaces or æøå, so upload forms and applicant systems take it as it is."""
     p = settings.get("profile")
     word = DOC_WORDS[kind].get(_lang(language), DOC_WORDS[kind]["en"])
     company = re.sub(r"\s+(A/S|ApS|I/S|P/S|K/S|AB|AS|ASA|GmbH|Ltd\.?|Inc\.?|LLC)$", "", (company or "").strip())
-    parts = [p.get("name") or "Application", word, company]
-    name = " - ".join(x for x in parts if x)
-    return re.sub(r'[\\/:*?"<>|]+', "", name)[:150] + f".{ext}"
+    parts = (_file_part(x) for x in (p.get("name") or "Application", word, company))
+    return "_".join(x for x in parts if x)[:150].rstrip("_-") + f".{ext}"
 
 
 # ---------------------------------------------------------------------------------------

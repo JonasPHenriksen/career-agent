@@ -122,7 +122,7 @@ def test_job_to_application_end_to_end(fake):
 
     for kind in ("letter", "cv"):
         pdf, name = exporter.render(a, kind, "pdf")
-        assert pdf.startswith(b"%PDF") and name.endswith(".pdf") and "Sara Lund" in name
+        assert pdf.startswith(b"%PDF") and name.endswith(".pdf") and name.startswith("Sara_Lund_") and " " not in name
         docx, _ = exporter.render(a, kind, "docx")
         assert docx[:2] == b"PK"
 

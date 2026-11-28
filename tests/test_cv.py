@@ -90,6 +90,15 @@ def test_the_cv_is_typeset_with_your_details_and_design(fake):
     assert cvrender.render(data, "da") != folder, "a new design is a new rendering"
 
 
+def test_export_file_names_are_plain_ascii_without_spaces():
+    settings.update("profile", {"name": "Søren Ågård-Bæk"})
+    assert exporter.filename("cv", "pdf", "Bredana A/S", "da") == "Soeren_Aagaard-Baek_CV_Bredana.pdf"
+    assert exporter.filename("letter", "docx", "H&M Hennes & Mauritz AB", "da") == \
+           "Soeren_Aagaard-Baek_Ansoegning_H_M_Hennes_Mauritz.docx"
+    assert exporter.filename("letter", "pdf", "Café Østerbro ApS", "en") == "Soeren_Aagaard-Baek_Cover_letter_Cafe_Oesterbro.pdf"
+    assert exporter.filename("cv", "json", None, "de") == "Soeren_Aagaard-Baek_Lebenslauf.json"
+
+
 def test_json_resume_export_and_dates():
     assert [cvdata.iso_date(x) for x in ("May 2026", "maj 2026", "2022", "Present", "nu", "2024-08", "Dec. 2024")] == \
            ["2026-05", "2026-05", "2022", "", "", "2024-08", "2024-12"]
