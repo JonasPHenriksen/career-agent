@@ -131,3 +131,16 @@ def test_the_weekly_proof_reads_screened_out_listings_and_brings_back_a_miss(fak
     assert totals["screened"] == 2 and totals["misses"] == 1 and totals["runs"] == 2
     page = TestClient(app).get("/checks").text
     assert 'id="proof"' in page and "rightly set aside" in page and "screening set aside 1 worth reading of 2" in page
+
+
+def test_two_live_copies_of_a_gone_ad_are_compared_with_each_other(fake):
+    fake.same_job = 1
+    first = jobs.add_from_text("Full stack developer hos Havbro i Kolding. " * 20)
+    db.update("jobs", first, {"title": "Full stack developer", "company_name": "Havbro", "parse_status": "parsed",
+                              "gone_at": db.now(), "description": "Full stack developer hos Havbro i Kolding. " * 20})
+    live = jobs.add_from_text("Full stack developer hos Havbro i Kolding. " * 20)
+    db.update("jobs", live, {"title": "Full stack developer", "company_name": "Havbro", "parse_status": "parsed",
+                             "description": "Full stack developer hos Havbro i Kolding. " * 20})
+    later = jobs.add_from_text("x")
+    text = "Full stack developer hos Havbro i Kolding. " * 20
+    assert jobs.find_duplicate(later, "Full stack developer", text)["id"] == live, "past the gone ad, to the live copy"

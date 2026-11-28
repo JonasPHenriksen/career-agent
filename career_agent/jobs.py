@@ -703,7 +703,7 @@ def _copies(company: str | None, title: str | None, exclude_id: int | None = Non
     dismissed = "OR (status = 'dismissed' AND created_at >= ?)" if with_dismissed else ""
     params = (db.days_ago(REPEAT_DAYS),) + ((db.days_ago(DISMISSED_DAYS),) if with_dismissed else ())
     rows = db.q("SELECT id, title, company_name, location, status, parse_status, source_id, link_locked, keep, "
-                f"created_at FROM jobs WHERE duplicate_of IS NULL AND ((status != 'dismissed' AND created_at >= ?) "
+                f"created_at, gone_at FROM jobs WHERE duplicate_of IS NULL AND ((status != 'dismissed' AND created_at >= ?) "
                 f"{dismissed}) AND title IS NOT NULL AND company_name IS NOT NULL ORDER BY id", params)
     return [r for r in rows if r["id"] != exclude_id and same_name(company, title, r["company_name"], r["title"])]
 
@@ -726,6 +726,8 @@ def find_same_job(company: str | None, title: str | None, location: str | None =
     for r in _copies(company, title, exclude_id=job_id, with_dismissed=True):
         if not same_place(location, r["location"]) or (r["link_locked"] and readable and r["status"] != "dismissed"):
             continue
+        if r["status"] != "dismissed" and (r["status"] == "filtered" or r["gone_at"]):
+            continue  # hides nothing (confirm_repeat): look on for a live copy
         if not _other_place(source_id, not readable, r["source_id"], bool(r["link_locked"])):
             continue
         if job_id is not None and r["parse_status"] != "parsed" and r["id"] > job_id:
@@ -821,12 +823,14 @@ def _set_aside_copies(root: dict, copies: list[dict], days: int = REPEAT_DAYS) -
 
 def find_duplicate(job_id: int, title: str | None, description: str | None) -> dict | None:
     """An earlier job with the same title and almost the same ad text: from the last 30 days, or the last three
-    months when you said it's not for you."""
+    months when you said it's not for you. A job set aside or gone is passed over: it hides nothing
+    (confirm_repeat), and a live copy behind it may (2026-11-28: two live copies of a gone ad both came back)."""
     key = title_key(title)
     if not key:
         return None
     for other in db.q("SELECT id, title, company_name, description, status, source_id FROM jobs WHERE id < ? "
-                      "AND ((status != 'dismissed' AND created_at >= ?) OR (status = 'dismissed' AND created_at >= ?)) "
+                      "AND ((status NOT IN ('dismissed', 'filtered') AND gone_at IS NULL AND created_at >= ?) "
+                      "OR (status = 'dismissed' AND created_at >= ?)) "
                       "AND title IS NOT NULL AND description IS NOT NULL ORDER BY status = 'dismissed' DESC, id",
                       (job_id, db.days_ago(30), db.days_ago(DISMISSED_DAYS))):
         if title_key(other["title"]) == key and same_ad_text(description, other["description"]):
