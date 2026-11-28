@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, deadline, when_due %}
+{% from "_macros.html" import score, ranked, deadline, when_due %}
 {% block title %}Today{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -121,7 +121,7 @@
             {% if a.voice_d.get('score') is not none %}<span class="pill">Voice {{ a.voice_d.score }}</span>{% endif %}
           </div>
         </div>
-        {{ score(a.fit_score) }}
+        {{ ranked(a) }}
       </li>
       {% endfor %}
     </ul>
@@ -134,8 +134,8 @@
     <ul class="list">
       {% for j in matches %}
       <li>
-        {{ score(j.fit_score) }}
-        <div class="grow"><a class="title" href="/jobs/{{ j.id }}">{{ j.title }}</a><span class="meta">{{ j.company_name or '' }}{% if j.location %} · {{ j.location }}{% endif %} {{ when_due(j) }}</span>{% if j.rank.points %}<span class="small muted">Ranked {{ j.rank.score }}{% for n, why in j.rank.points %}{{ ':' if loop.first else ',' }} −{{ n }} {{ why }}{% endfor %}</span>{% endif %}</div>
+        {{ ranked(j) }}
+        <div class="grow"><a class="title" href="/jobs/{{ j.id }}">{{ j.title }}</a><span class="meta">{{ j.company_name or '' }}{% if j.location %} · {{ j.location }}{% endif %} {{ when_due(j) }}</span>{% if j.rank.points %}<span class="small muted">Fit {{ j.fit_score }}{% for n, why in j.rank.points %}{{ ':' if loop.first else ',' }} −{{ n }} {{ why }}{% endfor %}</span>{% endif %}</div>
         <form method="post" action="/jobs/{{ j.id }}/write" class="inline"><button class="btn small" data-busy="Starting…">Write</button></form>
       </li>
       {% endfor %}
@@ -149,7 +149,7 @@
     {% if deadlines %}
     <ul class="list">
       {% for d in deadlines %}
-      <li><div class="grow"><a class="title" href="{{ '/applications/%d'|format(d.app_id) if d.app_id else '/jobs/%d'|format(d.job_id) }}">{{ d.title }}</a><span class="meta">{{ d.company_name or '' }} · {{ deadline(d.deadline) }}{% if d.app_status %} · {{ 'draft ready' if d.app_status in ('draft','ready') else 'writing' }}{% else %} · not started{% endif %}</span></div>{{ score(d.fit_score) }}</li>
+      <li><div class="grow"><a class="title" href="{{ '/applications/%d'|format(d.app_id) if d.app_id else '/jobs/%d'|format(d.job_id) }}">{{ d.title }}</a><span class="meta">{{ d.company_name or '' }} · {{ deadline(d.deadline) }}{% if d.app_status %} · {{ 'draft ready' if d.app_status in ('draft','ready') else 'writing' }}{% else %} · not started{% endif %}</span></div>{{ ranked(d) }}</li>
       {% endfor %}
     </ul>
     {% else %}<p class="empty">No deadlines coming up.</p>{% endif %}

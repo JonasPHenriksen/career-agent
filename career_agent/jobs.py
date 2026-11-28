@@ -10,12 +10,17 @@ from .llm import jsonutil as J
 
 JOB_STATUSES = [("new", "New"), ("shortlisted", "Shortlisted"), ("dismissed", "Dismissed"), ("filtered", "Filtered out")]
 
+MAIN_LOCATION_HINT = ("When the ad names several places and says one is the main or primary workplace ('Dit primære "
+                      "arbejdssted er Aalborg', 'based in our Aalborg office'), that one place name. Empty when it "
+                      "names one place, or several you may choose between")
+
 PARSE_SCHEMA = J.obj(
     is_job_ad=J.b("False if the page is not a single job ad (a list of jobs, login wall, error, expired notice)"),
     title=J.s("Job title"),
     company=J.s("Hiring company (not the job board or recruitment agency, unless no employer is named)"),
     company_website=J.s("Company website if stated, else empty"),
     location=J.s("Where the job is: place names only, e.g. 'Aarhus' or 'Kolding, Vejle'. No remarks. Empty if not stated"),
+    main_location=J.s(MAIN_LOCATION_HINT),
     work_mode=J.s("Where the work happens", ["onsite", "hybrid", "remote", "unknown"]),
     employment_type=J.s("e.g. full-time, part-time, temporary, freelance; empty if not stated"),
     seniority=J.s("Level", ["student", "junior", "mid", "senior", "lead", "executive", "unknown"]),
@@ -121,8 +126,15 @@ def how_far(job: dict) -> dict | None:
     return places.reach(job.get("location"), settings.get("profile").get("city"), profile.distance_limit())
 
 
+def main_location(job: dict) -> str:
+    """The place the ad calls the main workplace when it names several, else ""."""
+    return ((db.jload(job.get("details"), {}) or {}).get("main_location") or "").strip()
+
+
 def distance_line(job: dict) -> str:
-    return places.describe(how_far(job), profile.distance_limit())
+    line = places.describe(how_far(job), profile.distance_limit())
+    main = main_location(job)
+    return line + (f" The ad names {main} as the main workplace." if line and main else "")
 
 
 def too_far(location: str | None, work_mode: str | None) -> str | None:
@@ -304,6 +316,8 @@ def parse(job_id: int, use_text: bool = False) -> dict:
         reposted = 1 if earlier else 0
     details = {k: d[k] for k in ("responsibilities", "requirements", "nice_to_have", "benefits", "keywords",
                                  "company_blurb", "red_flags", "deadline_note")}
+    if (d.get("main_location") or "").strip():
+        details["main_location"] = d["main_location"].strip()[:100]
     if listing_ends:
         details["listing_ends"] = listing_ends
     # Kept only when the ad mentions AI at all: a model that makes a policy up must not raise a warning.

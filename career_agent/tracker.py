@@ -215,7 +215,8 @@ def followup_due(a: dict) -> int | None:
 def deadlines_soon(days: int = 7) -> list[dict]:
     today = date.today()
     return db.q(
-        "SELECT j.id AS job_id, j.title, j.company_name, j.deadline, j.fit_score, a.id AS app_id, a.status AS app_status "
+        "SELECT j.id AS job_id, j.title, j.company_name, j.company_id, j.location, j.work_mode, j.details, j.deadline, "
+        "j.fit_score, a.id AS app_id, a.status AS app_status "
         "FROM jobs j LEFT JOIN applications a ON a.job_id = j.id "
         "WHERE j.deadline BETWEEN ? AND ? AND j.status != 'dismissed' AND j.status != 'filtered' "
         "AND (a.id IS NULL OR a.status IN ('drafting', 'draft', 'ready')) ORDER BY j.deadline",

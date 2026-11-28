@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline, progress, status, model_picker, made_by, ad_state, ask_first, email_block, kept_button %}
+{% from "_macros.html" import score, ranked, grade, deadline, progress, status, model_picker, made_by, ad_state, ask_first, email_block, kept_button %}
 {% block title %}{{ a.job_title or 'Application' }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/tracker">Applications</a> · <a href="/jobs/{{ a.job_id }}">job details</a>{% if a.auto_drafted %} · drafted automatically{% endif %}</div>
@@ -10,7 +10,7 @@
       {% if a.deadline %} · {{ deadline(a.deadline) }}{% endif %}{% if a.applied_at %} · sent {{ a.applied_at|local_date }}{% endif %}</p>
   </div>
   <div class="row">
-    {{ score(a.fit_score) }}
+    {{ ranked(job) if job else score(a.fit_score) }}
     {% if rev %}<button type="button" class="btn {{ 'primary' if rev.open else 'ghost' }}" data-dialog-open="#revision">See the last revision</button>{% endif %}
     <form method="post" action="/applications/{{ a.id }}/status" class="row">
       <label class="sr-only" for="st">Status</label>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, status %}
+{% from "_macros.html" import score, ranked, status %}
 {% block title %}{{ c.name }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/companies">Companies</a></div>
@@ -26,7 +26,7 @@
       <h2>Jobs</h2>
       <ul class="list">
         {% for j in jobs %}
-        <li>{{ score(j.fit_score) }}<div class="grow"><a class="title" href="/jobs/{{ j.id }}">{{ j.title or j.url }}</a><span class="meta">{{ j.created_at|local_date }}{% if j.reposted %} · re-posted{% endif %}</span></div>
+        <li>{{ ranked(j) }}<div class="grow"><a class="title" href="/jobs/{{ j.id }}">{{ j.title or j.url }}</a><span class="meta">{{ j.created_at|local_date }}{% if j.reposted %} · re-posted{% endif %}</span></div>
           {% if j.app_id %}<a class="pill st-{{ j.app_status }}" href="/applications/{{ j.app_id }}">{{ status_labels.get(j.app_status, j.app_status) }}</a>{% endif %}</li>
         {% else %}<li class="empty">No jobs.</li>{% endfor %}
       </ul>

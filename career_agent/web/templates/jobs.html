@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline, when_due, kept_button %}
+{% from "_macros.html" import score, ranked, grade, deadline, when_due, kept_button %}
 {% block title %}Jobs{% endblock %}
 {% block content %}
 <header class="page-head">
@@ -75,7 +75,7 @@
   {% if rows %}
   {% for j in rows %}
   <div class="jobrow">
-    {{ score(j.fit_score) }}
+    {{ ranked(j) }}
     <div style="min-width:0">
       <a class="t" href="/jobs/{{ j.id }}">{{ j.title or j.url or 'Untitled' }}</a>
       <div class="m">
@@ -87,7 +87,7 @@
         {% if j.reposted %}<span class="pill warn" title="This company posted the same job before">re-posted</span>{% endif %}
         {% if j.app_id %}<a class="pill st-{{ j.app_status }}" href="/applications/{{ j.app_id }}">application: {{ j.app_status }}</a>{% endif %}
       </div>
-      {% if j.rank and j.rank.points %}<div class="small muted">Ranked {{ j.rank.score if j.rank.score is not none else 'lower' }}{% for n, why in j.rank.points %}{{ ':' if loop.first else ',' }} −{{ n }} {{ why }}{% endfor %}</div>{% endif %}
+      {% if j.rank and j.rank.points %}<div class="small muted">{{ 'Fit %d'|format(j.fit_score) if j.fit_score is not none else 'Ranked lower' }}{% for n, why in j.rank.points %}{{ ':' if loop.first else ',' }} −{{ n }} {{ why }}{% endfor %}</div>{% endif %}
       {% if j.needs_text %}<div class="why">{{ j.needs_text }} <a href="/jobs/{{ j.id }}#paste">Paste it →</a></div>
       {% elif j.f.get('summary') %}<div class="why">{{ j.f.summary }}</div>{% elif j.status == 'filtered' and j.notes %}<div class="why">{{ j.notes }}</div>{% endif %}
     </div>

@@ -3,7 +3,10 @@
 The fit score says how well you match a job, and stays as it is. Two things it leaves out decide where your time is
 best spent, so the order you see takes a few points off for them:
 - distance: a job further away than the distance you'd rather stay within (Profile → About you) ranks lower the
-  further out it is, up to MAX_DISTANCE_POINTS at your limit; hybrid work half as much, remote not at all;
+  further out it is, up to MAX_DISTANCE_POINTS at your limit. Hybrid work counts in full (you're at the office much
+  of the time, most of all at the start), remote not at all. When the ad names a main workplace among several, the
+  distance is to that one, and a main workplace beyond your limit costs BEYOND_LIMIT_POINTS: only a secondary office
+  is within reach;
 - competition: big, well-known employers get the most applicants for every job (companies.py judges the size).
 
 "Most urgent" knows that a job without a date usually says to apply as soon as possible: it counts as due a week
@@ -16,6 +19,7 @@ from datetime import date, timedelta
 from . import db, jobs, places, profile, settings
 
 MAX_DISTANCE_POINTS = 12
+BEYOND_LIMIT_POINTS = 24
 SIZE_POINTS = {"off": {}, "moderate": {"large": 4, "very_large": 8}, "strong": {"large": 8, "very_large": 16}}
 SIZE_WHY = {"large": "large employer", "very_large": "very large or very well-known employer"}
 ROLLING_DAYS = 7  # "apply as soon as possible" counts as due this long after the ad was posted…
@@ -39,12 +43,26 @@ def size_nudge() -> str:
     return v if v in SIZE_POINTS else "moderate"
 
 
-def distance_points(km: float | None, work_mode: str | None, preferred: float | None, limit: float | None) -> int:
+def distance_points(km: float | None, work_mode: str | None, preferred: float | None, limit: float | None,
+                    main: bool = False) -> int:
     if km is None or not preferred or work_mode == "remote" or km <= preferred:
         return 0
+    if main and limit and km > limit:
+        return BEYOND_LIMIT_POINTS
     span = limit - preferred if limit and limit > preferred else preferred
-    points = MAX_DISTANCE_POINTS * min(1.0, (km - preferred) / span)
-    return round(points / 2 if work_mode == "hybrid" else points)
+    return round(MAX_DISTANCE_POINTS * min(1.0, (km - preferred) / span))
+
+
+def _reach(r: dict, home: str, limit: float | None) -> dict | None:
+    """How far the job is: to the main workplace when the ad names one among several places, else to the nearest
+    place it names. {"main": True} marks the first."""
+    reach = places.reach(r.get("location"), home, limit)
+    main = jobs.main_location(r)
+    if main and reach and len(reach["places"]) > 1:
+        there = places.reach(main, home, limit)
+        if there and there["km"] is not None:
+            return {**there, "main": True}
+    return reach
 
 
 def annotate(rows: list[dict]) -> list[dict]:
@@ -56,12 +74,14 @@ def annotate(rows: list[dict]) -> list[dict]:
     sizes = {c["id"]: c["size"] for c in db.q(
         f"SELECT id, size FROM companies WHERE id IN ({','.join('?' * len(ids))})", ids)} if ids else {}
     for r in rows:
-        reach = places.reach(r.get("location"), home, limit) if home else None
+        reach = _reach(r, home, limit) if home else None
         km = reach["km"] if reach else None
+        main = bool(reach and reach.get("main"))
         points: list[tuple[int, str]] = []
-        n = distance_points(km, r.get("work_mode"), preferred, limit)
+        n = distance_points(km, r.get("work_mode"), preferred, limit, main)
         if n:
-            points.append((n, f"{reach['town']}, {km} km" + (" (hybrid)" if r.get("work_mode") == "hybrid" else "")))
+            points.append((n, f"{reach['town']}, {km} km" + (" (main workplace)" if main else "")
+                           + (" (hybrid)" if r.get("work_mode") == "hybrid" else "")))
         size = sizes.get(r.get("company_id"))
         if per_size.get(size):
             points.append((per_size[size], SIZE_WHY[size]))

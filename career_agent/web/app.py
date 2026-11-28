@@ -216,8 +216,9 @@ def today(request: Request):
         {"done": n_sources > 0 or n_jobs > 0, "title": "Add jobs", "text": "Paste a job link, or add a job-search feed to watch.", "href": "/jobs"},
     ]
     drafts = rank.urgent_first(db.q(
-        "SELECT a.*, j.title AS job_title, j.company_name, j.fit_score, j.deadline, j.details, j.posted_at, "
-        "j.created_at AS job_created_at, j.gone_at, j.open_said_at, j.checked_at, j.check_note "
+        "SELECT a.*, j.title AS job_title, j.company_name, j.company_id, j.location, j.work_mode, j.fit_score, "
+        "j.deadline, j.details, j.posted_at, j.created_at AS job_created_at, j.gone_at, j.open_said_at, j.checked_at, "
+        "j.check_note "
         "FROM applications a JOIN jobs j ON j.id = a.job_id "
         "WHERE a.status IN ('drafting', 'draft', 'ready') ORDER BY a.updated_at DESC"))
     for a in drafts:
@@ -237,7 +238,7 @@ def today(request: Request):
     counts = {label: db.scalar(f"SELECT COUNT(*) FROM applications WHERE status IN ({','.join('?' * len(sts))})", sts) or 0
               for label, sts in tracker.BOARD}
     return render(request, "today.html", steps=steps, show_steps=not all(s["done"] for s in steps),
-                  drafts=drafts, matches=matches, deadlines=tracker.deadlines_soon(7),
+                  drafts=drafts, matches=matches, deadlines=rank.annotate(tracker.deadlines_soon(7)),
                   followups=tracker.followups_due(), interviews=interviews, errors=errors, counts=counts,
                   name=p.get("name"), task_labels=tasks.TASK_LABELS,
                   followup_days=settings.get("automation").get("followup_days"), todo=todos.lists(),
@@ -522,6 +523,8 @@ APP_TABS = [("review", "Review"), ("letter", "Letter"), ("cv", "CV"), ("check", 
 def application(request: Request, app_id: int, tab: str = ""):
     a = need(tracker.app_with_job(app_id))
     job = jobs.get(a["job_id"])
+    if job:
+        rank.annotate([job])  # the header badge shows the ranked score
     if job and a["status"] in ("drafting", "draft", "ready"):
         adcheck.queue_if_stale(job)
         job["urgency"] = rank.urgency(job)
@@ -530,8 +533,9 @@ def application(request: Request, app_id: int, tab: str = ""):
     look = {}
     if tab == "review":
         waiting = [r["id"] for r in rank.urgent_first(db.q(  # the same order as Today's "Waiting for your review"
-            "SELECT a.id, a.updated_at, j.title AS job_title, j.fit_score, j.deadline, j.details, j.posted_at, "
-            "j.created_at AS job_created_at, j.gone_at, j.open_said_at FROM applications a JOIN jobs j ON j.id = a.job_id "
+            "SELECT a.id, a.updated_at, j.title AS job_title, j.company_id, j.location, j.work_mode, j.fit_score, "
+            "j.deadline, j.details, j.posted_at, j.created_at AS job_created_at, j.gone_at, j.open_said_at "
+            "FROM applications a JOIN jobs j ON j.id = a.job_id "
             "WHERE a.status IN ('draft', 'ready') AND a.letter IS NOT NULL ORDER BY a.updated_at DESC"))]
         at = waiting.index(app_id) if app_id in waiting else -1
         look = {"base_open": len(review.base_questions(cvdata.base_for(a["language"]))), "questions": review.questions(a), "letter_html": review.marked(a["letter"], a),
@@ -1095,8 +1099,9 @@ def companies_page(request: Request, show: str = "history"):
 def company_page(request: Request, company_id: int):
     c = need(db.q1("SELECT * FROM companies WHERE id = ?", (company_id,)))
     return render(request, "company.html", c=c, m=companies.metrics(company_id),
-                  jobs=db.q("SELECT j.*, a.id AS app_id, a.status AS app_status FROM jobs j LEFT JOIN applications a "
-                            "ON a.job_id = j.id WHERE j.company_id = ? ORDER BY j.id DESC", (company_id,)),
+                  jobs=rank.annotate(db.q("SELECT j.*, a.id AS app_id, a.status AS app_status FROM jobs j "
+                                          "LEFT JOIN applications a ON a.job_id = j.id WHERE j.company_id = ? "
+                                          "ORDER BY j.id DESC", (company_id,))),
                   events=db.q("SELECT e.*, j.title AS job_title FROM events e JOIN applications a ON a.id = e.application_id "
                               "JOIN jobs j ON j.id = a.job_id WHERE e.company_id = ? ORDER BY e.occurred_at DESC", (company_id,)),
                   event_labels=tracker.EVENT_LABELS, status_labels=tracker.STATUS_LABELS,

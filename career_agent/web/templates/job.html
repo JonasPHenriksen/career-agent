@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline, when_due, progress, model_picker, made_by, ad_state, ask_first, kept_button %}
+{% from "_macros.html" import score, ranked, grade, deadline, when_due, progress, model_picker, made_by, ad_state, ask_first, kept_button %}
 {% block title %}{{ job.title or 'Job' }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/jobs">Jobs</a>{% if source %} · found by {{ source.name }}{% endif %} · added {{ job.created_at|ago }}</div>
@@ -11,7 +11,7 @@
       {% if job.location %} · {{ job.location }}{% if job.reach and job.reach.town %} <span class="text-2" title="Straight line from {{ job.reach.home }}, measured by the app; roughly {{ job.reach.road_km }} km by road">({{ job.reach.km }} km)</span>{% endif %}{% endif %}{% if job.work_mode and job.work_mode != 'unknown' %} · {{ job.work_mode }}{% endif %}
       · {{ when_due(job) }}{% if not job.deadline and job.d.get('deadline_note') %} <span class="text-2">{{ job.d.deadline_note }}</span>{% endif %}
     </p>
-    {% if job.rank.points %}<p class="small muted" style="margin:.2rem 0 0">Ranked {{ job.rank.score if job.rank.score is not none else 'lower' }} in your list{% for n, why in job.rank.points %}{{ ':' if loop.first else ',' }} −{{ n }} {{ why }}{% endfor %}. <a href="/profile?tab=about">Change how jobs are ranked</a></p>{% endif %}
+    {% if job.rank.points %}<p class="small muted" style="margin:.2rem 0 0">Ranked {{ job.rank.score if job.rank.score is not none else 'lower' }} in your list{% if job.fit_score is not none %}: fit {{ job.fit_score }}{% endif %}{% for n, why in job.rank.points %}{{ ':' if loop.first and job.fit_score is none else ',' }} −{{ n }} {{ why }}{% endfor %}. <a href="/profile?tab=about">Change how jobs are ranked</a></p>{% endif %}
   </div>
   <div class="row">
     {% if app %}
@@ -82,7 +82,7 @@
     {% if job.f %}
     <section class="card">
       <div class="fit-head">
-        {{ score(job.fit_score, True) }}
+        {{ ranked(job, True) }}
         <div>
           <h2 style="margin:0">{{ {'strong':'Strong fit','good':'Good fit','stretch':'A stretch','poor':'Poor fit'}.get(job.f.verdict, 'Fit') }}</h2>
           <div class="text-2">{{ job.f.summary }}</div>

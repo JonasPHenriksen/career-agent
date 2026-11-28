@@ -172,6 +172,9 @@ details[open] summary { margin-bottom: .6rem; }
 .score { display: inline-grid; place-items: center; min-width: 2.3rem; height: 2.3rem; padding: 0 .3rem; border-radius: 999px;
   font-weight: 700; font-size: .9rem; font-variant-numeric: tabular-nums; border: 1px solid transparent; flex: none; }
 .score.big { min-width: 3.6rem; height: 3.6rem; font-size: 1.35rem; }
+.scores { display: inline-flex; gap: .3rem; flex: none; }
+.scores .sc { display: inline-flex; flex-direction: column; align-items: center; gap: .12rem; }
+.scores small { font-size: .66rem; line-height: 1; color: var(--muted); letter-spacing: .02em; }
 .score-high { background: var(--good-soft); color: var(--good); border-color: color-mix(in srgb, var(--good) 30%, transparent); }
 .score-good { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 25%, transparent); }
 .score-mid { background: var(--warn-soft); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 25%, transparent); }
