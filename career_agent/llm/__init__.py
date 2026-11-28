@@ -59,7 +59,7 @@ def effort_kind(provider: str | None) -> str:
 # What the app does, step by step: (key, label, the tier whose model it uses by default, its model calls).
 # Settings lets you pick another model and effort for any step; a redo can pick one for a single run.
 STEPS = [
-    ("screen", "Screen new job listings", "analysis", ("triage", "page_jobs", "company_size")),
+    ("screen", "Screen new job listings", "analysis", ("triage", "triage_second", "page_jobs", "company_size")),
     ("read_ad", "Read a job ad", "analysis", ("parse_job", "same_job")),
     ("score", "Score how well a job fits", "analysis", ("fit_score",)),
     ("audit", "Check how job ads were read (weekly)", "analysis", ("audit_ad",)),

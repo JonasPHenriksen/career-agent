@@ -89,6 +89,96 @@ def checks() -> list[dict]:
     return out
 
 
+# --- Weekly proof: screening and repeats ----------------------------------------------------------------------
+# The two steps that decide what you never see. Each week PROOF_SCREENED listings both screenings set aside are read
+# and scored in full, and PROOF_REPEATS hidden repeats are compared again with both ads in full. A listing that
+# ranks PROOF_MISS or more, or a repeat that turns out to be another job, comes back into your list and is shown
+# here: each one says where screening or the repeat check needs fixing. Always on (2026-11-28: worth the tokens).
+
+PROOF_SCREENED = 10
+PROOF_REPEATS = 5
+PROOF_MISS = 55
+PROOF_DAYS = 7
+
+
+def proof_due() -> bool:
+    last = db.parse_ts(settings.get("state").get("proof_tried_at"))
+    return not last or db.parse_ts(db.now()) - last > timedelta(days=PROOF_DAYS)
+
+
+def proof_result() -> dict | None:
+    return settings.get("state").get("proof") or None
+
+
+def proof_totals() -> dict:
+    runs = settings.get("state").get("proof_runs") or []
+    return {k: sum(r.get(k, 0) for r in runs) for k in ("screened", "misses", "repeats", "wrong")} | {"runs": len(runs)}
+
+
+def _sample(sql: str, params: tuple, n: int) -> list[dict]:
+    rows = db.q(sql + " AND created_at >= ? ORDER BY RANDOM() LIMIT ?", (*params, db.days_ago(PROOF_DAYS), n))
+    if len(rows) < n:  # a quiet week: fill up from the last month
+        seen = [r["id"] for r in rows] or [0]
+        rows += db.q(sql + f" AND created_at >= ? AND id NOT IN ({','.join('?' * len(seen))}) ORDER BY RANDOM() "
+                     "LIMIT ?", (*params, db.days_ago(30), *seen, n - len(rows)))
+    return rows
+
+
+def _read_screened(job_id: int) -> dict:
+    """Read and score one listing screening set aside, as if it had been kept. It stays in your list only when it
+    ranks PROOF_MISS or more."""
+    from . import fetch, llm, rank, sources
+
+    said = "; ".join((db.jload(db.scalar("SELECT details FROM jobs WHERE id = ?", (job_id,)), {}) or {})
+                     .get("screened_out") or [])  # reading the ad replaces the details
+    db.update("jobs", job_id, {"status": "new", "notes": None, "parse_status": "pending", "parse_error": None})
+    out = {"job_id": job_id}
+    try:
+        jobs.parse(job_id)
+    except (fetch.FetchError, llm.LLMError) as e:
+        db.update("jobs", job_id, {"status": "filtered", "notes": sources.FILTERED_NOTE})
+        return out | {"outcome": "unread", "why": str(e)[:160]}
+    job = jobs.get(job_id)
+    out["title"] = job["title"] or job["url"]
+    if job["status"] == "filtered":  # reading set it aside: too far, a kind you switched off, a repeat
+        return out | {"outcome": "right", "why": (job["notes"] or "")[:160]}
+    db.ex("DELETE FROM tasks WHERE kind = 'score_job' AND status = 'queued' AND ref = ?", (f"job:{job_id}",))
+    scored = jobs.score(job_id)
+    job = jobs.get(job_id)
+    if job["status"] == "filtered" or "score" not in scored:
+        return out | {"outcome": "right", "why": (job["notes"] or str(scored))[:160]}
+    rank.annotate([job])
+    score = job["rank"]["score"]
+    if score is not None and score >= PROOF_MISS:
+        db.update("jobs", job_id, {"notes": f"Screening had set this aside; the weekly check read it and it ranks "
+                                             f"{score}. It's back in your list."})
+        return out | {"outcome": "miss", "rank": score, "why": said}
+    db.update("jobs", job_id, {"status": "filtered", "notes": sources.FILTERED_NOTE})
+    return out | {"outcome": "right", "rank": score, "why": f"ranks {score}"}
+
+
+def proof() -> dict:
+    """The weekly proof: read PROOF_SCREENED screened-out listings in full, and look again at PROOF_REPEATS hidden
+    repeats. Kept in state["proof"]; every run's counts in state["proof_runs"]."""
+    from . import sources
+
+    settings.update("state", {"proof_tried_at": db.now()})
+    screened = [_read_screened(r["id"]) for r in _sample(
+        "SELECT id FROM jobs WHERE status = 'filtered' AND notes = ? AND link_locked = 0 AND gone_at IS NULL",
+        (sources.FILTERED_NOTE,), PROOF_SCREENED)]
+    repeats = []
+    for r in _sample("SELECT id, title, duplicate_of FROM jobs WHERE duplicate_of IS NOT NULL", (), PROOF_REPEATS):
+        outcome = jobs.recheck_repeat(r["id"])
+        repeats.append({"job_id": r["id"], "title": r["title"], "original": r["duplicate_of"], "outcome": outcome})
+    result = {"at": db.now(), "screened": screened, "repeats": repeats}
+    run = {"at": db.now(), "screened": sum(1 for s in screened if s["outcome"] != "unread"),
+           "misses": sum(1 for s in screened if s["outcome"] == "miss"),
+           "repeats": sum(1 for r in repeats if r["outcome"] in ("same", "restored")),
+           "wrong": sum(1 for r in repeats if r["outcome"] == "restored")}
+    settings.update("state", {"proof": result, "proof_runs": (settings.get("state").get("proof_runs") or [])[-51:] + [run]})
+    return run
+
+
 # --- Job sources ------------------------------------------------------------------------------------------------
 
 QUIET_DAYS = 21  # a source that used to find jobs and has found none for this long
@@ -165,6 +255,14 @@ def summary() -> list[str]:
     last = audit_result()
     if last and last.get("findings"):
         lines.append(f"weekly check: {len(last['findings'])} of {last['checked']} ads read wrong")
+    p = proof_result()
+    if p:
+        misses = sum(1 for s in p["screened"] if s["outcome"] == "miss")
+        wrong = sum(1 for r in p["repeats"] if r["outcome"] == "restored")
+        if misses:
+            lines.append(f"screening set aside {misses} job{'s' if misses != 1 else ''} worth reading this week")
+        if wrong:
+            lines.append(f"{wrong} hidden repeat{'s were' if wrong != 1 else ' was'} another job")
     return lines
 
 

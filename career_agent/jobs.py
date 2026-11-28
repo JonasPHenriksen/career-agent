@@ -390,15 +390,14 @@ def parse(job_id: int, use_text: bool = False) -> dict:
         if far:
             _filter_out(job_id, far)
             return {"title": title, "company": company, "skipped": "too far"}
-        same = find_same_job(company, title, location, readable=not job["link_locked"], job_id=job_id,
-                             source_id=job["source_id"])
-        if same:
-            mark_repeat(job_id, same)
-            return {"title": title, "company": company, "skipped": "duplicate"}
-        twin = find_duplicate(job_id, title, description)
-        if twin:
-            mark_repeat(job_id, twin, "same title and almost the same ad text")
-            return {"title": title, "company": company, "skipped": "duplicate"}
+        me = {"title": title, "company_name": company, "location": location, "description": description,
+              "source_id": job["source_id"]}
+        for candidate in (find_same_job(company, title, location, readable=not job["link_locked"], job_id=job_id,
+                                        source_id=job["source_id"]), find_duplicate(job_id, title, description)):
+            why = confirm_repeat(me, candidate)
+            if why:
+                mark_repeat(job_id, candidate, why)
+                return {"title": title, "company": company, "skipped": "duplicate"}
         judged = ask_same_job(job_id, title, company, location, description)
         if judged:
             mark_repeat(job_id, judged[0], f"a model read both ads and judged them the same opening ({judged[1]})")
@@ -766,8 +765,11 @@ def retire_locked_copies(job_id: int, company: str | None, title: str | None, lo
     original = db.q1("SELECT id, source_id FROM jobs WHERE id = ?", (job_id,))
     for r in _copies(company, title, exclude_id=job_id):
         if r["link_locked"] and same_place(location, r["location"]) and not _protected(r):
-            mark_repeat(r["id"], original)
-            n += 1
+            copy = db.q1("SELECT * FROM jobs WHERE id = ?", (r["id"],))
+            why = confirm_repeat(copy, original)
+            if why:
+                mark_repeat(r["id"], original, why)
+                n += 1
     return n
 
 
@@ -810,8 +812,10 @@ def _set_aside_copies(root: dict, copies: list[dict], days: int = REPEAT_DAYS) -
         if not _other_place(root["source_id"], bool(root["link_locked"]), r["source_id"], bool(r["link_locked"])) \
                 and not same_ad_text(root["description"], r["description"]):
             continue
-        mark_repeat(r["id"], root)
-        n += 1
+        why = confirm_repeat(r, root)
+        if why:
+            mark_repeat(r["id"], root, why)
+            n += 1
     return n
 
 
@@ -882,6 +886,62 @@ def _ad_for_model(n: str, job: dict, max_chars: int = 5000) -> str:
     head = [f"{n}: {job.get('title') or '?'}", f"Company: {job.get('company_name') or '?'}",
             f"Location: {job.get('location') or '?'}", f"Found on: {_source_name(job.get('source_id'))}"]
     return "\n".join(head) + f"\n<ad>\n{(job.get('description') or '')[:max_chars]}\n</ad>"
+
+
+CONFIRM_TEXT_CHARS = 1500  # a copy known by less text than this has its ad fetched before it's compared
+
+
+def confirm_repeat(copy: dict, original: dict | None) -> str | None:
+    """Why a model is certain `copy` is the same opening as `original`, or None: then both stay. The rules (same
+    employer and title, same place, near-same text) only suggest a repeat, since one employer often uses one title
+    or one template for several towns, teams or levels, and hiding a different job costs far more than showing a
+    copy. Until 2026-11-28 the rules alone set copies aside (297 of 318), 48 of them with no place on one side.
+
+    A job the app set aside itself (too far, screened out) or that is gone hides nothing: the copy may say more, so it
+    is judged on its own. One you said is not for you still counts. `copy` needs title, company_name, location and
+    description (or text); with a url and only a teaser, its ad is fetched first."""
+    if not original:
+        return None
+    orig = db.q1("SELECT * FROM jobs WHERE id = ?", (original["id"],)) or original
+    if (orig.get("status") == "filtered" or orig.get("gone_at")) and orig.get("status") != "dismissed":
+        return None
+    text = copy.get("description") or copy.get("text") or ""
+    if len(text) < CONFIRM_TEXT_CHARS and copy.get("url") and copy.get("readable", True) \
+            and not copy.get("link_locked"):
+        try:
+            text = max(text, fetch.html_to_text(fetch.ad_page(copy["url"]).text)[1], key=len)
+        except fetch.FetchError:
+            pass
+    me = {**copy, "description": text}
+    user = _ad_for_model("NEW AD", me) + "\n\nEARLIER ADS:\n\n" + _ad_for_model("1", orig)
+    try:
+        r = llm.run("analysis", "same_job", SAME_JOB_SYSTEM, user, SAME_JOB_SCHEMA, max_tokens=1000)
+    except llm.LLMError:
+        return None
+    if r.data.get("same") != 1:
+        return None
+    reason = (r.data.get("reason") or "").strip().rstrip(".") or "same opening"
+    return f"a model read both ads and judged them the same opening ({reason})"
+
+
+def recheck_repeat(job_id: int) -> str:
+    """Look again at a job set aside as a repeat. "same" when a model, with both ads in full, is certain it is the
+    same opening as the job it repeats; otherwise it comes back ("restored") and is screened like a new listing.
+    Jobs you acted on are left alone ("yours")."""
+    job = db.q1("SELECT * FROM jobs WHERE id = ?", (job_id,))
+    if not job or not job["duplicate_of"]:
+        return "not a repeat"
+    if _protected(job):
+        return "yours"
+    original = db.q1("SELECT * FROM jobs WHERE id = ?", (job["duplicate_of"],))
+    if confirm_repeat({**job, "readable": not job["link_locked"]}, original):
+        return "same"
+    from . import sources
+
+    db.update("jobs", job_id, {"duplicate_of": None, "status": "filtered", "notes": sources.FILTERED_NOTE,
+                               "updated_at": db.now()})
+    sources.rescreen([job_id])
+    return "restored"
 
 
 def ask_same_job(job_id: int, title: str | None, company: str | None, location: str | None,

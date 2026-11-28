@@ -1,6 +1,8 @@
 """The same job from several places: one copy stays, the others are set aside as repeats of it."""
 from __future__ import annotations
 
+import pytest
+
 from career_agent import db, jobs, sources
 
 from .conftest import JOB_TEXT
@@ -19,6 +21,13 @@ def _item(url, title="Product Owner", company="FinPay A/S", location="", readabl
 
 def _job(url):
     return db.q1("SELECT * FROM jobs WHERE url = ?", (url,))
+
+
+@pytest.fixture(autouse=True)
+def certain_copies(fake):
+    """The model confirms the copies the rules suggest (jobs.confirm_repeat); a test of a "no" says so."""
+    fake.same_job = 1
+
 
 
 def test_keys_and_places():
@@ -73,7 +82,8 @@ def test_a_job_already_here_from_another_place_is_set_aside_before_screening(fak
     assert repeat["parse_status"] == "skipped", "a repeat is never read"
     assert f"job {first['id']} (jobindex)" in repeat["notes"]
     assert _job("https://jobbank.example/10")["duplicate_of"] is None, "same title in another city: another job"
-    assert len(fake.calls) == calls, "no model call was spent on the repeat"
+    assert [c[2] for c in fake.calls[calls:]] == [jobs.SAME_JOB_SCHEMA], \
+        "the model only confirmed the repeat: it was neither screened nor read"
     assert [r["id"] for r in jobs.repeats_of(first["id"])] == [repeat["id"]]
 
 

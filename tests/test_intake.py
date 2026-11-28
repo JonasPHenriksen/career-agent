@@ -172,9 +172,9 @@ def test_poll_screens_a_long_list_in_batches(fake, monkeypatch):
 
     monkeypatch.setattr(sources, "_triage", triage)
     result = sources.poll(sources.add("Big", "https://e.example/feed.rss", kind="rss"))
-    assert sizes == [40, 40, 15]
-    assert result == {"listings": 95, "new": 95, "kept": 3}
-    assert db.q1("SELECT COUNT(*) AS n FROM jobs WHERE status = 'filtered'")["n"] == 92
+    assert sizes == [sources.TRIAGE_BATCH] * 9 + [5], "small batches: every listing gets attention"
+    assert result == {"listings": 95, "new": 95, "kept": 10}
+    assert db.q1("SELECT COUNT(*) AS n FROM jobs WHERE status = 'filtered'")["n"] == 85
 
 
 # --- screening again -------------------------------------------------------------------------------------------
@@ -202,7 +202,7 @@ def test_rescreen_moves_jobs_both_ways_and_leaves_others_alone(fake, monkeypatch
 
     def triage(items):
         seen.append(items)
-        assert items[0]["text"] == "x" * 240
+        assert items[0]["text"] == "x" * 500, "the whole teaser, not 240 characters"
         return {0: "", 1: ""}  # the first two of the batch, in id order
 
     monkeypatch.setattr(sources, "_triage", triage)

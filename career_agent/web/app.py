@@ -267,7 +267,17 @@ def checks_page(request: Request):
     return render(request, "checks.html", checks=data_health.checks(), sources=data_health.source_checks(),
                   review_days=data_health.REVIEW_DAYS, audit=data_health.audit_result(),
                   audit_on=settings.get("automation").get("weekly_audit", True), clean=data_health.clean_weeks(),
-                  clean_weeks=data_health.CLEAN_WEEKS, audit_busy=bool(tasks.active("audit")), audit_jobs=data_health.AUDIT_JOBS)
+                  clean_weeks=data_health.CLEAN_WEEKS, audit_busy=bool(tasks.active("audit")), audit_jobs=data_health.AUDIT_JOBS,
+                  proof=data_health.proof_result(), proof_sum=data_health.proof_totals(), proof_busy=bool(tasks.active("proof")),
+                  proof_n={"screened": data_health.PROOF_SCREENED, "repeats": data_health.PROOF_REPEATS,
+                           "miss": data_health.PROOF_MISS},
+                  backlog=db.scalar("SELECT COUNT(*) FROM tasks WHERE ref = 'backlog' AND status IN ('queued', 'running')") or 0)
+
+
+@app.post("/checks/proof")
+def checks_proof_now(request: Request):
+    tasks.enqueue("proof_checks", {}, ref="proof")
+    return go("/checks#proof", msg="Checking what screening and the repeat check set aside. The result shows here.")
 
 
 @app.post("/checks/audit")

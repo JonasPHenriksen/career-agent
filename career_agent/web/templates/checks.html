@@ -40,6 +40,29 @@
   {{ rule_list(sources) }}
 </section>
 
+<section class="card" id="proof" style="margin-bottom:1rem">
+  <div class="card-head"><h2>Screening and repeats</h2>
+    {% if proof_busy %}<span class="pill accent">checking…</span>
+    {% else %}<form method="post" action="/checks/proof" class="inline"><button class="btn small" data-busy="Starting…">Check now</button></form>{% endif %}
+  </div>
+  <p class="small muted">These two decide what you never see. Each week {{ proof_n.screened }} listings that both screenings set aside are read and scored in full, and {{ proof_n.repeats }} hidden repeats are compared again with both ads in full. A listing ranking {{ proof_n.miss }} or more, or a repeat that is another job, comes back into your list.</p>
+  {% if backlog %}<p class="small"><span class="pill accent">{{ backlog }}</span> batch{{ 'es' if backlog != 1 }} of the one-time re-check of everything set aside before 28 November still queued.</p>{% endif %}
+  {% if proof_sum.runs %}<p class="small">So far: screening set aside {{ proof_sum.misses }} worth reading of {{ proof_sum.screened }} read in full; {{ proof_sum.wrong }} of {{ proof_sum.repeats }} hidden repeats checked were another job.</p>{% endif %}
+  {% if proof %}
+  <p class="small" style="margin-bottom:.2rem">Last check {{ proof.at|ago }}:</p>
+  <ul class="small" style="margin:0;padding-left:1.1rem">
+    {% for s in proof.screened %}<li><a href="/jobs/{{ s.job_id }}">{{ s.title or 'Job %d'|format(s.job_id) }}</a>
+      {% if s.outcome == 'miss' %}<span class="pill bad">worth reading: ranks {{ s.rank }}</span> <span class="muted">screening said: {{ s.why }}</span>
+      {% elif s.outcome == 'unread' %}<span class="pill">couldn't read it</span> <span class="muted">{{ s.why }}</span>
+      {% else %}<span class="pill good">rightly set aside</span> <span class="muted">{{ s.why }}</span>{% endif %}</li>{% endfor %}
+    {% for r in proof.repeats %}<li><a href="/jobs/{{ r.job_id }}">{{ r.title or 'Job %d'|format(r.job_id) }}</a>
+      {% if r.outcome == 'restored' %}<span class="pill bad">another job: back in your list</span>
+      {% elif r.outcome == 'same' %}<span class="pill good">rightly hidden</span> <span class="muted">same opening as <a href="/jobs/{{ r.original }}">job {{ r.original }}</a></span>
+      {% else %}<span class="pill">{{ r.outcome }}</span>{% endif %}</li>{% endfor %}
+  </ul>
+  {% else %}<p class="small muted">Not run yet.</p>{% endif %}
+</section>
+
 <section class="card">
   <div class="card-head"><h2>Weekly check by the model</h2>
     <form method="post" action="/checks/audit/switch" class="inline"><input type="hidden" name="on" value="{{ '0' if audit_on else '1' }}"><button class="btn small ghost">{{ 'Turn it off' if audit_on else 'Turn it on' }}</button></form>

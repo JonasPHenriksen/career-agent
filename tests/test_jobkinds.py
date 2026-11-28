@@ -234,6 +234,7 @@ def test_a_teaser_counts_only_when_contained_in_the_other():
 
 
 def test_the_same_ad_under_a_sister_company_is_filtered_and_not_scored(fake):
+    fake.same_job = 1  # the model confirms the copy the rules suggest
     _facts()
     _model(fake)
     first, second = _source_job("TITLE=Full stack developer. " + LONG_AD, 1), None
@@ -244,7 +245,7 @@ def test_the_same_ad_under_a_sister_company_is_filtered_and_not_scored(fake):
     jobs.parse(second, use_text=True)
     job = jobs.get(second)
     assert job["status"] == "filtered"
-    assert job["duplicate_of"] == first and "same title and almost the same ad text" in job["notes"]
+    assert job["duplicate_of"] == first and "judged them the same opening" in job["notes"]
     assert db.scalar("SELECT COUNT(*) FROM tasks WHERE kind = 'score_job'") == 1, "only the first ad is scored"
     # a job you said is not for you keeps hiding the same ad when it comes back
     third = _source_job("TITLE=Full stack developer. " + LONG_AD, 3)

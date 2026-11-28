@@ -240,6 +240,7 @@ def test_one_company_by_its_short_name_or_cut_short():
 
 
 def test_the_sweep_sets_aside_a_job_found_twice_under_two_spellings(fake):
+    fake.same_job = 1  # the model confirms the copy the rules suggest
     a = db.insert("sources", {"name": "netcompany.com", "kind": "rss", "url": "https://a.example", "created_at": db.now()})
     b = db.insert("sources", {"name": "jobindex", "kind": "rss", "url": "https://b.example", "created_at": db.now()})
     first = db.insert("jobs", {"url": "https://a.example/1", "title": "Linux Operations Engineer", "company_name": "Brinkholm",

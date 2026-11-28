@@ -104,6 +104,7 @@ class FakeProvider:
 
     def __init__(self):
         self.calls = []
+        self.same_job = 0  # 1: the model is certain a copy is the same opening (jobs.confirm_repeat, ask_same_job)
 
     def complete(self, system, user, schema, max_tokens):
         self.calls.append((system, user, schema))
@@ -246,8 +247,12 @@ class FakeProvider:
         if schema is tracker.RESPONSE_SCHEMA:
             return {"type": "rejected_generic", "summary": "Standard rejection.", "feedback": "", "personalized": False,
                     "date": "", "interview_at": "", "next_step": ""}
-        if schema is sources.TRIAGE_SCHEMA:
-            return {"keep": [{"n": 0, "reason": "fits"}]}
+        if schema is sources.TRIAGE_SCHEMA:  # the first screening keeps listing 0; the second opinion agrees with it
+            import re
+            ns = [int(n) for n in re.findall(r"^(\d+)\. ", user.split("LISTINGS:")[-1], re.M)]
+            if system == sources.SECOND_SYSTEM:
+                return {"verdicts": [{"n": n, "keep": False, "reason": "agree: another field"} for n in ns]}
+            return {"verdicts": [{"n": n, "keep": n == 0, "reason": "fits" if n == 0 else "another field"} for n in ns]}
         if schema is sources.PAGE_SCHEMA:
             return {"jobs": [{"n": 0, "title": "Job A", "company": "X", "location": ""}]}
         if schema is companies.SIZE_SCHEMA:  # Brinkholm is famous, "Mellem" mid-sized, the rest small; #3 is skipped
@@ -259,7 +264,7 @@ class FakeProvider:
                     sizes.append({"n": int(n), "size": size, "note": f"{name.strip()}: a guess"})
             return {"companies": sizes}
         if schema is jobs.SAME_JOB_SCHEMA:  # not certain: the job stays (tests that want a copy found say so)
-            return {"same": 0, "reason": "Not certain."}
+            return {"same": self.same_job, "reason": "Same opening." if self.same_job else "Not certain."}
         if schema is writer.FOLLOWUP_SCHEMA:
             return {"subject": "Opfølgning", "body": "Hej Mette, jeg følger lige op."}
         if schema is None:
@@ -292,6 +297,24 @@ def fake(tmp_path):
     llm.set_test_provider(provider)
     yield provider
     llm.set_test_provider(None)
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """Tests never reach the internet (jobs.confirm_repeat fetches a copy's ad, for one): a test that needs a page
+    gives fetch.get or fetch.ad_page its own."""
+    from urllib.parse import urlparse
+
+    from career_agent import fetch
+
+    real_get = fetch.httpx2.get
+
+    def offline(url, *a, **k):  # servers a test starts on this machine are fine
+        if urlparse(str(url)).hostname in ("127.0.0.1", "localhost", "::1"):
+            return real_get(url, *a, **k)
+        raise fetch.httpx2.ConnectError("No network in tests.")
+
+    monkeypatch.setattr(fetch.httpx2, "get", offline)
 
 
 @pytest.fixture(autouse=True)

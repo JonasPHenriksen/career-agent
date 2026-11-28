@@ -47,6 +47,8 @@ TASK_LABELS = {
     "size_companies": "Judging how big new employers are",
     "check_ads": "Checking that job ads are still up",
     "audit_jobs": "Checking how job ads were read (weekly)",
+    "proof_checks": "Checking what screening and the repeat check set aside (weekly)",
+    "recheck_repeats": "Looking again at jobs set aside as repeats",
 }
 
 _wake = threading.Event()
@@ -137,6 +139,8 @@ def _handlers() -> dict:
         "size_companies": lambda p: companies.judge_sizes(),
         "check_ads": lambda p: adcheck.check_many(p.get("job_ids")),
         "audit_jobs": lambda p: health.audit(),
+        "proof_checks": lambda p: health.proof(),
+        "recheck_repeats": lambda p: {str(i): jobs.recheck_repeat(i) for i in p.get("job_ids") or []},
     }
 
 
@@ -231,7 +235,7 @@ TASK_STEPS = {
     "build_cv_base": ("cv",), "check_cv_base": ("fact_check",), "rescreen_jobs": ("screen",), "parse_job": ("read_ad",), "score_job": ("score",), "poll_source": ("screen",), "collect_jobs": ("screen",),
     "analyze_document": ("read_document",), "consolidate_facts": ("read_document",), "classify_response": ("reply",),
     "place_answers": ("read_document",), "read_voice": ("voice",), "size_companies": ("screen",),
-    "audit_jobs": ("audit",),
+    "audit_jobs": ("audit",), "proof_checks": ("screen", "read_ad", "score"), "recheck_repeats": ("read_ad", "screen"),
 }
 FETCH_TASKS = {"poll_source", "parse_job", "collect_jobs", "check_ads"}
 NEED_LABELS = {"ollama": "Ollama (the local models)", "network": "an internet connection",
@@ -580,6 +584,9 @@ async def scheduler_loop(stop: asyncio.Event) -> None:
             if not on_hold() and adcheck.due():  # on start, then every few hours; no model is used
                 settings.update("state", {"ads_checked_at": db.now()})
                 enqueue("check_ads", {}, ref="ads")
+            if not on_hold() and health.proof_due():  # a week since screening and repeats were last proven
+                settings.update("state", {"proof_tried_at": db.now()})
+                enqueue("proof_checks", {}, ref="proof")
             if not on_hold() and health.audit_due():  # a week since the last check of how ads were read
                 settings.update("state", {"audit_tried_at": db.now()})
                 enqueue("audit_jobs", {}, ref="audit")
