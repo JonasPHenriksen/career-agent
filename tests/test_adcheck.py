@@ -49,6 +49,12 @@ def test_what_a_gone_ad_looks_like(pages):
     assert real_page_state(workday, title)[0] == "open"
     pages[workday] = (workday, ld % "2020-01-01")
     assert real_page_state(workday, title) == ("gone", "nordvik.wd3.myworkdayjobs.com says the listing ended 2020-01-01")
+    teamtailor = "https://careers.nordvik.example/jobs/8541036-associate-software-engineer"
+    closed = (ld.replace(', "validThrough": "%s"', '') + "<h1>Associate Software Engineer</h1>"
+              "<h2>Dette jobopslag er ikke længere aktivt</h2><p>Enten er jobbet besat, eller også er opslaget udløbet.</p>")
+    pages[teamtailor] = (teamtailor, closed)
+    assert real_page_state(teamtailor, title) == \
+        ("gone", 'careers.nordvik.example says "jobopslag er ikke længere aktivt"'), "the ad's data stays on a closed ad"
 
     pages["https://www.jobindex.dk/vis-job/r1234567"] = ("https://www.jobindex.dk/jobsoegning", "<html>Jobs</html>")
     assert real_page_state("https://www.jobindex.dk/vis-job/r1234567", title)[0] == "gone", "sent on to the job list"

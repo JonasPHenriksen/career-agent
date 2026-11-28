@@ -4,9 +4,11 @@ and when you open the application or the job, so you don't spend time on a job t
 No model is asked: the ad's page is fetched and read for plain signs. Gone means the site says there is no such page
 (404), the address now leads somewhere else on the same site (the job list), the page says so ("Opslag ikke fundet",
 "no longer available") and isn't the ad, its "valid through" date has passed, or a Workday ad page no longer carries
-the ad. A job found in several places counts as open while any copy is up, and a board's copy found gone sends the
-check on to the page you apply on, which often stays up after the board's copy expires. A page that can't be read (blocked, no
-answer, built in the browser) changes nothing; it's looked at again next time."""
+the ad. A site's own "this ad is closed" line counts even when the page still carries the ad's data: Teamtailor
+career sites keep it on a closed ad and only write "Dette jobopslag er ikke længere aktivt". A job found in several
+places counts as open while any copy is up, and a board's copy found gone sends the check on to the page you apply on,
+which often stays up after the board's copy expires. A page that can't be read (blocked, no answer, built in the
+browser) changes nothing; it's looked at again next time."""
 from __future__ import annotations
 
 import logging
@@ -30,13 +32,15 @@ MAX_COPIES = 4
 CLOSED_NOTICE = re.compile(
     r"opslag(?:et)? (?:blev )?ikke fundet|(?:job)?opslaget er (?:udløbet|fjernet)|annoncen (?:er )?(?:udløbet|fjernet)"
     r"|annoncen findes ikke|lukket for ansøgninger|jobbet (?:findes ikke|blev ikke fundet)|job not found"
+    r"|(?:job)?opslag(?:et)? er ikke længere aktivt?"
     r"|no longer accepting applications|(?:job|position|posting|vacancy) you are looking for"
-    r"|this (?:job|position|posting|vacancy|job posting) (?:has expired|has been closed|is closed|is no longer available)",
+    r"|this (?:job|position|posting|vacancy|job posting) (?:has expired|has been closed|is closed"
+    r"|is no longer (?:available|active))",
     re.I)
 # Words that also turn up in an ad's own text ("når ansøgningsfristen er udløbet, indkalder vi…"): they count only on
 # a short page, or one without the job's title.
 GONE_WORDS = re.compile(
-    r"(?:job)?opslaget er (?:lukket|ikke længere aktivt?)|annoncen (?:er )?lukket"
+    r"(?:job)?opslaget er lukket|annoncen (?:er )?lukket"
     r"|stillingen er (?:ikke længere \w+|lukket|blevet besat)"
     r"|er ikke længere (?:aktiv|tilgængelig|ledig|slået op)|siden (?:blev ikke fundet|findes ikke|kunne ikke findes)"
     r"|jobbet er ikke længere|ansøgningsfristen er (?:udløbet|overskredet)"
@@ -79,6 +83,10 @@ def page_state(url: str, title: str | None) -> tuple[str, str]:
         return ("gone", f"{_host(url)} says the page doesn't exist") if e.gone else ("unknown", str(e))
     final = str(r.url)
     html = r.text if "html" in r.headers.get("content-type", "html").lower() else ""
+    text = fetch.html_to_text(html)[1] if html else ""
+    notice = CLOSED_NOTICE.search(text)  # before the ad's data, which a closed Teamtailor ad still carries
+    if notice:
+        return "gone", f'{_host(final)} says "{notice.group(0)}"'
     jp = fetch.jobposting_jsonld(html) if html else None
     if jp:
         until = (str(jp.get("validThrough") or ""))[:10]
@@ -89,10 +97,6 @@ def page_state(url: str, title: str | None) -> tuple[str, str]:
         return "gone", f"the ad is no longer on {_host(final)}"  # a Workday ad page always carries the ad as data
     if _moved_away(url, final):
         return "gone", f"the address now leads to {final[:120]}"
-    text = fetch.html_to_text(html)[1] if html else ""
-    notice = CLOSED_NOTICE.search(text)
-    if notice:
-        return "gone", f'{_host(final)} says "{notice.group(0)}"'
     on_page = _title_on_page(title, text)
     m = GONE_WORDS.search(text)
     if m and (len(text) < SHORT_PAGE or not on_page):
