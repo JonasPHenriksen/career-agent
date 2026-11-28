@@ -9,10 +9,9 @@
   </div>
 </header>
 
-<section class="card" style="margin-bottom:1rem">
-  <h2>Rule checks</h2>
+{% macro rule_list(items_checks) %}
   <ul class="list">
-    {% for c in checks %}
+    {% for c in items_checks %}
     <li style="display:block">
       <div class="row" style="justify-content:space-between">
         <span class="title">{{ c.label }}</span>
@@ -21,13 +20,24 @@
       {% if c['items'] %}
       <div class="small muted" style="margin:.2rem 0 .3rem">{{ c.why }}</div>
       <ul class="small" style="margin:0;padding-left:1.1rem">
-        {% for i in c['items'][:25] %}<li><a href="/jobs/{{ i.id }}">{{ i.title }}</a>{% if i.company %} · {{ i.company }}{% endif %}{% if i.detail %} <span class="muted">· {{ i.detail }}</span>{% endif %}</li>{% endfor %}
+        {% for i in c['items'][:25] %}<li><a href="{{ i.href }}">{{ i.title }}</a>{% if i.company %} · {{ i.company }}{% endif %}{% if i.detail %} <span class="muted">· {{ i.detail }}</span>{% endif %}</li>{% endfor %}
         {% if c['items']|length > 25 %}<li class="muted">and {{ c['items']|length - 25 }} more</li>{% endif %}
       </ul>
       {% endif %}
     </li>
     {% endfor %}
   </ul>
+{% endmacro %}
+
+<section class="card" style="margin-bottom:1rem">
+  <h2>Your jobs</h2>
+  {{ rule_list(checks) }}
+</section>
+
+<section class="card" id="sources" style="margin-bottom:1rem">
+  <h2>Job sources</h2>
+  <p class="small muted">Most sources are scripts reading a feed or a page, and sites change without warning. Every {{ review_days }} days a to-do asks you to review them with Claude Code, which can also look for new ones.</p>
+  {{ rule_list(sources) }}
 </section>
 
 <section class="card">

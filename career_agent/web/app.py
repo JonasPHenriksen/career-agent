@@ -264,7 +264,8 @@ async def todos_add(request: Request):
 
 @app.get("/checks")
 def checks_page(request: Request):
-    return render(request, "checks.html", checks=data_health.checks(), audit=data_health.audit_result(),
+    return render(request, "checks.html", checks=data_health.checks(), sources=data_health.source_checks(),
+                  review_days=data_health.REVIEW_DAYS, audit=data_health.audit_result(),
                   audit_on=settings.get("automation").get("weekly_audit", True), clean=data_health.clean_weeks(),
                   clean_weeks=data_health.CLEAN_WEEKS, audit_busy=bool(tasks.active("audit")), audit_jobs=data_health.AUDIT_JOBS)
 

@@ -11,7 +11,7 @@ from datetime import date
 
 from . import db, notify
 
-CHECKS = ("facts", "collect", "same_job")
+CHECKS = ("facts", "collect", "same_job", "sources")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -54,6 +54,11 @@ def progress(item: dict) -> str:
 
         n = db.scalar("SELECT COUNT(*) FROM jobs WHERE notes LIKE ?", (jobs.SAME_JOB_NOTE_LIKE,)) or 0
         return f"{n} job{'s' if n != 1 else ''} set aside by the AI repeat check so far"
+    if item.get("check_kind") == "sources":
+        from . import health
+
+        n = sum(len(c["items"]) for c in health.source_checks())
+        return f"{n} source problem{'s' if n != 1 else ''} under Data checks right now" if n else "No source problems right now"
     return ""
 
 

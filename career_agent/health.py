@@ -6,6 +6,10 @@
    mistakes nobody has seen yet. Every new kind it finds should become a rule check. Meant for the first weeks
    (from 2026-11-28): turn it off on /checks once it has come back clean a few weeks in a row.
 
+Job sources get the same kind of rule checks (source_checks): most of them are scripts reading feeds or pages
+that can change without warning. Every REVIEW_DAYS a to-do asks you to review the sources with Claude Code, which
+can search the web: fix or retire the broken ones, and look for new ones.
+
 Started after an audit by hand on 2026-11-28 found 32 jobs whose place was wiped out by reading the ad, 9 scored
 from a 153-character teaser, and 14 whose fit still carried the 50 km rule."""
 from __future__ import annotations
@@ -32,7 +36,7 @@ def _open_jobs() -> list[dict]:
 
 def _item(r: dict, detail: str = "") -> dict:
     return {"id": r["id"], "title": r["title"] or r["url"] or "Untitled", "company": r["company_name"] or "",
-            "detail": detail}
+            "detail": detail, "href": f"/jobs/{r['id']}"}
 
 
 def _place_in_fit(r: dict) -> str | None:
@@ -85,6 +89,71 @@ def checks() -> list[dict]:
     return out
 
 
+# --- Job sources ------------------------------------------------------------------------------------------------
+
+QUIET_DAYS = 21  # a source that used to find jobs and has found none for this long
+FIELDS_DAYS = 14  # new jobs from a source in this window…
+FIELDS_MIN = 5  # …at least this many…
+FIELDS_EMPTY = 0.5  # …and more than this share without a place or an employer: its reading likely broke
+REVIEW_DAYS = 28
+REVIEW_TITLE = "Review the job sources with Claude Code"
+REVIEW_DETAIL = (
+    "Open Claude Code in this project and ask it to review the job sources: fix or retire the ones flagged under "
+    "Data checks → Job sources; look for new ones (the career pages of employers within 25 km, where unadvertised "
+    "local jobs are, and boards that cover your target roles); and re-measure coverage: how many good jobs (50+) "
+    "were found by more than one source, a database query that shows whether jobs are still missed. Site rules "
+    "stay: Jobindex area pages only, Jobnet through the bookmark, no email alerts.")
+_LISTINGS = re.compile(r"^(\d+) listings")
+
+
+def _source_item(s: dict, detail: str) -> dict:
+    return {"id": s["id"], "title": s["name"], "company": s["kind"], "detail": detail, "href": "/settings#sources"}
+
+
+def source_checks() -> list[dict]:
+    """Rule checks on the job sources you have switched on (bookmark collection is yours to run, so it's left out):
+    {"key", "label", "why", "items"} like checks()."""
+    srcs = db.q("SELECT s.*, (SELECT MAX(created_at) FROM jobs j WHERE j.source_id = s.id) AS last_job "
+                "FROM sources s WHERE s.enabled = 1 AND s.kind != 'collect' ORDER BY s.name")
+    recent = db.q("SELECT source_id, work_mode, location, company_name FROM jobs WHERE parse_status = 'parsed' "
+                  "AND created_at >= ? AND source_id IS NOT NULL", (db.days_ago(FIELDS_DAYS),))
+    empty: dict[int, list[int]] = {}
+    for j in recent:
+        n = empty.setdefault(j["source_id"], [0, 0])
+        n[0] += 1
+        n[1] += not (j["company_name"] or "").strip() or (j["work_mode"] != "remote" and not (j["location"] or "").strip())
+    quiet_since = db.days_ago(QUIET_DAYS)
+    return [
+        {"key": "source_error", "label": "A source that fails", "why": "The last run ended in an error.",
+         "items": [_source_item(s, s["last_error"] or "") for s in srcs if s["last_status"] == "error"]},
+        {"key": "source_empty", "label": "A source that found no listings", "why": "Its last run found nothing at "
+         "all: the page or feed may have moved or changed.",
+         "items": [_source_item(s, s["last_status"]) for s in srcs
+                   for m in [_LISTINGS.match(s["last_status"] or "")] if m and m.group(1) == "0"]},
+        {"key": "source_quiet", "label": "A source gone quiet", "why": f"It found jobs before, but none in "
+         f"{QUIET_DAYS} days. It may be broken, or just not worth keeping.",
+         "items": [_source_item(s, f"last job {s['last_job'][:10]}") for s in srcs
+                   if s["last_job"] and s["last_job"] < quiet_since and s["last_status"] != "error"]},
+        {"key": "source_fields", "label": "New jobs arrive without a place or employer", "why": "More than half of "
+         f"this source's jobs from the last {FIELDS_DAYS} days lack one: the part that reads it likely broke.",
+         "items": [_source_item(s, f"{empty[s['id']][1]} of {empty[s['id']][0]}") for s in srcs
+                   if empty.get(s["id"], [0])[0] >= FIELDS_MIN and empty[s["id"]][1] > FIELDS_EMPTY * empty[s["id"]][0]]},
+    ]
+
+
+def remind_review(today: date | None = None) -> None:
+    """Keep one to-do for reviewing the job sources: REVIEW_DAYS after the last one was ticked off."""
+    from . import todos
+
+    today = today or date.today()
+    if db.q1("SELECT id FROM todos WHERE check_kind = 'sources' AND done_at IS NULL"):
+        return
+    last_done = db.parse_ts(db.scalar("SELECT MAX(done_at) FROM todos WHERE check_kind = 'sources'"))
+    due = (last_done.date() if last_done else today) + timedelta(days=REVIEW_DAYS)
+    todos.add(REVIEW_TITLE, REVIEW_DETAIL, href="/checks#sources", show_from=max(due, today).isoformat(),
+              check_kind="sources")
+
+
 def _measured(location: str, home: str, limit) -> bool:
     r = places.reach(location, home, limit)
     return bool(r and (r["km"] is not None or r["abroad"]))
@@ -92,7 +161,7 @@ def _measured(location: str, home: str, limit) -> bool:
 
 def summary() -> list[str]:
     """One line per problem, for Today: empty when all is well."""
-    lines = [f"{len(c['items'])} × {c['label'].lower()}" for c in checks() if c["items"]]
+    lines = [f"{len(c['items'])} × {c['label'].lower()}" for c in checks() + source_checks() if c["items"]]
     last = audit_result()
     if last and last.get("findings"):
         lines.append(f"weekly check: {len(last['findings'])} of {last['checked']} ads read wrong")
