@@ -23,7 +23,8 @@ log = logging.getLogger("career_agent.adcheck")
 CHECK_HOURS = 6  # an ad that matters is looked at again after this long while the app runs
 GONE_RECHECK_HOURS = 24  # one already found gone is looked at once a day, in case it was a hiccup
 BEFORE_WRITING_HOURS = 1  # before an application is written, the ad must have been seen up this recently
-TOP_INBOX = 30  # the highest-ranked jobs in the inbox are watched too
+TOP_INBOX = 100  # every job in the inbox ranked POOR_BELOW or more is watched too, up to this many (was 30 until
+# 2026-11-28, when a job back from the repeat re-check ranked 70 with its ad gone, unchecked)
 SHORT_PAGE = 2500  # characters: an error page is short; an ad that mentions "når stillingen er besat" isn't
 MAX_COPIES = 4
 

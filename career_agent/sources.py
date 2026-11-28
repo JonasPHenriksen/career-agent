@@ -523,6 +523,8 @@ def rescreen(job_ids: list[int] | None = None) -> dict:
                     db.update("jobs", job["id"], change)
                     if not parsed:
                         tasks.enqueue("parse_job", {"job_id": job["id"]}, ref=f"job:{job['id']}")
+                    elif job["url"] and not job["link_locked"]:  # back from an earlier reading: is the ad still up?
+                        tasks.enqueue("check_ads", {"job_ids": [job["id"]]}, ref=f"job:{job['id']}")
             else:
                 now_dropped += 1
                 if job["status"] == "new" or job["notes"] == FILTERED_NOTE:

@@ -296,6 +296,11 @@ def parse(job_id: int, use_text: bool = False) -> dict:
             if len(page_text) > len(text) or not text:
                 text = page_text
         except fetch.FetchError as e:
+            if e.gone:  # the ad is taken down: never read the text stored when it was found (2026-11-28)
+                db.update("jobs", job_id, {"parse_status": "error", "parse_error": "The ad is gone: its page no longer "
+                                           "exists.", "gone_at": job["gone_at"] or db.now(), "checked_at": db.now(),
+                                           "check_note": "the page doesn't exist"})
+                return {"title": job["title"], "skipped": "ad gone"}
             if not text:
                 db.update("jobs", job_id, {"parse_status": "error", "parse_error": str(e)})
                 raise
@@ -465,6 +470,8 @@ def needs_text(job: dict) -> str | None:
     count, nor a failure the app tries again by itself (the model was busy, the site didn't answer)."""
     if job.get("status") in ("filtered", "dismissed") or job.get("duplicate_of") or job.get("fit_score") is not None:
         return None  # set aside, or read and scored before (a later re-read failing doesn't undo that)
+    if job.get("gone_at") and not job.get("open_said_at"):
+        return None  # the ad is gone: there is nothing to paste
     if job.get("parse_status") == "skipped":
         return job.get("notes") or "The ad hasn't been read."
     if job.get("parse_status") == "error" and not tasks.is_passing(job.get("parse_error")):

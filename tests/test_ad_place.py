@@ -91,3 +91,17 @@ def test_an_employer_page_marked_up_for_search_engines_gives_the_jobs_place_not_
             '</span><span itemprop="jobLocation" itemscope itemtype="http://schema.org/Place"><span itemprop="address">'
             '<meta itemprop="streetAddress" content="Inge Lehmanns Gade 2, Aarhus C, 8000, Denmark"></span></span>')
     assert fetch.board_location(page) == "Inge Lehmanns Gade 2, Aarhus C, 8000, Denmark"
+
+
+def test_a_gone_ad_is_marked_gone_and_its_stored_text_is_never_read(fake, monkeypatch):
+    def gone(url):
+        raise fetch.FetchError("Page not found. The ad may have been taken down.", gone=True)
+
+    monkeypatch.setattr(fetch, "ad_page", gone)
+    job_id, _ = jobs.add_from_url("https://board.example/job/9", text="Full stack developer hos Havbro. " * 40,
+                                  queue=False)
+    assert jobs.parse(job_id) == {"title": None, "skipped": "ad gone"}
+    job = jobs.get(job_id)
+    assert job["gone_at"] and job["parse_status"] == "error" and job["fit_score"] is None
+    assert not [c for c in fake.calls if c[2] is jobs.PARSE_SCHEMA], "the old feed text is not read"
+    assert jobs.needs_text(job) is None, "a gone ad doesn't ask you to paste it"
