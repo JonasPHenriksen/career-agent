@@ -400,6 +400,11 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE app_versions ADD COLUMN asked TEXT;
     """,
+    # 17: the last revision (compare.py): the draft it made, what it replaced, and whether you kept it, reverted it
+    # or changed it a little, for the pop-up that shows what it changed
+    """
+    ALTER TABLE applications ADD COLUMN revision TEXT;
+    """,
 ]
 
 

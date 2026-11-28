@@ -1,11 +1,11 @@
-"""What changed between two drafts: the letter word by word, the CV line by line, and the review screen showing it."""
+"""What a revision changed: the letter word by word, the CV line by line, and the pop-up to keep, revert or change it."""
 from __future__ import annotations
 
 import re
 
 from fastapi.testclient import TestClient
 
-from career_agent import compare, cvdata, db, tracker, writer
+from career_agent import compare, cvdata, db, review, tracker, writer
 from career_agent.web.app import app
 
 from .test_web import _seed
@@ -104,50 +104,101 @@ def test_cv_sections_in_a_new_order():
     assert not d["same"] and "sections in a new order" in compare.summary_cv(d)
 
 
-def _version(app_id: int, label: str, asked: str | None = None, **text) -> int:
+def _revise_by_hand(app_id: int, letter: str | None = None, point: tuple[str, str] | None = None,
+                    asked: str = "Gør den lidt kortere.") -> None:
+    """A revision as writer.revise leaves it, without a model: the draft before it under Versions, the new draft,
+    and the record the pop-up reads. `point` rewrites a point of the CV: (as it was, as it becomes)."""
     a = db.q1("SELECT * FROM applications WHERE id = ?", (app_id,))
-    row = {k: text.get(k, a[k]) for k in ("subject", "letter", "cv", "cv_data")}
-    return db.insert("app_versions", {"application_id": app_id, "label": label, "asked": asked, "created_at": db.now(), **row})
+    before = {k: a[k] for k in compare.DERIVED}
+    version_id = writer._save_version(app_id, "Before revision", asked)
+    patch: dict = {}
+    if letter:
+        patch["letter"] = letter
+    if point:
+        data = db.jload(a["cv_data"], None)
+        assert review.replace_in_cv(data, *point)
+        patch.update({"cv_data": db.jdump(data), "cv": cvdata.to_markdown(data)})
+    after = {k: patch.get(k, a[k]) for k in compare.TEXT}
+    db.update("applications", app_id, {**patch, "revision": db.jdump(compare.record(version_id, "both", before, after))})
 
 
-def test_the_review_screen_shows_what_a_revision_changed(fake):
-    _, _, app_id = _seed()
-    before = tracker.app_with_job(app_id)["letter"]
-    writer.revise(app_id, "Skriv at jeg kan starte 1. marts.")  # the fake writer gives the same letter back
-    versions = db.q("SELECT * FROM app_versions WHERE application_id = ? ORDER BY id DESC", (app_id,))
-    assert versions[0]["label"] == "Before revision" and versions[0]["asked"] == "Skriv at jeg kan starte 1. marts."
-    chg = compare.for_app(tracker.app_with_job(app_id), versions)
-    assert chg["idle"] and chg["idle"]["asked"].startswith("Skriv"), "a revision that changed nothing says so"
-
-    new_letter = before.replace("Med venlig hilsen", "Jeg kan starte 1. marts.\n\nMed venlig hilsen")
-    _version(app_id, "Before revision", asked="Skriv at jeg kan starte 1. marts.")
-    db.update("applications", app_id, {"letter": new_letter})
-    c = TestClient(app)
-    page = c.get(f"/applications/{app_id}?tab=review").text
-    assert "What changed" in page and "the draft before your revision" in page
-    assert '<ins class="chg">Jeg kan starte 1. marts.</ins>' in page, "the review screen opens on the changes"
-    assert "Skriv at jeg kan starte 1. marts." in page, "and shows what was asked for"
-    assert "The CV is unchanged since this version." in page
-    clean = c.get(f"/applications/{app_id}?tab=review&view=clean").text
-    assert '<ins class="chg">' not in clean and "Show the changes" in clean
-    assert "See what changed" in c.get(f"/applications/{app_id}?tab=letter").text
-    history = c.get(f"/applications/{app_id}?tab=history").text
-    assert "Compare with now" in history and "Then asked for" in history
-
-
-def test_comparing_with_an_older_version_and_the_cv_tab(fake):
+def test_a_revision_opens_a_pop_up_to_keep_it(fake):
     _, _, app_id = _seed()
     a = tracker.app_with_job(app_id)
-    data = db.jload(a["cv_data"], None)
-    first = _version(app_id, "Before your edit")
-    if data:  # the CV as data: one point taken out
-        data["work"][0]["highlights"] = data["work"][0]["highlights"][1:]
-        db.update("applications", app_id, {"cv_data": db.jdump(data), "cv": cvdata.to_markdown(data)})
-    else:
-        db.update("applications", app_id, {"cv": a["cv"] + "\n- Et nyt punkt\n"})
-    _version(app_id, "Before your edit")  # the same as now: skipped when choosing what to compare with
+    db.update("applications", app_id, {"letter": a["letter"].replace("på 12 udviklere", "på mange udviklere")})
+    writer.revise(app_id, "Nævn holdets størrelse.")  # the fake writer gives its own letter back: "12" again
+    rev = compare.revision(tracker.app_with_job(app_id))
+    assert rev["open"] and rev["letter_changed"] and not rev["cv_changed"] and rev["asked"] == "Nævn holdets størrelse."
+    assert _marked(rev["letter"]["html"], "del") == ["mange"] and _marked(rev["letter"]["html"], "ins") == ["12"]
+
     c = TestClient(app)
-    page = c.get(f"/applications/{app_id}?tab=cv").text
-    assert "What changed in the CV since the draft before your edit" in page and 'class="cv-diff"' in page
-    page = c.get(f"/applications/{app_id}?tab=review&against={first}").text
-    assert f'<option value="{first}" selected>' in page and "same as now" in page
+    page = c.get(f"/applications/{app_id}?tab=review").text
+    assert '<dialog id="revision"' in page and f'data-auto-open="revision-{app_id}-{rev["id"]}"' in page, "it opens by itself"
+    assert "Nævn holdets størrelse." in page and '<del class="chg">mange</del>' in page
+    assert 'data-dialog-open="#revision"' in page and "See the last revision" in page
+    r = c.post(f"/applications/{app_id}/revision/keep", data={"tab": "letter"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith(f"/applications/{app_id}?tab=letter&msg=")
+    page = c.get(f"/applications/{app_id}?tab=letter").text
+    assert "data-auto-open" not in page and "You kept it" in page, "kept: the button still opens it, it doesn't open by itself"
+    r = c.post(f"/applications/{app_id}/revision/keep", follow_redirects=False)
+    assert "err=" in r.headers["location"], "decided once"
+
+
+def test_reverting_puts_back_the_draft_and_its_fact_check(fake):
+    _, _, app_id = _seed()
+    a = tracker.app_with_job(app_id)
+    db.update("applications", app_id, {"letter": a["letter"].replace("på 12 udviklere", "på mange udviklere")})
+    writer.run_checks(app_id)
+    before = db.q1("SELECT subject, letter, cv, cv_data, claims, voice, review, writer_notes FROM applications WHERE id = ?", (app_id,))
+    writer.revise(app_id, "Nævn holdets størrelse.")
+    revised = db.q1("SELECT letter FROM applications WHERE id = ?", (app_id,))["letter"]
+    assert revised != before["letter"]
+
+    c = TestClient(app)
+    r = c.post(f"/applications/{app_id}/revision/revert", data={"tab": "review"}, follow_redirects=False)
+    assert "err=" not in r.headers["location"]
+    assert db.q1("SELECT subject, letter, cv, cv_data, claims, voice, review, writer_notes FROM applications WHERE id = ?",
+                 (app_id,)) == before, "the draft and its fact check are back as they were, with no new check"
+    kept = db.q1("SELECT letter FROM app_versions WHERE application_id = ? AND label = 'Before reverting a revision'", (app_id,))
+    assert kept and kept["letter"] == revised, "the revised draft stays under Versions"
+    rev = compare.revision(tracker.app_with_job(app_id))
+    assert rev["status"] == "reverted" and not rev["open"]
+    assert "You went back to the draft before it" in c.get(f"/applications/{app_id}").text
+
+
+def test_changing_a_revision_a_little(fake):
+    _, _, app_id = _seed()
+    a = tracker.app_with_job(app_id)
+    point = db.jload(a["cv_data"], None)["work"][0]["highlights"][0]
+    _revise_by_hand(app_id, letter=a["letter"] + "\n\nJeg kan starte 1. marts.", point=(point, point + " i to år"))
+    rev = compare.revision(tracker.app_with_job(app_id))
+    assert rev["open"] and rev["letter_changed"] and rev["cv_changed"]
+    assert [e["text"] for e in rev["edit_lines"]] == [point + " i to år"], "the reworded CV point can be changed here"
+    assert rev["edit_lines"][0]["where"] == "Erfaring › Product Owner — Danske Bank"
+
+    c = TestClient(app)
+    page = c.get(f"/applications/{app_id}?tab=review").text
+    assert "Change it a little" in page and 'name="old_1"' in page
+    r = c.post(f"/applications/{app_id}/revision/adjust", follow_redirects=False,
+               data={"tab": "review", "subject": a["subject"], "letter": a["letter"] + "\n\nJeg kan starte 1. april.",
+                     "old_1": point + " i to år", "new_1": point + " i tre år"})
+    assert "err=" not in r.headers["location"], r.headers["location"]
+    now = tracker.app_with_job(app_id)
+    assert now["letter"].endswith("Jeg kan starte 1. april.")
+    assert db.jload(now["cv_data"], None)["work"][0]["highlights"][0] == point + " i tre år" and "i tre år" in now["cv"]
+    assert compare.revision(now)["status"] == "edited"
+    assert db.q1("SELECT 1 FROM app_versions WHERE application_id = ? AND label = 'Before your edit'", (app_id,))
+
+
+def test_a_draft_changed_after_the_revision_cannot_be_kept_or_reverted_from_the_pop_up(fake):
+    _, _, app_id = _seed()
+    a = tracker.app_with_job(app_id)
+    _revise_by_hand(app_id, letter=a["letter"] + "\n\nJeg kan starte 1. marts.")
+    db.update("applications", app_id, {"letter": "Kære Mette\n\nSkrevet om af mig selv."})  # Save edits, say
+    rev = compare.revision(tracker.app_with_job(app_id))
+    assert not rev["current"] and not rev["open"] and rev["letter_changed"], "it still shows what the revision changed"
+    c = TestClient(app)
+    page = c.get(f"/applications/{app_id}?tab=review").text
+    assert "data-auto-open" not in page and "The draft has been changed after this revision" in page
+    r = c.post(f"/applications/{app_id}/revision/revert", follow_redirects=False)
+    assert "err=" in r.headers["location"] and db.q1("SELECT letter FROM applications WHERE id = ?", (app_id,))["letter"].endswith("selv.")

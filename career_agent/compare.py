@@ -1,8 +1,9 @@
-"""What changed between two drafts of an application: the letter word by word, the CV line by line.
+"""What a revision changed in the letter and the CV, and keeping it, reverting it or changing it a little.
 
-Every new draft, revision, edit, reset and restore keeps the draft it replaces under Versions (app_versions). The
-review screen compares the draft as it is now with one of those, by default the newest one that differs from it,
-so you see what a revision actually changed, and whether it changed anything you didn't ask for.
+When a revision is done, the application page opens a pop-up with what it changed: the letter word by word, the CV
+line by line. You keep it, go back to the draft before it, or change it a little yourself. The button beside the
+status opens the pop-up again. The draft before the revision is under Versions (app_versions); what the revision
+made and what you decided is kept on the application (applications.revision).
 
 No model is involved: it's a plain text comparison. The letter is matched sentence by sentence first, so a
 rewritten sentence shows as one change and not as scattered words; within a sentence that was only reworded, the
@@ -332,24 +333,12 @@ def cv(old_md: str | None, new_md: str | None, old_data: dict | None = None, new
 
 
 # ---------------------------------------------------------------------------------------
-# An application against one of its versions
+# The last revision: what it changed, and keeping, reverting or changing it a little
 # ---------------------------------------------------------------------------------------
 
-_SINCE = {"Before revision": "the draft before your revision", "Before a new draft": "the draft before the new one",
-          "Before your edit": "the draft before your edit", "Before restore": "the draft before you restored a version",
-          "Before reset to base CV": "the draft before the CV was reset to your base CV",
-          "Before the Claude.ai version": "the draft before the Claude.ai version",
-          "First draft": "the first draft", "New draft": "the new draft as it was written"}
-
-
-def since(label: str | None) -> str:
-    return _SINCE.get(label or "", f"the version “{label}”" if label else "an earlier version")
-
-
-def _state(row: dict) -> tuple:
-    data = db.jload(row.get("cv_data"), None)
-    looks = (_colour(data.get("color")), data.get("photo") is False) if data else None
-    return _norm(row.get("subject")), _norm(row.get("letter")), _norm(row.get("cv")), looks
+TEXT = ("subject", "letter", "cv", "cv_data")  # the draft
+DERIVED = ("review", "writer_notes", "claims", "voice")  # worked out for the draft: put back with it on revert
+PARTS = {"letter": "the letter", "cv": "the CV", "both": "the letter and the CV"}
 
 
 def _count(n: int, one: str, many: str | None = None) -> str:
@@ -392,33 +381,144 @@ def summary_cv(d: dict) -> str:
     return ", ".join(parts) or "only spacing changed"
 
 
-def for_app(app: dict, versions: list[dict], against: int | None = None) -> dict | None:
-    """The application now against one of its versions: the one you picked, else the newest that differs from it.
-    None when there's nothing earlier to compare with. `versions` are newest first."""
-    if not versions:
+def record(version_id: int, part: str, before: dict, after: dict) -> dict:
+    """What's kept on the application about a revision: the version with the draft before it, the draft it made,
+    the fact check and voice read before it (so reverting needs no new check), and what you decided."""
+    return {"version_id": version_id, "part": part, "at": db.now(), "status": "open", "decided_at": None,
+            "after": {k: after.get(k) for k in TEXT}, "before": {k: before.get(k) for k in DERIVED}}
+
+
+def _current(app: dict, rec: dict) -> bool:
+    """The draft is still the one the revision made: nothing was changed since."""
+    return all((app.get(k) or None) == (rec["after"].get(k) or None) for k in TEXT)
+
+
+def _editable(rec: dict, items: list[dict], data: dict | None) -> list[dict]:
+    """The CV lines the revision reworded or added that you can change a little in the pop-up: each must be found
+    again in the CV (as data, or as text when the CV is kept as text)."""
+    import copy
+
+    from . import review
+
+    out = []
+    for it in items:
+        if it["kind"] not in ("changed", "added", "reordered") or it["line_kind"] not in ("point", "text", "headline"):
+            continue
+        text = _plain(it["line"])[1]
+        found = review.replace_in_cv(copy.deepcopy(data), text, text) if data else text in (rec["after"].get("cv") or "")
+        if found:
+            out.append({"text": text, "where": it["where"]})
+    return out
+
+
+def revision(app: dict) -> dict | None:
+    """The application's last revision, ready for the pop-up; None when it has had none."""
+    rec = db.jload(app.get("revision"), None)
+    if not rec:
         return None
-    now = _state(app)
-    same_as_now = {v["id"] for v in versions if _state(v) == now}
-    differs = [v for v in versions if v["id"] not in same_as_now]
-    picked = next((v for v in versions if v["id"] == against), None) if against else None
-    base = picked or (differs[0] if differs else None)
-    # A revision that changed nothing: the newest version is the draft as it was before it, word for word.
-    newest = versions[0]
-    idle = None
-    if newest.get("asked") and _state(newest) == now and newest["label"] == "Before revision":
-        idle = {"asked": newest["asked"], "at": newest["created_at"]}
-    if not base:
-        return {"base": None, "versions": versions, "same_as_now": same_as_now, "idle": idle, "changed": False}
-    lt = letter(base.get("letter"), app.get("letter"))
-    cd = cv(base.get("cv"), app.get("cv"), db.jload(base.get("cv_data"), None), db.jload(app.get("cv_data"), None))
+    v = db.q1("SELECT * FROM app_versions WHERE id = ?", (rec["version_id"],))
+    if not v:  # the version is gone (an undo in History): nothing to compare with
+        return None
+    after = rec["after"]
+    lt = letter(v["letter"], after["letter"])
+    new_data = db.jload(after.get("cv_data"), None)
+    cd = cv(v["cv"], after["cv"], db.jload(v["cv_data"], None), new_data)
     subject = None
-    if _norm(base.get("subject")) != _norm(app.get("subject")) and (base.get("subject") or app.get("subject")):
-        subject = render(word_segments(base.get("subject") or "", app.get("subject") or ""), paragraphs=False)
-    asked = [{"text": v["asked"], "at": v["created_at"]} for v in sorted(versions, key=lambda v: v["id"])
-             if v["id"] >= base["id"] and v.get("asked") and not (idle and v is newest)]
-    changed = not (lt["same"] and cd["same"]) or subject is not None
-    return {"base": base, "since": since(base["label"]), "versions": versions, "same_as_now": same_as_now,
-            "letter": lt, "cv": cd, "subject": subject, "asked": asked, "idle": idle, "changed": changed,
-            "letter_line": summary_letter(lt), "cv_line": summary_cv(cd),
-            # Shown with its changes marked unless the letter was written again from scratch: then it reads clean.
-            "show": changed and not lt["rewritten"]}
+    if _norm(v["subject"]) != _norm(after.get("subject")) and (v["subject"] or after.get("subject")):
+        subject = render(word_segments(v["subject"] or "", after.get("subject") or ""), paragraphs=False)
+    for g in cd["groups"]:
+        for it in g["lines"]:
+            it["where"] = " › ".join(x for x in (g["section"] or ("Headline" if it["line_kind"] == "headline" else "Profile"),
+                                                  g["entry"]) if x)
+    current = _current(app, rec)
+    open_ = current and rec["status"] == "open"
+    letter_changed, cv_changed = not lt["same"] or subject is not None, not cd["same"]
+    return {"id": rec["version_id"], "part": rec.get("part") or "letter", "part_label": PARTS.get(rec.get("part"), "the draft"),
+            "at": rec["at"], "status": rec["status"], "decided_at": rec.get("decided_at"), "asked": v.get("asked"),
+            "letter": lt, "cv": cd, "subject": subject, "letter_line": summary_letter(lt), "cv_line": summary_cv(cd),
+            "letter_changed": letter_changed, "cv_changed": cv_changed, "changed": letter_changed or cv_changed,
+            "current": current, "open": open_,
+            "edit_lines": _editable(rec, [it for g in cd["groups"] for it in g["lines"]], new_data) if open_ and cv_changed else []}
+
+
+def _open_record(app_id: int) -> tuple[dict, dict]:
+    app = db.q1("SELECT * FROM applications WHERE id = ?", (app_id,))
+    rec = db.jload((app or {}).get("revision"), None)
+    if not rec:
+        raise ValueError("There's no revision to decide on.")
+    if rec["status"] != "open":
+        raise ValueError("You've already decided on this revision.")
+    if not _current(app, rec):
+        raise ValueError("The draft has been changed since the revision, so it can't be kept or reverted from here. "
+                         "Earlier drafts are under Versions.")
+    return app, rec
+
+
+def _decided(rec: dict, status: str) -> str:
+    return db.jdump({**rec, "status": status, "decided_at": db.now()})
+
+
+def keep(app_id: int) -> None:
+    """Keep the revision as it is."""
+    _, rec = _open_record(app_id)
+    db.update("applications", app_id, {"revision": _decided(rec, "kept")})
+
+
+def revert(app_id: int) -> None:
+    """Go back to the draft before the revision, with the fact check and voice read it had then. The revised draft
+    stays under Versions."""
+    from . import writer
+
+    _, rec = _open_record(app_id)
+    v = db.q1("SELECT * FROM app_versions WHERE id = ?", (rec["version_id"],))
+    if not v:
+        raise ValueError("The draft before the revision is no longer under Versions.")
+    writer._save_version(app_id, "Before reverting a revision")
+    patch = {k: v[k] for k in TEXT}
+    patch.update({k: rec["before"].get(k) for k in DERIVED})
+    db.update("applications", app_id, {**patch, "revision": _decided(rec, "reverted"), "updated_at": db.now()})
+
+
+def adjust(app_id: int, subject: str | None, letter_text: str | None, lines: dict[str, str]) -> None:
+    """Keep the revision with your own small changes: the subject and letter as you edited them, and CV lines
+    (`lines`: the line as the revision wrote it → as you want it). Like Save edits, the draft before is kept under
+    Versions, and the fact check runs when you ask for it."""
+    from . import cvdata, cvrender, review, voice, writer
+
+    app, rec = _open_record(app_id)
+    patch: dict = {}
+    if letter_text is not None and letter_text.strip() and letter_text != app["letter"]:
+        patch["letter"] = letter_text
+    if subject is not None and subject.strip() and subject != app["subject"]:
+        patch["subject"] = subject
+    changes = {old: new for old, new in lines.items() if " ".join(new.split()) != " ".join(old.split())}
+    if changes:
+        data = db.jload(app.get("cv_data"), None)
+        if data:
+            for old, new in changes.items():
+                if not review.replace_in_cv(data, old, new):
+                    raise ValueError(f"Couldn't find “{old[:80]}” in the CV, so nothing was saved.")
+            data = cvdata.clean(data)
+            try:
+                cvrender.render(data, app["language"])
+            except Exception as e:  # noqa: BLE001 - a CV that can't be typeset isn't saved
+                raise ValueError(f"The CV couldn't be typeset with that change, so nothing was saved: {str(e)[:160]}") from e
+            patch.update({"cv_data": db.jdump(data), "cv": cvdata.to_markdown(data)})
+        else:
+            text = app["cv"] or ""
+            for old, new in changes.items():
+                if old not in text:
+                    raise ValueError(f"Couldn't find “{old[:80]}” in the CV, so nothing was saved.")
+                text = text.replace(old, " ".join(new.split()), 1)
+            patch["cv"] = text
+    if not patch:
+        keep(app_id)
+        return
+    writer._save_version(app_id, "Before your edit")
+    if "letter" in patch:
+        v = voice.check(patch["letter"], app["language"])
+        kept = voice.read_notes({**app, **patch})
+        if kept:
+            v["read"] = kept
+        patch["voice"] = db.jdump(v)
+    db.update("applications", app_id, {**patch, "revision": _decided(rec, "edited"), "updated_at": db.now()})

@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from datetime import date
 
-from . import adcheck, cvdata, db, jobs, knowledge, llm, notify, privacy, profile, retrieval, settings, tracker, voice
+from . import adcheck, compare, cvdata, db, jobs, knowledge, llm, notify, privacy, profile, retrieval, settings, tracker, voice
 from .llm import jsonutil as J
 
 LANG_NAMES = {"da": "Danish", "en": "English", "sv": "Swedish", "no": "Norwegian", "nb": "Norwegian",
@@ -805,14 +805,15 @@ def _assumed_notes(letter: dict) -> list[str]:
     return [f"Assumed about you, check it's true: {a.strip()}" for a in (letter.get("assumed") or [])[:4] if a.strip()]
 
 
-def _save_version(app_id: int, label: str, asked: str | None = None) -> None:
-    """Keep the draft as it is now under Versions. `asked` is what you asked for in the change that follows, shown
-    next to what it changed."""
+def _save_version(app_id: int, label: str, asked: str | None = None) -> int | None:
+    """Keep the draft as it is now under Versions; returns the version's id. `asked` is what you asked for in the
+    change that follows, shown next to what it changed."""
     a = db.q1("SELECT subject, letter, cv, cv_data FROM applications WHERE id = ?", (app_id,))
     if a and (a["letter"] or a["cv"]):
-        db.insert("app_versions", {"application_id": app_id, "label": label, "subject": a["subject"],
-                                   "letter": a["letter"], "cv": a["cv"], "cv_data": a["cv_data"],
-                                   "asked": (asked or "").strip()[:2000] or None, "created_at": db.now()})
+        return db.insert("app_versions", {"application_id": app_id, "label": label, "subject": a["subject"],
+                                          "letter": a["letter"], "cv": a["cv"], "cv_data": a["cv_data"],
+                                          "asked": (asked or "").strip()[:2000] or None, "created_at": db.now()})
+    return None
 
 
 def draft(app_id: int, part: str = "both") -> dict:
@@ -875,7 +876,8 @@ def revise(app_id: int, instructions: str, part: str = "letter", asked: str | No
     job = jobs.get(app["job_id"])
     language = app["language"] or choose_language(job)
     system = writer_system(language, job)
-    _save_version(app_id, "Before revision", asked or instructions)
+    before = {k: app.get(k) for k in compare.DERIVED}  # put back with the text if you revert the revision
+    version_id = _save_version(app_id, "Before revision", asked or instructions)
     patch: dict = {"updated_at": db.now()}
     notes: list = []
     if part in ("letter", "both"):
@@ -901,6 +903,9 @@ def revise(app_id: int, instructions: str, part: str = "letter", asked: str | No
     patch["writer_notes"] = db.jdump(notes)
     if app["status"] == "drafting":
         patch["status"] = "draft"
+    if version_id:  # the pop-up shows what this revision changed, to keep, revert or change a little
+        after = {k: patch.get(k, app.get(k)) for k in compare.TEXT}
+        patch["revision"] = db.jdump(compare.record(version_id, part, before, after))
     db.update("applications", app_id, patch)
     run_checks(app_id)
     return {"revised": part}

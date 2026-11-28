@@ -115,6 +115,35 @@
       if (input) input.addEventListener("change", () => input.files.length && input.form.requestSubmit());
     });
 
+    // Pop-ups: <button data-dialog-open="#id"> opens one, <button data-dialog-close> inside closes it, and
+    // <dialog data-auto-open="key"> opens by itself once per browser session (the revision waiting for you).
+    root.querySelectorAll("[data-dialog-open]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const d = document.querySelector(b.dataset.dialogOpen);
+        if (d && !d.open) d.showModal();
+      });
+    });
+    root.querySelectorAll("dialog [data-dialog-close]").forEach((b) => {
+      b.addEventListener("click", () => b.closest("dialog").close());
+    });
+    root.querySelectorAll("dialog[data-auto-open]").forEach((d) => {
+      let seen = false;
+      try {
+        seen = sessionStorage.getItem(d.dataset.autoOpen) === "1";
+        sessionStorage.setItem(d.dataset.autoOpen, "1");
+      } catch (e) { /* no storage: open it */ }
+      if (!seen && !d.open) d.showModal();
+    });
+    // The revision pop-up: switch between what changed and changing it a little.
+    root.querySelectorAll("[data-rev-edit]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const d = b.closest("dialog");
+        d.classList.toggle("editing");
+        const first = d.classList.contains("editing") && d.querySelector(".rev-edit textarea, .rev-edit input[type=text]");
+        if (first) first.focus();
+      });
+    });
+
     // Show/hide inline edit forms: <button data-toggle="#id">
     root.querySelectorAll("[data-toggle]").forEach((b) => {
       b.addEventListener("click", () => {

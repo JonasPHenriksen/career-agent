@@ -522,9 +522,7 @@ APP_TABS = [("review", "Review"), ("letter", "Letter"), ("claude", "Claude.ai"),
 
 
 @app.get("/applications/{app_id}")
-def application(request: Request, app_id: int, tab: str = "", view: str = "", against: int | None = None):
-    """`view` on the review screen: "changes" marks what changed since an earlier version (`against`, by default the
-    newest that differs), "clean" shows the draft with the fact check's and voice read's marks."""
+def application(request: Request, app_id: int, tab: str = ""):
     a = need(tracker.app_with_job(app_id))
     job = jobs.get(a["job_id"])
     if job and a["status"] in ("drafting", "draft", "ready"):
@@ -562,18 +560,14 @@ def application(request: Request, app_id: int, tab: str = "", view: str = "", ag
             cv_pages = cvrender.pages(cv_data, a["language"])
         except Exception as e:  # noqa: BLE001 - a CV that can't be typeset still has to be editable
             cv_error = str(e)[:300]
-    versions = db.q("SELECT * FROM app_versions WHERE application_id = ? ORDER BY id DESC", (app_id,))
-    chg = compare.for_app(a, versions, against) if tab in ("review", "letter", "cv", "history") else None
-    if view not in ("changes", "clean"):  # what changed is shown first, unless the letter was written again
-        view = "changes" if chg and chg.get("show") else "clean"
     return render(request, "application.html", a=a, job=job, tab=tab, tabs=APP_TABS, claims=claims, facts=facts, made=made,
-                  chg=chg, view=view, against=against,
+                  rev=compare.revision(a),
                   cv_data=cv_data, cv_json=json.dumps(cv_data, ensure_ascii=False, indent=2) if cv_data else "",
                   cv_pages=cv_pages, cv_error=cv_error, cv_base=cvdata.base_for(a["language"]), look=look, design_primary=cvrender.design()["primary"],
                   prompt=prompt, prompt_words=len(prompt.split()),
                   v=db.jload(a["voice"], {}) or {}, read=voice.read_notes(a), notes=db.jload(a["writer_notes"], []) or [],
                   busy=tasks.active(ref=f"app:{app_id}"), error=tasks.last_error(f"app:{app_id}"),
-                  versions=versions,
+                  versions=db.q("SELECT * FROM app_versions WHERE application_id = ? ORDER BY id DESC", (app_id,)),
                   timeline=tracker.timeline(app_id), statuses=tracker.APP_STATUSES, event_types=tracker.EVENT_TYPES,
                   event_labels=tracker.EVENT_LABELS, status_labels=tracker.STATUS_LABELS,
                   badge=companies.badge(a["company_id"]), task_labels=tasks.TASK_LABELS, today=date.today().isoformat(),
@@ -1044,6 +1038,31 @@ async def application_followup(request: Request, app_id: int):
 def application_followup_sent(request: Request, app_id: int):
     tracker.add_event(app_id, "followup_sent", summary="Follow-up sent")
     return go(f"/applications/{app_id}?tab=timeline", msg="Noted.")
+
+
+@app.post("/applications/{app_id}/revision/{action}")
+async def application_revision(request: Request, app_id: int, action: str):
+    """Your choice in the pop-up after a revision: keep it, revert it, or keep it with your own small changes."""
+    f = await form(request)
+    need(db.q1("SELECT id FROM applications WHERE id = ?", (app_id,)))
+    url = f"/applications/{app_id}?tab={f.get('tab') if f.get('tab') in dict(APP_TABS) else 'review'}"
+    try:
+        if action == "keep":
+            compare.keep(app_id)
+            msg = "Revision kept."
+        elif action == "revert":
+            compare.revert(app_id)
+            msg = ("Reverted: the draft is back as it was before the revision, with its fact check. The revised one "
+                   "is under Versions.")
+        elif action == "adjust":
+            lines = {f[f"old_{n}"]: f.get(f"new_{n}", "") for n in range(1, 201) if f.get(f"old_{n}")}
+            compare.adjust(app_id, f.get("subject"), f.get("letter"), lines)
+            msg = "Revision kept with your changes. Run the fact check again when you're done editing."
+        else:
+            raise HTTPException(404, "Not found")
+    except ValueError as e:
+        return go(url, err=str(e))
+    return go(url, msg=msg)
 
 
 @app.post("/applications/{app_id}/restore/{version_id}")

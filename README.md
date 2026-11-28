@@ -115,13 +115,12 @@ job sources ──► quick screening ──► read the ad ──► fit score 
   you, each with a plainer version; tick the ones you want and the letter is revised with them. A letter
   that hasn't changed isn't read again. It's its own step under Settings → AI models, so it can use another
   model than the fact check (left on the usual, it uses the Writing model).
-* **What a revision changed.** Every new draft, revision, edit and restore keeps the draft it replaces under
-  Versions, and the review screen opens on what changed since then: in the letter, words taken out are struck
-  through in red and words put in are underlined in green; in the CV, each line that was reworded, added, taken
-  out or moved is listed under its section and job, with a new colour or a photo left out. What you asked for
-  stands next to it, and a revision that changed nothing says so. *Clean draft* shows the draft with the fact
-  check's marks instead, and *Compare with* (or *Compare with now* under Versions) picks another version. A letter
-  written again from scratch opens clean. Plain text comparison, no model.
+* **What a revision changed.** When a revision is done, a pop-up shows what it changed: in the letter, words
+  taken out are struck through in red and words put in are underlined in green; in the CV, each line that was
+  reworded, added, taken out or moved is listed under its section and job. What you asked for stands above it.
+  *Keep it*, *Revert* (back to the draft before, with its fact check; the revised one stays under Versions), or
+  *Change it a little* to edit the revised letter and CV lines right there. *See the last revision*, beside the
+  status, opens it again. Plain text comparison, no model.
 * **Employers are graded too.** Paste a reply and it's classified (template rejection, real feedback,
   interview invite…). Silence is counted. Companies that ghost you or re-post the same job get a low
   grade, and you can block them from automatic drafting.

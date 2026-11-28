@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline, progress, status, model_picker, made_by, ad_state, ask_first, email_block, kept_button, changes_bar, cv_changes, changes_note %}
+{% from "_macros.html" import score, grade, deadline, progress, status, model_picker, made_by, ad_state, ask_first, email_block, kept_button %}
 {% block title %}{{ a.job_title or 'Application' }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/tracker">Applications</a> · <a href="/jobs/{{ a.job_id }}">job details</a>{% if a.auto_drafted %} · drafted automatically{% endif %}</div>
@@ -11,6 +11,7 @@
   </div>
   <div class="row">
     {{ score(a.fit_score) }}
+    {% if rev %}<button type="button" class="btn {{ 'primary' if rev.open else 'ghost' }}" data-dialog-open="#revision">See the last revision</button>{% endif %}
     <form method="post" action="/applications/{{ a.id }}/status" class="row">
       <label class="sr-only" for="st">Status</label>
       <select id="st" name="status" data-autosubmit style="width:auto">
@@ -23,6 +24,81 @@
     {% endif %}
   </div>
 </header>
+{% if rev %}
+{# What the last revision changed: keep it, revert it, or change it a little (compare.py). Opens by itself once
+   when a revision is waiting for your decision; the button beside the status opens it again. #}
+<dialog id="revision" class="rev-dialog" aria-labelledby="rev-title"{% if rev.open %} data-auto-open="revision-{{ a.id }}-{{ rev.id }}"{% endif %}>
+  <div class="rev-head">
+    <div style="min-width:0">
+      <h2 id="rev-title">What the revision changed</h2>
+      <p class="small text-2">A revision of {{ rev.part_label }}, {{ rev.at|local_dt }}.{% if rev.asked %} You asked for: <q>{{ rev.asked|truncate(320) }}</q>{% endif %}</p>
+    </div>
+    <button type="button" class="btn small ghost" data-dialog-close aria-label="Close">✕</button>
+  </div>
+  {% if rev.status == 'kept' %}<p class="rev-state small"><span class="pill good">Kept</span> You kept it, {{ rev.decided_at|local_dt }}.</p>
+  {% elif rev.status == 'reverted' %}<p class="rev-state small"><span class="pill">Reverted</span> You went back to the draft before it, {{ rev.decided_at|local_dt }}. The revised one is under <a href="?tab=history">Versions</a>.</p>
+  {% elif rev.status == 'edited' %}<p class="rev-state small"><span class="pill accent">Changed a little</span> You kept it with your own changes, {{ rev.decided_at|local_dt }}.</p>
+  {% elif not rev.current %}<p class="rev-state small"><span class="pill warn">Changed since</span> The draft has been changed after this revision, so it can't be kept or reverted here. Earlier drafts are under <a href="?tab=history">Versions</a>.</p>{% endif %}
+  <div class="rev-body">
+    <div class="rev-view">
+      {% if not rev.changed %}<p>The revision didn't change anything.</p>{% endif %}
+      {% if rev.letter_changed %}
+      <section>
+        <h3>Letter <span class="small text-2">· {{ rev.letter_line }}</span></h3>
+        <p class="small"><ins class="chg">put in</ins> <del class="chg">taken out</del></p>
+        {% if rev.subject %}<p class="small"><strong>{{ rev.subject }}</strong></p>{% endif %}
+        <div class="letter-text">{{ rev.letter.html }}</div>
+      </section>
+      {% endif %}
+      {% if rev.cv_changed %}
+      <section class="cv-changes">
+        <h3>CV <span class="small text-2">· {{ rev.cv_line }}</span></h3>
+        <p class="small"><span class="ic changed">~</span> reworded · <span class="ic added">+</span> added · <span class="ic removed">−</span> taken out · <span class="ic moved">↕</span> moved</p>
+        {% if rev.cv.new %}<p class="small">There was no CV before: all of it is new.</p>{% endif %}
+        {% for lk in rev.cv.look %}
+        <p class="small">{% if lk.what == 'colour' %}Colour: <span class="swatch" style="background:{{ lk.old or design_primary }}"></span> {{ lk.old or 'your usual colour' }} → <span class="swatch" style="background:{{ lk.new or design_primary }}"></span> {{ lk.new or 'your usual colour' }}{% else %}{{ 'Your photo is back on the CV.' if lk.new else 'Your photo is left out.' }}{% endif %}</p>
+        {% endfor %}
+        {% if rev.cv.order %}<p class="small">Sections in a new order: {{ rev.cv.order[1]|join(' · ') }} <span class="text-2">(was {{ rev.cv.order[0]|join(' · ') }})</span></p>{% endif %}
+        {% if not rev.cv.new %}{% for g in rev.cv.groups %}
+        <h4>{{ g.section or 'Headline and profile' }}{% if g.entry %} <span class="text-2">› {{ g.entry }}</span>{% endif %}</h4>
+        <ul class="cv-diff">
+          {% for it in g.lines %}
+          <li class="{{ it.kind }}"><span class="ic {{ it.kind }}" aria-label="{{ {'changed': 'reworded', 'reordered': 'same words, new order', 'added': 'added', 'removed': 'taken out', 'moved': 'moved'}[it.kind] }}">{{ {'changed': '~', 'reordered': '↕', 'added': '+', 'removed': '−', 'moved': '↕'}[it.kind] }}</span>
+            <span>{% if it.line_kind == 'headline' %}<span class="text-2">Headline:</span> {% elif it.line_kind == 'point' %}• {% endif %}{% if it.kind == 'removed' %}<del class="chg">{{ it.html }}</del>{% elif it.kind == 'added' %}<ins class="chg">{{ it.html }}</ins>{% elif it.line_kind == 'entry' %}<strong>{{ it.html }}</strong>{% else %}{{ it.html }}{% endif %}{% if it.kind == 'moved' %} <span class="small muted">moved</span>{% elif it.kind == 'changed' and it.moved %} <span class="small muted">and moved</span>{% elif it.kind == 'reordered' %} <span class="small muted">same words, new order</span>{% endif %}</span></li>
+          {% endfor %}
+        </ul>
+        {% endfor %}{% endif %}
+      </section>
+      {% endif %}
+    </div>
+    {% if rev.open and rev.changed %}
+    <form method="post" action="/applications/{{ a.id }}/revision/adjust" class="rev-edit">
+      <input type="hidden" name="tab" value="{{ tab }}">
+      <p class="small text-2">Change what the revision wrote, then save. The draft before your changes is kept under Versions.</p>
+      {% if rev.letter_changed %}
+      <div class="field"><label for="rev-subject">Subject</label><input id="rev-subject" name="subject" type="text" value="{{ a.subject or '' }}"></div>
+      <div class="field"><label for="rev-letter">Letter</label><textarea id="rev-letter" name="letter" rows="18">{{ a.letter or '' }}</textarea></div>
+      {% endif %}
+      {% for e in rev.edit_lines %}
+      <input type="hidden" name="old_{{ loop.index }}" value="{{ e.text }}">
+      <div class="field"><label for="rev-line-{{ loop.index }}">CV · {{ e.where }}</label><textarea id="rev-line-{{ loop.index }}" name="new_{{ loop.index }}" rows="{{ 3 if e.text|length > 110 else 1 }}">{{ e.text }}</textarea></div>
+      {% endfor %}
+      {% if rev.cv_changed and not rev.edit_lines %}<p class="small text-2">The CV's changes can't be edited here; use the CV tab after you keep it.</p>{% endif %}
+      <div class="row end"><button type="button" class="btn ghost" data-rev-edit>Back to the changes</button><button class="btn primary" data-busy="Saving…">Save and keep it</button></div>
+    </form>
+    {% endif %}
+  </div>
+  <div class="row end rev-actions">
+    {% if rev.open and rev.changed %}
+    <form method="post" action="/applications/{{ a.id }}/revision/revert" class="inline"><input type="hidden" name="tab" value="{{ tab }}"><button class="btn" title="Back to the draft as it was before this revision, with its fact check. The revised one is kept under Versions.">Revert</button></form>
+    <button type="button" class="btn" data-rev-edit>Change it a little</button>
+    <form method="post" action="/applications/{{ a.id }}/revision/keep" class="inline"><input type="hidden" name="tab" value="{{ tab }}"><button class="btn primary">Keep it</button></form>
+    {% elif rev.open %}
+    <form method="post" action="/applications/{{ a.id }}/revision/keep" class="inline"><input type="hidden" name="tab" value="{{ tab }}"><button class="btn primary">OK</button></form>
+    {% else %}<button type="button" class="btn" data-dialog-close>Close</button>{% endif %}
+  </div>
+</dialog>
+{% endif %}
 
 {% if job and a.status in ('drafting', 'draft', 'ready') %}{{ ad_state(job, a, '/') }}{{ ask_first(job) }}{% endif %}
 {% if followup_due %}
@@ -111,7 +187,6 @@
     </form>
   </section>
   <div class="stack">
-    {{ changes_note(chg, 'letter') }}
     <section class="card">
       <h2>Ask for changes</h2>
       <form method="post" action="/applications/{{ a.id }}/revise">
@@ -161,8 +236,6 @@
   {% for sib in look.siblings %}<a href="/applications/{{ sib.id }}">{{ sib.title }}</a>{{ ', ' if not loop.last }}{% endfor %}.
   The same people may read them, so check that they don't open and argue the same way.</div>
 {% endif %}
-{{ changes_bar(chg, view, against) }}
-{% set show_changes = view == 'changes' and chg and chg.base %}
 <div class="review">
   <section class="card pane" aria-label="The job post">
     <div class="card-head"><h2>The job post</h2>{% if a.job_url %}<a class="small" href="{{ a.job_url }}" target="_blank" rel="noopener">Open the ad</a>{% endif %}</div>
@@ -176,15 +249,8 @@
   <section class="card pane" aria-label="The letter">
     <div class="card-head"><h2>Letter</h2><span class="small text-2">{{ (a.letter or '').split()|length }} words</span></div>
     {% if look.decided.angle %}<p class="small text-2"><strong>The writer's angle:</strong> {{ look.decided.angle }}</p>{% endif %}
-    {% if show_changes and (not chg.letter.same or chg.subject) %}
-    <p class="small key-line"><ins class="chg">put in</ins> <del class="chg">taken out</del> · {{ chg.letter_line }}</p>
-    {% if chg.subject %}<p class="small"><strong>{{ chg.subject }}</strong></p>{% elif a.subject %}<p class="small"><strong>{{ a.subject }}</strong></p>{% endif %}
-    <div class="letter-text">{{ chg.letter.html }}</div>
-    {% else %}
-    {% if show_changes %}<p class="small text-2 key-line">The letter is unchanged since this version.</p>{% endif %}
     {% if a.subject %}<p class="small"><strong>{{ a.subject }}</strong></p>{% endif %}
     <div class="letter-text">{{ look.letter_html|safe }}</div>
-    {% endif %}
     {% set cnt = claims.get('counts', {}) %}
     <p class="small" style="margin-top:.8rem">{% if claims %}{% if cnt.get('unsupported') %}<span class="pill bad">{{ cnt.unsupported }} not backed</span> {% endif %}{% if cnt.get('partly') %}<span class="pill warn">{{ cnt.partly }} stretched</span> {% endif %}<span class="pill good">{{ cnt.get('supported', 0) }} backed</span>{% else %}<span class="text-2">Not fact-checked yet.</span>{% endif %}
       {% if v.get('score') is not none %} <span class="pill">Voice {{ v.score }}</span>{% endif %}
@@ -193,8 +259,6 @@
   </section>
   <section class="card pane" aria-label="The CV">
     <div class="card-head"><h2>CV</h2></div>
-    {% if show_changes and not chg.cv.same %}{{ cv_changes(chg.cv, design_primary) }}<h3 class="cv-now">The CV now</h3>
-    {% elif show_changes %}<p class="small text-2 key-line">The CV is unchanged since this version.</p>{% endif %}
     {% if cv_data %}
       {% if cv_error %}<p class="empty">The CV couldn't be typeset: {{ cv_error }}</p>{% endif %}
       <div class="cv-pages">{% for n in range(1, cv_pages + 1) %}<img class="cv-page" src="/applications/{{ a.id }}/cv-page/{{ n }}.png?v={{ a.updated_at }}" alt="CV, page {{ n }}">{% endfor %}</div>
@@ -253,11 +317,6 @@
 {% elif tab == 'cv' %}
 <div class="grid-2">
   <section class="card">
-    {% if chg and chg.base and not chg.cv.same %}
-    <details class="changes-box" open><summary>What changed in the CV since {{ chg.since }}: {{ chg.cv_line }}</summary>
-      {{ cv_changes(chg.cv, design_primary) }}
-      <p class="small" style="margin:.4rem 0 0">Saved {{ chg.base.created_at|local_dt }}. <a href="?tab=review&view=changes">Compare the letter too, or with another version →</a></p></details>
-    {% else %}{{ changes_note(chg, 'cv') }}{% endif %}
     {% if cv_data %}
     <p class="small text-2">This is your own CV{% if cv_base %} (<a href="/profile?tab=cv&base={{ cv_base.id }}">{{ cv_base.title }}</a>){% endif %}, made to read as written for this job: points and projects from your career database, and the sections in the order that suits it. What changed is listed under Letter → Notes from the writer.</p>
     <form method="post" action="/applications/{{ a.id }}/revise">
@@ -518,10 +577,8 @@
   {% if versions %}
   <ul class="list">
     {% for ver in versions %}
-    <li><div class="grow"><span class="title">{{ ver.label }}</span><span class="meta">{{ ver.created_at|local_dt }} · {{ (ver.letter or '').split()|length }} words{{ ' · the same as now' if chg and ver.id in chg.get('same_as_now', ()) }}</span>
-      {% if ver.asked %}<div class="small text-2">Then asked for: <q>{{ ver.asked|truncate(240) }}</q></div>{% endif %}
+    <li><div class="grow"><span class="title">{{ ver.label }}</span><span class="meta">{{ ver.created_at|local_dt }} · {{ (ver.letter or '').split()|length }} words</span>
       <details><summary class="small">Show letter</summary><div class="letter-view">{{ ver.letter|paras }}</div></details></div>
-      {% if not (chg and ver.id in chg.get('same_as_now', ())) %}<a class="btn small ghost" href="?tab=review&view=changes&against={{ ver.id }}">Compare with now</a>{% endif %}
       <form method="post" action="/applications/{{ a.id }}/restore/{{ ver.id }}" data-confirm="Restore this version? The current text is saved as a version first."><button class="btn small">Restore</button></form></li>
     {% endfor %}
   </ul>
