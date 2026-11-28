@@ -163,9 +163,12 @@ def proof() -> dict:
     from . import sources
 
     settings.update("state", {"proof_tried_at": db.now()})
-    screened = [_read_screened(r["id"]) for r in _sample(
-        "SELECT id FROM jobs WHERE status = 'filtered' AND notes = ? AND link_locked = 0 AND gone_at IS NULL",
-        (sources.FILTERED_NOTE,), PROOF_SCREENED)]
+    # Only listings within reach: one beyond your limit is set aside by rule anyway, so reading it proves nothing
+    # (the first proof, 2026-11-28, spent 7 of its 10 readings on those).
+    pool = _sample("SELECT id, location, work_mode FROM jobs WHERE status = 'filtered' AND notes = ? "
+                   "AND link_locked = 0 AND gone_at IS NULL", (sources.FILTERED_NOTE,), PROOF_SCREENED * 10)
+    within = [r for r in pool if not jobs.too_far(r["location"], r["work_mode"])][:PROOF_SCREENED]
+    screened = [_read_screened(r["id"]) for r in within]
     repeats = []
     for r in _sample("SELECT id, title, duplicate_of FROM jobs WHERE duplicate_of IS NOT NULL", (), PROOF_REPEATS):
         outcome = jobs.recheck_repeat(r["id"])

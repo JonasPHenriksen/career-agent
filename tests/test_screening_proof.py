@@ -106,8 +106,11 @@ def test_the_weekly_proof_reads_screened_out_listings_and_brings_back_a_miss(fak
     miss = jobs.add_from_url("https://board.example/miss", source_id=sid, title="Product Owner", queue=False)[0]
     db.update("jobs", miss, {"status": "filtered", "notes": sources.FILTERED_NOTE,
                              "details": '{"screened_out": ["another field", "agree"]}'})
+    far = jobs.add_from_url("https://board.example/far", source_id=sid, title="Udvikler", queue=False)[0]
+    db.update("jobs", far, {"status": "filtered", "notes": sources.FILTERED_NOTE, "location": "Aalborg"})
     run = health.proof()
-    assert run["screened"] == 1 and run["misses"] == 1, "the fake model scores it 86"
+    assert run["screened"] == 1 and run["misses"] == 1, "the fake model scores it 86; Aalborg is never read"
+    assert jobs.get(far)["parse_status"] != "parsed"
     job = jobs.get(miss)
     assert job["status"] in ("new", "shortlisted") and "the weekly check read it" in job["notes"], "back in your list"
     last = health.proof_result()["screened"][0]
