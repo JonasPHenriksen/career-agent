@@ -805,11 +805,14 @@ def _assumed_notes(letter: dict) -> list[str]:
     return [f"Assumed about you, check it's true: {a.strip()}" for a in (letter.get("assumed") or [])[:4] if a.strip()]
 
 
-def _save_version(app_id: int, label: str) -> None:
+def _save_version(app_id: int, label: str, asked: str | None = None) -> None:
+    """Keep the draft as it is now under Versions. `asked` is what you asked for in the change that follows, shown
+    next to what it changed."""
     a = db.q1("SELECT subject, letter, cv, cv_data FROM applications WHERE id = ?", (app_id,))
     if a and (a["letter"] or a["cv"]):
         db.insert("app_versions", {"application_id": app_id, "label": label, "subject": a["subject"],
-                                   "letter": a["letter"], "cv": a["cv"], "cv_data": a["cv_data"], "created_at": db.now()})
+                                   "letter": a["letter"], "cv": a["cv"], "cv_data": a["cv_data"],
+                                   "asked": (asked or "").strip()[:2000] or None, "created_at": db.now()})
 
 
 def draft(app_id: int, part: str = "both") -> dict:
@@ -829,7 +832,7 @@ def draft(app_id: int, part: str = "both") -> dict:
     language = choose_language(job)
     rewrite = bool(app.get("letter") or app.get("cv"))
     if rewrite:  # a fresh draft never loses the current one: it stays under Versions
-        _save_version(app_id, "Before a new draft")
+        _save_version(app_id, "Before a new draft", app.get("instructions"))
     db.update("applications", app_id, {"status": "drafting", "language": language, "updated_at": db.now()})
     system = writer_system(language, job)
     patch: dict = {"status": "draft", "updated_at": db.now()}
@@ -865,12 +868,14 @@ def draft(app_id: int, part: str = "both") -> dict:
     return {"words": words}
 
 
-def revise(app_id: int, instructions: str, part: str = "letter") -> dict:
+def revise(app_id: int, instructions: str, part: str = "letter", asked: str | None = None) -> dict:
+    """Revise the draft following your instructions. `asked` is how to name the request under Versions and on the
+    review screen when the instructions were put together by the app (your answers, the voice read)."""
     app = tracker.app_with_job(app_id)
     job = jobs.get(app["job_id"])
     language = app["language"] or choose_language(job)
     system = writer_system(language, job)
-    _save_version(app_id, "Before revision")
+    _save_version(app_id, "Before revision", asked or instructions)
     patch: dict = {"updated_at": db.now()}
     notes: list = []
     if part in ("letter", "both"):

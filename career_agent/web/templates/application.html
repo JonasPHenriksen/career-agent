@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import score, grade, deadline, progress, status, model_picker, made_by, ad_state, ask_first, email_block, kept_button %}
+{% from "_macros.html" import score, grade, deadline, progress, status, model_picker, made_by, ad_state, ask_first, email_block, kept_button, changes_bar, cv_changes, changes_note %}
 {% block title %}{{ a.job_title or 'Application' }}{% endblock %}
 {% block content %}
 <div class="crumbs"><a href="/tracker">Applications</a> · <a href="/jobs/{{ a.job_id }}">job details</a>{% if a.auto_drafted %} · drafted automatically{% endif %}</div>
@@ -111,6 +111,7 @@
     </form>
   </section>
   <div class="stack">
+    {{ changes_note(chg, 'letter') }}
     <section class="card">
       <h2>Ask for changes</h2>
       <form method="post" action="/applications/{{ a.id }}/revise">
@@ -160,6 +161,8 @@
   {% for sib in look.siblings %}<a href="/applications/{{ sib.id }}">{{ sib.title }}</a>{{ ', ' if not loop.last }}{% endfor %}.
   The same people may read them, so check that they don't open and argue the same way.</div>
 {% endif %}
+{{ changes_bar(chg, view, against) }}
+{% set show_changes = view == 'changes' and chg and chg.base %}
 <div class="review">
   <section class="card pane" aria-label="The job post">
     <div class="card-head"><h2>The job post</h2>{% if a.job_url %}<a class="small" href="{{ a.job_url }}" target="_blank" rel="noopener">Open the ad</a>{% endif %}</div>
@@ -173,8 +176,15 @@
   <section class="card pane" aria-label="The letter">
     <div class="card-head"><h2>Letter</h2><span class="small text-2">{{ (a.letter or '').split()|length }} words</span></div>
     {% if look.decided.angle %}<p class="small text-2"><strong>The writer's angle:</strong> {{ look.decided.angle }}</p>{% endif %}
+    {% if show_changes and (not chg.letter.same or chg.subject) %}
+    <p class="small key-line"><ins class="chg">put in</ins> <del class="chg">taken out</del> · {{ chg.letter_line }}</p>
+    {% if chg.subject %}<p class="small"><strong>{{ chg.subject }}</strong></p>{% elif a.subject %}<p class="small"><strong>{{ a.subject }}</strong></p>{% endif %}
+    <div class="letter-text">{{ chg.letter.html }}</div>
+    {% else %}
+    {% if show_changes %}<p class="small text-2 key-line">The letter is unchanged since this version.</p>{% endif %}
     {% if a.subject %}<p class="small"><strong>{{ a.subject }}</strong></p>{% endif %}
     <div class="letter-text">{{ look.letter_html|safe }}</div>
+    {% endif %}
     {% set cnt = claims.get('counts', {}) %}
     <p class="small" style="margin-top:.8rem">{% if claims %}{% if cnt.get('unsupported') %}<span class="pill bad">{{ cnt.unsupported }} not backed</span> {% endif %}{% if cnt.get('partly') %}<span class="pill warn">{{ cnt.partly }} stretched</span> {% endif %}<span class="pill good">{{ cnt.get('supported', 0) }} backed</span>{% else %}<span class="text-2">Not fact-checked yet.</span>{% endif %}
       {% if v.get('score') is not none %} <span class="pill">Voice {{ v.score }}</span>{% endif %}
@@ -183,6 +193,8 @@
   </section>
   <section class="card pane" aria-label="The CV">
     <div class="card-head"><h2>CV</h2></div>
+    {% if show_changes and not chg.cv.same %}{{ cv_changes(chg.cv, design_primary) }}<h3 class="cv-now">The CV now</h3>
+    {% elif show_changes %}<p class="small text-2 key-line">The CV is unchanged since this version.</p>{% endif %}
     {% if cv_data %}
       {% if cv_error %}<p class="empty">The CV couldn't be typeset: {{ cv_error }}</p>{% endif %}
       <div class="cv-pages">{% for n in range(1, cv_pages + 1) %}<img class="cv-page" src="/applications/{{ a.id }}/cv-page/{{ n }}.png?v={{ a.updated_at }}" alt="CV, page {{ n }}">{% endfor %}</div>
@@ -241,6 +253,11 @@
 {% elif tab == 'cv' %}
 <div class="grid-2">
   <section class="card">
+    {% if chg and chg.base and not chg.cv.same %}
+    <details class="changes-box" open><summary>What changed in the CV since {{ chg.since }}: {{ chg.cv_line }}</summary>
+      {{ cv_changes(chg.cv, design_primary) }}
+      <p class="small" style="margin:.4rem 0 0">Saved {{ chg.base.created_at|local_dt }}. <a href="?tab=review&view=changes">Compare the letter too, or with another version →</a></p></details>
+    {% else %}{{ changes_note(chg, 'cv') }}{% endif %}
     {% if cv_data %}
     <p class="small text-2">This is your own CV{% if cv_base %} (<a href="/profile?tab=cv&base={{ cv_base.id }}">{{ cv_base.title }}</a>){% endif %}, made to read as written for this job: points and projects from your career database, and the sections in the order that suits it. What changed is listed under Letter → Notes from the writer.</p>
     <form method="post" action="/applications/{{ a.id }}/revise">
@@ -501,8 +518,10 @@
   {% if versions %}
   <ul class="list">
     {% for ver in versions %}
-    <li><div class="grow"><span class="title">{{ ver.label }}</span><span class="meta">{{ ver.created_at|local_dt }} · {{ (ver.letter or '').split()|length }} words</span>
+    <li><div class="grow"><span class="title">{{ ver.label }}</span><span class="meta">{{ ver.created_at|local_dt }} · {{ (ver.letter or '').split()|length }} words{{ ' · the same as now' if chg and ver.id in chg.get('same_as_now', ()) }}</span>
+      {% if ver.asked %}<div class="small text-2">Then asked for: <q>{{ ver.asked|truncate(240) }}</q></div>{% endif %}
       <details><summary class="small">Show letter</summary><div class="letter-view">{{ ver.letter|paras }}</div></details></div>
+      {% if not (chg and ver.id in chg.get('same_as_now', ())) %}<a class="btn small ghost" href="?tab=review&view=changes&against={{ ver.id }}">Compare with now</a>{% endif %}
       <form method="post" action="/applications/{{ a.id }}/restore/{{ ver.id }}" data-confirm="Restore this version? The current text is saved as a version first."><button class="btn small">Restore</button></form></li>
     {% endfor %}
   </ul>

@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .. import (adcheck, backup, brand, collect, companies, config, cvdata, cvrender, db, emails, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
+from .. import (adcheck, backup, brand, collect, companies, compare, config, cvdata, cvrender, db, emails, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
                 profile, rank, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
 from .. import suggestions
@@ -522,7 +522,9 @@ APP_TABS = [("review", "Review"), ("letter", "Letter"), ("claude", "Claude.ai"),
 
 
 @app.get("/applications/{app_id}")
-def application(request: Request, app_id: int, tab: str = ""):
+def application(request: Request, app_id: int, tab: str = "", view: str = "", against: int | None = None):
+    """`view` on the review screen: "changes" marks what changed since an earlier version (`against`, by default the
+    newest that differs), "clean" shows the draft with the fact check's and voice read's marks."""
     a = need(tracker.app_with_job(app_id))
     job = jobs.get(a["job_id"])
     if job and a["status"] in ("drafting", "draft", "ready"):
@@ -560,13 +562,18 @@ def application(request: Request, app_id: int, tab: str = ""):
             cv_pages = cvrender.pages(cv_data, a["language"])
         except Exception as e:  # noqa: BLE001 - a CV that can't be typeset still has to be editable
             cv_error = str(e)[:300]
+    versions = db.q("SELECT * FROM app_versions WHERE application_id = ? ORDER BY id DESC", (app_id,))
+    chg = compare.for_app(a, versions, against) if tab in ("review", "letter", "cv", "history") else None
+    if view not in ("changes", "clean"):  # what changed is shown first, unless the letter was written again
+        view = "changes" if chg and chg.get("show") else "clean"
     return render(request, "application.html", a=a, job=job, tab=tab, tabs=APP_TABS, claims=claims, facts=facts, made=made,
+                  chg=chg, view=view, against=against,
                   cv_data=cv_data, cv_json=json.dumps(cv_data, ensure_ascii=False, indent=2) if cv_data else "",
                   cv_pages=cv_pages, cv_error=cv_error, cv_base=cvdata.base_for(a["language"]), look=look, design_primary=cvrender.design()["primary"],
                   prompt=prompt, prompt_words=len(prompt.split()),
                   v=db.jload(a["voice"], {}) or {}, read=voice.read_notes(a), notes=db.jload(a["writer_notes"], []) or [],
                   busy=tasks.active(ref=f"app:{app_id}"), error=tasks.last_error(f"app:{app_id}"),
-                  versions=db.q("SELECT * FROM app_versions WHERE application_id = ? ORDER BY id DESC", (app_id,)),
+                  versions=versions,
                   timeline=tracker.timeline(app_id), statuses=tracker.APP_STATUSES, event_types=tracker.EVENT_TYPES,
                   event_labels=tracker.EVENT_LABELS, status_labels=tracker.STATUS_LABELS,
                   badge=companies.badge(a["company_id"]), task_labels=tasks.TASK_LABELS, today=date.today().isoformat(),
@@ -686,8 +693,11 @@ async def application_voice_revise(request: Request, app_id: int):
                     + "\n".join(f"- “{n['text']}” → “{n['plainer']}”" for n in chosen))
     voice.settle(app_id, [n["plainer"] for n in chosen])  # later reads leave these sentences alone
     voice.leave(app_id, [n["text"] for n in read["notes"] if n not in chosen])  # and the ones you kept as they are
+    n = len(chosen)
+    asked = (f"The {'sentence' if n == 1 else f'{n} sentences'} you ticked on the Voice tab, said the plainer way: "
+             + " ".join(f"“{c['text']}”" for c in chosen))
     tasks.enqueue("revise_application", {"application_id": app_id, "instructions": instructions, "part": "letter",
-                                         **chosen_model(f)}, ref=f"app:{app_id}", dedupe=False)
+                                         "asked": asked, **chosen_model(f)}, ref=f"app:{app_id}", dedupe=False)
     return go(f"/applications/{app_id}?tab=voice", msg=with_model_msg(f, "Revising") + "…")
 
 

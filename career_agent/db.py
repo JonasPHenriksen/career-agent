@@ -395,6 +395,11 @@ MIGRATIONS: list[str] = [
     ALTER TABLE companies ADD COLUMN brand_note TEXT;
     ALTER TABLE companies ADD COLUMN brand_checked_at TEXT;
     """,
+    # 16: what was asked for when a draft was replaced (your instructions for a revision or a new draft), so the
+    # review screen can show it next to what changed
+    """
+    ALTER TABLE app_versions ADD COLUMN asked TEXT;
+    """,
 ]
 
 

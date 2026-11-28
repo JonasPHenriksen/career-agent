@@ -389,6 +389,38 @@ img.cv-page { width: 100%; height: auto; border: 1px solid var(--border); border
 mark.flag { background: var(--warn-soft); color: inherit; border-bottom: 2px solid var(--warn); border-radius: 2px; padding: 0 .1em; cursor: help; }
 mark.flag.unsupported { background: var(--bad-soft); border-bottom-color: var(--bad); }
 mark.flag.voice { background: none; border-bottom: 2px dotted var(--accent); }
+/* What changed since an earlier version (compare.py): put in green and underlined, taken out red and struck through */
+ins.chg { background: var(--good-soft); color: inherit; text-decoration: underline 2px color-mix(in srgb, var(--good) 70%, transparent); text-underline-offset: 3px; border-radius: 2px; padding: 0 .1em; }
+del.chg { background: var(--bad-soft); color: var(--text-2); text-decoration: line-through 1.5px var(--bad); border-radius: 2px; padding: 0 .1em; }
+.chg.para { text-decoration: none; font-size: .85em; padding: 0 .25em; cursor: help; }
+.changes-bar { margin-bottom: 1rem; }
+.changes-head { display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: flex-start; justify-content: space-between; }
+.changes-head h2 { margin: 0; }
+.changes-head p { margin: .1rem 0 0; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--surface); }
+.seg a { padding: .3rem .75rem; font-size: .85rem; color: var(--text-2); white-space: nowrap; }
+.seg a + a { border-left: 1px solid var(--border); }
+.seg a:hover { text-decoration: none; color: var(--accent); }
+.seg a.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.compare-with select { max-width: 22rem; }
+.changes-sum { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .25rem .9rem; margin: .7rem 0 0; font-size: .93rem; }
+.changes-sum dt { color: var(--muted); font-weight: 600; }
+.changes-sum dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.key-line { margin: 0 0 .6rem; }
+.cv-changes h3 { font-size: .88rem; margin: .8rem 0 .2rem; }
+.cv-changes h3 .entry { font-weight: 500; color: var(--text-2); }
+ul.cv-diff { list-style: none; margin: 0; padding: 0; font-size: .9rem; }
+ul.cv-diff li { display: flex; gap: .5rem; padding: .15rem 0; line-height: 1.45; }
+.cv-changes .ic { display: inline-block; width: 1rem; flex: none; text-align: center; font-weight: 700; }
+.ic.added { color: var(--good); }
+.ic.removed { color: var(--bad); }
+.ic.changed { color: var(--warn); }
+.ic.moved, .ic.reordered { color: var(--muted); }
+ul.cv-diff li.moved, ul.cv-diff li.reordered { color: var(--text-2); }
+.swatch { display: inline-block; width: .9em; height: .9em; border-radius: 3px; vertical-align: -.1em; border: 1px solid var(--border); }
+h3.cv-now { margin-top: 1.2rem; }
+.changes-box { margin-bottom: 1rem; padding-bottom: .8rem; border-bottom: 1px solid var(--border); }
+.changes-note { margin: 0; padding: .55rem .8rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 .voice-notes { list-style: none; padding: 0; margin: .4rem 0 .8rem; }
 .voice-notes li { margin-bottom: .8rem; }
 .voice-notes .problem, .voice-notes .plainer { margin-left: 1.6rem; }

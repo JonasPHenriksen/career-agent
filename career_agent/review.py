@@ -323,7 +323,9 @@ def apply_answers(app: dict, answers: dict[str, dict], model: dict | None = None
         part = "both" if parts >= {"letter", "cv"} else ("cv" if parts == {"cv"} else "letter")
         then = ("revise_application", {"application_id": app["id"], "part": part, **(model or {}),
                                        "instructions": "The candidate answered questions about this draft. Change only what "
-                                                       "their answers require:\n- " + "\n- ".join(instructions)})
+                                                       "their answers require:\n- " + "\n- ".join(instructions),
+                                       "asked": f"Change only what your {len(instructions)} answer"
+                                                f"{'s' if len(instructions) != 1 else ''} to the review questions require"})
     elif place_items:  # only confirmations: the text stays, the fact check then finds them in the database
         then = ("check_application", {"application_id": app["id"], **(model or {})})
     _queue(place_items, f"the application for {job_title}", f"app:{app['id']}", then)
