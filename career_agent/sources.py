@@ -95,8 +95,10 @@ def _rss_items(content: bytes, feed_url: str) -> list[dict]:
         company = ""
         if "jobindex.dk" in feed_url and ", " in title:  # Jobindex titles are "Role, Company"
             title, company = title.rsplit(", ", 1)
-        summary = _clean(e.get("summary") or e.get("description") or "")
-        items.append({"url": link, "title": title, "company": company, "location": "", "text": summary})
+        raw = e.get("summary") or e.get("description") or ""
+        # Jobindex's items name the place (its jix_robotjob--area line); the ad behind the link often doesn't
+        items.append({"url": link, "title": title, "company": company, "location": fetch.board_location(raw),
+                      "text": _clean(raw)})
     return items
 
 

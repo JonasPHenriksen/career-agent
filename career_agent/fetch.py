@@ -200,11 +200,15 @@ _BOILERPLATE = ["script", "style", "noscript", "svg", "iframe", "nav", "footer",
 _BOARD_AREA = [re.compile(r'jix_robotjob--area[^>]*>\s*([^<]{1,120}?)\s*<'),  # Jobindex: the line under the title
                re.compile(r'<title>Lokation:</title>[\s\S]{0,300}?</svg>\s*([^<]{1,120}?)\s*<')]  # …or its "Lokation"
 _MAP_AREA = re.compile(r'"title":"((?:[^"\\]|\\.){1,120})","type":"(?:area|address)"')  # Jobindex's map of the job
+# An employer's own page marked up for search engines: the job's place (schema.org microdata, not the company's)
+_JOB_LOCATION = re.compile(r'itemprop="jobLocation"[\s\S]{0,800}?itemprop="(?:addressLocality|streetAddress)"'
+                           r'(?:\s+content="([^"]{1,160})"|[^>]*>\s*([^<]{1,160}))')
 
 
 def board_location(html: str) -> str:
-    """Where the job board itself says the job is, when the page shows it outside the ad text (many ads only state
-    the place there): Jobindex's line under the title, or its map of the job's area. "" when the page has neither."""
+    """Where the page says the job is outside the ad text (many ads only state the place there): Jobindex's line
+    under the title (also in its RSS items), its map of the job's area, or an employer page's schema.org
+    jobLocation. "" when the page has none of these."""
     found: list[str] = []
     for rx in _BOARD_AREA:
         m = rx.search(html)
@@ -216,6 +220,11 @@ def board_location(html: str) -> str:
             place = json.loads(f'"{m.group(1)}"').strip()
         except ValueError:
             continue
+        if place and place not in found:
+            found.append(place)
+    m = _JOB_LOCATION.search(html)
+    if m:
+        place = BeautifulSoup(m.group(1) or m.group(2), "html.parser").get_text().strip()
         if place and place not in found:
             found.append(place)
     return ", ".join(p for p in found if p)[:200]

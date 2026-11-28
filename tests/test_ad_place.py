@@ -72,3 +72,22 @@ def test_a_teaser_is_neither_read_nor_scored_and_asks_for_the_ad(fake, monkeypat
     pasted = jobs.add_from_text("Udvikler hos Havbro. Kort opslag.", url="https://board.example/job/3")
     jobs.parse(pasted, use_text=True)
     assert jobs.get(pasted)["parse_status"] == "parsed", "text you paste yourself is read, however short"
+
+
+def test_a_jobindex_feed_item_brings_its_place_along():
+    from career_agent import sources
+
+    rss = ('<?xml version="1.0"?><rss version="2.0"><channel><item><title>Data Scientist, Brinkholm</title>'
+           '<link>https://www.jobindex.dk/vis-job/h1</link><description>&lt;div class="jobad-element-area"&gt;'
+           '&lt;span class="jix_robotjob--area"&gt;Aarhus C&lt;/span&gt;&lt;/div&gt;&lt;p&gt;We are hiring.&lt;/p&gt;'
+           '</description></item></channel></rss>').encode()
+    item = sources._rss_items(rss, "https://www.jobindex.dk/jobsoegning.rss?q=python")[0]
+    assert (item["title"], item["company"], item["location"]) == ("Data Scientist", "Brinkholm", "Aarhus C")
+    assert "We are hiring." in item["text"]
+
+
+def test_an_employer_page_marked_up_for_search_engines_gives_the_jobs_place_not_the_companys():
+    page = ('<span itemprop="hiringOrganization"><meta itemprop="streetAddress" content="Head office, 7330 Brande">'
+            '</span><span itemprop="jobLocation" itemscope itemtype="http://schema.org/Place"><span itemprop="address">'
+            '<meta itemprop="streetAddress" content="Inge Lehmanns Gade 2, Aarhus C, 8000, Denmark"></span></span>')
+    assert fetch.board_location(page) == "Inge Lehmanns Gade 2, Aarhus C, 8000, Denmark"
