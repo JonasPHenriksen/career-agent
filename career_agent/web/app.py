@@ -196,8 +196,9 @@ def llm_ready() -> tuple[bool, str]:
 # Today
 # ---------------------------------------------------------------------------------------
 
-# Today lists jobs ranked at least this high that have no draft yet (it was 15 under the old drafting threshold of 80).
-MATCH_FLOOR = 65
+# Today lists jobs ranked at least this high that have no draft yet. 55 since distance counts from home (rank.py,
+# 2026-11-28): at 65 hardly any job was left.
+MATCH_FLOOR = 55
 
 
 @app.get("/")
@@ -1205,7 +1206,7 @@ def profile_progress(request: Request):
 
 
 PROFILE_FIELDS = ["name", "email", "phone", "city", "linkedin", "website", "headline", "level", "target_roles",
-                  "target_industries", "locations", "max_km", "preferred_km", "big_employers", "min_salary", "availability", "deal_breakers",
+                  "target_industries", "locations", "max_km", "big_employers", "min_salary", "availability", "deal_breakers",
                   "always_mention", "never_mention", "about"]
 
 
@@ -1214,7 +1215,7 @@ async def profile_about(request: Request):
     data = await request.form()
     patch = {k: (data.get(k) or "").strip() for k in PROFILE_FIELDS}
     if patch["big_employers"] not in ("off", "moderate", "strong"):
-        patch["big_employers"] = "moderate"
+        patch["big_employers"] = "off"
     patch["work_modes"] = [m for m in ("onsite", "hybrid", "remote") if data.get(f"mode_{m}")]
     patch["job_kinds"] = {k: bool(data.get(f"kind_{k}")) for k, _ in jobkinds.KINDS}
     current = settings.get("profile")

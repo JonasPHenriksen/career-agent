@@ -250,12 +250,12 @@ class FakeProvider:
             return {"keep": [{"n": 0, "reason": "fits"}]}
         if schema is sources.PAGE_SCHEMA:
             return {"jobs": [{"n": 0, "title": "Job A", "company": "X", "location": ""}]}
-        if schema is companies.SIZE_SCHEMA:  # Netcompany is famous, "Mellem" mid-sized, the rest small; #3 is skipped
+        if schema is companies.SIZE_SCHEMA:  # Brinkholm is famous, "Mellem" mid-sized, the rest small; #3 is skipped
             import re
             sizes = []
             for n, name in re.findall(r"^(\d+)\. ([^|\n]*)", user, re.M):
                 if n != "3":
-                    size = "very_large" if "Netcompany" in name else "medium" if "Mellem" in name else "small"
+                    size = "very_large" if "Brinkholm" in name else "medium" if "Mellem" in name else "small"
                     sizes.append({"n": int(n), "size": size, "note": f"{name.strip()}: a guess"})
             return {"companies": sizes}
         if schema is jobs.SAME_JOB_SCHEMA:  # not certain: the job stays (tests that want a copy found say so)

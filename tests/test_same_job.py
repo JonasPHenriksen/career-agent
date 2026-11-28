@@ -58,7 +58,7 @@ def test_danish_letters_and_nearby_towns():
 
 def test_brackets_that_say_what_the_job_is_keep_two_jobs_apart():
     assert not jobs.same_name("Teton", "Software Engineer (Backend)", "Teton.ai ApS", "Software Engineer(Fleet)")
-    assert not jobs.same_name("Netcompany", "Associate Consultant (Swedish speaking)", "Netcompany", "Associate Consultant")
+    assert not jobs.same_name("Brinkholm", "Associate Consultant (Swedish speaking)", "Brinkholm", "Associate Consultant")
     assert jobs.same_name("FinPay", "Product Owner (m/k)", "FinPay A/S", "Product Owner [Hybrid]")
     assert jobs.same_name("FinPay", "Data Analyst (m/w/d)", "FinPay", "Data Analyst (Aarhus)")
     assert jobs.same_name("BDO", "Konsulent til Risk Assurance – København eller Aarhus", "BDO", "Konsulent til Risk Assurance")

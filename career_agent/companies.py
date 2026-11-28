@@ -171,7 +171,7 @@ Use what you know about the company and the description given. When a recruitmen
 
 def sizes_wanted() -> bool:
     """Whether employer sizes change the order of jobs (Profile → About you), so they're worth a model call."""
-    return (settings.get("profile").get("big_employers") or "moderate") != "off"
+    return (settings.get("profile").get("big_employers") or "off") != "off"
 
 
 def unsized() -> list[dict]:

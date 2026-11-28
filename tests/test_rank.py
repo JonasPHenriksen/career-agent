@@ -1,4 +1,4 @@
-"""Which jobs come first: fit, less a few points for distance and big employers; and how soon to apply."""
+"""Which jobs come first: fit, less points for distance, the kind of job and deal-breakers; and how soon to apply."""
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -9,17 +9,17 @@ from career_agent import companies, db, jobs, rank, settings, tasks
 from career_agent.web.app import app
 
 
-def _home(preferred="25", limit="50", nudge="moderate"):
-    settings.update("profile", {"city": "Horsens", "preferred_km": preferred, "max_km": limit, "big_employers": nudge})
+def _home(limit="50", nudge="off"):
+    settings.update("profile", {"city": "Horsens", "max_km": limit, "big_employers": nudge})
 
 
-def _job(title, company, location, fit, work_mode="onsite", size=None, **extra) -> int:
+def _job(title, company, location, score, work_mode="onsite", size=None, **extra) -> int:
     cid = companies.upsert(company)
     if size:
         db.update("companies", cid, {"size": size, "size_by": "model"})
     return db.insert("jobs", {"url": f"https://example.com/{title}-{company}".replace(" ", "-"), "title": title,
                               "company_name": company, "company_id": cid, "location": location, "work_mode": work_mode,
-                              "fit_score": fit, "status": "new", "parse_status": "parsed", "created_at": db.now(),
+                              "fit_score": score, "status": "new", "parse_status": "parsed", "created_at": db.now(),
                               **extra})
 
 
@@ -27,52 +27,103 @@ def _rows():
     return db.q("SELECT * FROM jobs ORDER BY id")
 
 
-def test_distance_costs_nothing_inside_the_preferred_distance_and_up_to_12_points_at_the_limit():
-    assert rank.distance_points(20, "onsite", 25, 50) == 0
-    assert rank.distance_points(25, "onsite", 25, 50) == 0
-    assert rank.distance_points(40, "onsite", 25, 50) == 7, "Aarhus from Horsens"
-    assert rank.distance_points(40, None, 25, 50) == 7, "work mode not stated counts as on site"
-    assert rank.distance_points(40, "hybrid", 25, 50) == 7, "at the office much of the time, most of all at the start"
-    assert rank.distance_points(40, "remote", 25, 50) == 0
-    assert rank.distance_points(50, "onsite", 25, 50) == 12
-    assert rank.distance_points(70, "onsite", 25, 50) == 12, "a job kept beyond the limit costs no more"
-    assert rank.distance_points(140, "hybrid", 25, 50, main=True) == 24, "only a secondary office is in reach"
-    assert rank.distance_points(140, "remote", 25, 50, main=True) == 0
-    assert rank.distance_points(40, "onsite", None, 50) == 0, "no preference, no points"
-    assert rank.distance_points(None, "onsite", 25, 50) == 0, "a place the app doesn't know"
+def _points(job_id):
+    return rank.annotate([db.q1("SELECT * FROM jobs WHERE id = ?", (job_id,))])[0]["rank"]["points"]
 
 
-def test_a_near_job_at_a_small_employer_beats_a_slightly_better_fit_at_a_big_one_further_away(fake):
-    _home()
-    aarhus = _job("Linux Operations Engineer", "Netcompany", "Aarhus", 72, size="very_large")
+def test_distance_costs_a_quarter_point_a_km_from_home_up_to_the_limit():
+    assert rank.distance_points(0, "onsite", 50) == 0
+    assert rank.distance_points(21, "onsite", 50) == 5, "Skanderborg"
+    assert rank.distance_points(33, "onsite", 50) == 8, "Fredericia"
+    assert rank.distance_points(40, "onsite", 50) == 10, "Aarhus from Horsens"
+    assert rank.distance_points(40, None, 50) == 10, "work mode not stated counts as on site"
+    assert rank.distance_points(40, "hybrid", 50) == 10, "at the office much of the time, most of all at the start"
+    assert rank.distance_points(40, "remote", 50) == 0
+    assert rank.distance_points(48, "onsite", 50) == 12, "Kolding"
+    assert rank.distance_points(70, "onsite", 50) == 12, "a job kept beyond the limit costs no more than one at it"
+    assert rank.distance_points(None, "onsite", 50) == 0
+
+
+def test_a_near_job_beats_a_better_fit_further_away_and_size_counts_only_when_you_turn_it_on(fake):
+    _home(nudge="moderate")
+    aarhus = _job("Linux Operations Engineer", "Brinkholm", "Aarhus", 72, size="very_large")
     horsens = _job("IT-supporter", "Lokal IT ApS", "Horsens", 66, size="small")
     vejle = _job("Developer", "Mellem A/S", "Vejle", 68, size="large")
     unscored = _job("Tester", "Lokal IT ApS", "Horsens", None)
     order = rank.best_first(_rows())
-    assert [r["id"] for r in order] == [horsens, vejle, aarhus, unscored], "Vejle 68 at a large employer is 64"
+    assert [r["id"] for r in order] == [horsens, vejle, aarhus, unscored], "Vejle 68, 26 km, large employer is 58"
     a = next(r for r in order if r["id"] == aarhus)["rank"]
-    assert a["score"] == 72 - 7 - 8 and a["points"] == [(7, "Aarhus, 40 km"), (8, "very large or very well-known employer")]
-    assert next(r for r in order if r["id"] == vejle)["rank"]["points"] == [(4, "large employer")]
+    assert a["score"] == 72 - 10 - 8 and a["points"] == [(10, "Aarhus, 40 km"), (8, "very large or very well-known employer")]
+    assert next(r for r in order if r["id"] == vejle)["rank"]["points"] == [(6, "Vejle, 26 km"), (4, "large employer")]
     assert next(r for r in order if r["id"] == unscored)["rank"]["score"] is None
 
     settings.update("profile", {"big_employers": "strong"})
-    assert rank.annotate([db.q1("SELECT * FROM jobs WHERE id = ?", (aarhus,))])[0]["rank"]["score"] == 72 - 7 - 16
-    settings.update("profile", {"big_employers": "off", "preferred_km": ""})
-    assert rank.annotate([db.q1("SELECT * FROM jobs WHERE id = ?", (aarhus,))])[0]["rank"]["score"] == 72
+    assert rank.annotate([db.q1("SELECT * FROM jobs WHERE id = ?", (aarhus,))])[0]["rank"]["score"] == 72 - 10 - 16
+    settings.update("profile", {"big_employers": ""})
+    assert rank.annotate([db.q1("SELECT * FROM jobs WHERE id = ?", (aarhus,))])[0]["rank"]["score"] == 72 - 10, \
+        "off unless you turn it on"
 
 
-def test_distance_is_to_the_main_workplace_when_the_ad_names_one_among_several(fake):
+def test_distance_is_to_the_main_workplace_and_one_beyond_your_limit_is_set_aside(fake):
     _home()
     main = '{"main_location": "Aalborg"}'
-    sap = _job("Junior SAP/ABAP-udvikler", "KMD", "Aalborg, Aarhus, Ballerup", 78, work_mode="hybrid", details=main)
-    choose = _job("IT Consultant", "Netcompany", "Copenhagen, Aarhus or Aalborg", 70)
+    sap = _job("Junior SAP/ABAP-udvikler", "Nordvik", "Aalborg, Aarhus, Ballerup", 78, work_mode="hybrid", details=main)
+    choose = _job("IT Consultant", "Brinkholm", "Copenhagen, Aarhus or Aalborg", 70)
     alone = _job("Developer", "Mellem A/S", "Aalborg", 70, details=main)
     ranked = {r["id"]: r["rank"] for r in rank.annotate(_rows())}
-    assert ranked[sap]["points"] == [(24, "Aalborg, 132 km (main workplace) (hybrid)")] and ranked[sap]["score"] == 54
-    assert ranked[choose]["points"] == [(7, "Aarhus, 40 km")], "offices you choose between: the nearest counts"
+    assert ranked[sap]["points"] == [(12, "Aalborg, 132 km (main workplace) (hybrid)")] and ranked[sap]["score"] == 66
+    assert ranked[choose]["points"] == [(10, "Aarhus, 40 km")], "offices you choose between: the nearest counts"
     assert ranked[alone]["points"] == [(12, "Aalborg, 132 km")], "one place: kept beyond the limit, no more than that"
     job = db.q1("SELECT * FROM jobs WHERE id = ?", (sap,))
     assert jobs.distance_line(job).endswith("The ad names Aalborg as the main workplace.")
+
+    assert jobs.filter_too_far() == 2
+    status = {r["id"]: (r["status"], r["notes"] or "") for r in _rows()}
+    assert status[sap][0] == "filtered" and "Aalborg, 132 km from Horsens, the ad's main workplace" in status[sap][1]
+    assert status[alone][0] == "filtered" and status[choose][0] == "new"
+
+
+def test_a_place_the_app_cant_measure_costs_what_aarhus_does_and_abroad_what_the_limit_does(fake):
+    _home()
+    empty = _job("A", "Havbro", "", 70)
+    region = _job("B", "Havbro", "Region Midtjylland", 70)
+    abroad = _job("C", "Havbro", "Warsaw, Poland", 70, work_mode=None)
+    remote = _job("D", "Havbro", "", 70, work_mode="remote")
+    karup = _job("E", "Havbro", "Karup J", 70)
+    assert _points(empty) == [(10, "location not stated")]
+    assert _points(region) == [(10, "distance not known (Region Midtjylland)")]
+    assert _points(abroad) == [(12, "outside Denmark")]
+    assert _points(remote) == []
+    assert _points(karup) == [(12, "Karup, 65 km")], "a town added to the list on 2026-11-28"
+
+
+def test_the_kind_of_job_and_deal_breakers_count_only_on_fit_verdicts_made_without_them(fake):
+    _home()
+    new = '{{"basis": 2, "role_match": "{}", "dealbreakers": {}}}'
+    target = _job("A", "Havbro", "Horsens", 70, fit=new.format("target", "[]"))
+    related = _job("B", "Havbro", "Horsens", 70, fit=new.format("related", "[]"))
+    outside = _job("C", "Havbro", "Horsens", 70, fit=new.format("outside", "[]"))
+    breaker = _job("D", "Havbro", "Horsens", 70, fit=new.format("target", '["A temporary contract"]'))
+    old = _job("E", "Havbro", "Horsens", 70, fit='{"role_match": "outside", "dealbreakers": ["50 km"]}')
+    assert _points(target) == []
+    assert _points(related) == [(7, "next to your target roles")]
+    assert _points(outside) == [(30, "outside your target roles")]
+    assert _points(breaker) == [(40, "deal-breaker: A temporary contract")]
+    assert _points(old) == [], "an older verdict has these in its score already: nothing counts twice"
+
+
+def test_the_fit_prompt_never_sees_where_the_job_or_you_are(fake):
+    db.insert("facts", {"category": "skill", "title": "Scrum", "created_at": db.now()})
+    _home()
+    settings.update("profile", {"locations": "Horsens, ideally within 25 km", "work_modes": ["onsite"]})
+    job_id = _job("Developer", "Havbro", "Aarhus", None, description="Vi søger en udvikler.")
+    assert jobs.score(job_id)["score"] == 86
+    system, user, _ = next(c for c in fake.calls if c[2] is jobs.FIT_SCHEMA)
+    for told in ("Distance from home", "Location:", "Aarhus", "Preferred locations", "Longest distance", "City:",
+                 "Work modes"):
+        assert told not in system + user, told
+    assert "role_match" in jobs.FIT_SCHEMA["properties"]
+    assert (db.jload(jobs.get(job_id)["fit"], {}) or {}).get("basis") == jobs.FIT_BASIS
 
 
 def test_a_job_without_a_date_is_urgent_unless_it_was_posted_long_ago_or_is_an_open_application():
@@ -120,6 +171,7 @@ def test_dates_the_ad_never_states_are_when_the_listing_comes_down():
 def test_reading_an_ad_keeps_the_boards_valid_through_date_apart_from_the_deadline(fake, monkeypatch):
     from career_agent import fetch
 
+    settings.update("profile", {"big_employers": "moderate"})
     page = ('<html><head><script type="application/ld+json">{"@type": "JobPosting", "title": "Product Owner", '
             '"validThrough": "2030-12-16", "description": "Product Owner hos FinPay. Søg snarest."}</script></head>'
             '<body><h1>Product Owner</h1><p>Product Owner hos FinPay. Søg snarest, vi holder samtaler løbende.</p>'
@@ -165,11 +217,11 @@ def test_the_same_job_with_its_title_written_two_ways():
                            "Field Service Engineer, Critical Infrastructure Protection, Lystrup")
     assert jobs.same_title("Entry IT Specialist, Power BI & Data Engineering - Aarhus",
                            "Entry IT Specialist, Power BI & Data Engineering")
-    assert jobs.same_title("Backendudvikler til KMD Sekoia", "Backend-udvikler til KMD Sekoia")
+    assert jobs.same_title("Backendudvikler til Nordvik Sekoia", "Backend-udvikler til Nordvik Sekoia")
     assert jobs.same_title("AI-udvikler / AI Engineer", "AI-udvikler / AI Engineer til Krifa", "Krifa",
                            "Kristelig Fagbevægelse (KRIFA)")
     assert jobs.same_title("Platform Engineer", "Platform Engineer at Whiteaway Group", "WhiteAway Group", "Whiteaway Group")
-    assert not jobs.same_title("IT Consultant", "IT Consultant, Netcompany Consulting", "Netcompany", "Netcompany A/S"), \
+    assert not jobs.same_title("IT Consultant", "IT Consultant, Brinkholm Consulting", "Brinkholm", "Brinkholm A/S"), \
         "a business unit is another job"
     assert not jobs.same_title("Software Engineer", "Software Engineer - Platform")
     assert not jobs.same_title("Linux Operations Engineer", "Microsoft Operations Engineer")
@@ -187,12 +239,12 @@ def test_one_company_by_its_short_name_or_cut_short():
 def test_the_sweep_sets_aside_a_job_found_twice_under_two_spellings(fake):
     a = db.insert("sources", {"name": "netcompany.com", "kind": "rss", "url": "https://a.example", "created_at": db.now()})
     b = db.insert("sources", {"name": "jobindex", "kind": "rss", "url": "https://b.example", "created_at": db.now()})
-    first = db.insert("jobs", {"url": "https://a.example/1", "title": "Linux Operations Engineer", "company_name": "Netcompany",
+    first = db.insert("jobs", {"url": "https://a.example/1", "title": "Linux Operations Engineer", "company_name": "Brinkholm",
                                "location": "Copenhagen, Aarhus", "source_id": a, "status": "new", "created_at": db.now()})
     second = db.insert("jobs", {"url": "https://b.example/1", "title": "Linux Operations Engineer: Copenhagen, Aarhus or Aalborg",
-                                "company_name": "Netcompany A/S", "location": "Aarhus", "source_id": b, "status": "new",
+                                "company_name": "Brinkholm A/S", "location": "Aarhus", "source_id": b, "status": "new",
                                 "created_at": db.now()})
-    other = db.insert("jobs", {"url": "https://b.example/2", "title": "Microsoft Operations Engineer", "company_name": "Netcompany A/S",
+    other = db.insert("jobs", {"url": "https://b.example/2", "title": "Microsoft Operations Engineer", "company_name": "Brinkholm A/S",
                                "location": "Aarhus", "source_id": b, "status": "new", "created_at": db.now()})
     assert jobs.mark_existing_repeats() == 1
     assert db.q1("SELECT duplicate_of FROM jobs WHERE id = ?", (second,))["duplicate_of"] == first
@@ -201,13 +253,13 @@ def test_the_sweep_sets_aside_a_job_found_twice_under_two_spellings(fake):
 
 def test_employer_sizes_are_judged_in_batches_and_yours_wins(fake):
     _home()
-    big = _job("A", "Netcompany", "Aarhus", 70)
+    big = _job("A", "Brinkholm", "Aarhus", 70)
     mid = _job("B", "Mellem A/S", "Vejle", 70)
     skipped = _job("C", "Ukendt Firma ApS", "Horsens", 70)
     mine = _job("D", "Min Virksomhed ApS", "Horsens", 70)
     _job("E", "Gammel ApS", "Horsens", 70, status="dismissed")
     companies.set_size(db.q1("SELECT company_id FROM jobs WHERE id = ?", (mine,))["company_id"], "large")
-    assert [c["name"] for c in companies.unsized()] == ["Netcompany", "Mellem A/S", "Ukendt Firma ApS"], \
+    assert [c["name"] for c in companies.unsized()] == ["Brinkholm", "Mellem A/S", "Ukendt Firma ApS"], \
         "only employers of jobs you might still apply to, and not one you judged yourself"
     assert companies.judge_sizes() == {"judged": 3}
     size = {r["title"]: (r["size"], r["size_by"]) for r in db.q(
@@ -224,27 +276,30 @@ def test_employer_sizes_are_judged_in_batches_and_yours_wins(fake):
 
 def test_the_pages_show_the_order_and_why(fake):
     _home()
-    _job("Linux Operations Engineer", "Netcompany", "Aarhus", 72, size="very_large", posted_at=date.today().isoformat())
+    _job("Linux Operations Engineer", "Brinkholm", "Aarhus", 72, size="very_large", posted_at=date.today().isoformat())
     _job("IT-supporter", "Lokal IT ApS", "Horsens", 66, size="small", deadline="2030-01-01")
     c = TestClient(app)
     page = c.get("/jobs").text
     assert page.index("IT-supporter") < page.index("Linux Operations Engineer")
-    assert "Fit 72: −7 Aarhus, 40 km, −8 very large or very well-known employer" in page
-    assert ('title="Ranked 57 in your list: fit 72, −7 Aarhus, 40 km, −8 very large or very well-known employer">57<'
-            '/span><small>rank</small>' in page), "the ranked score, and the fit next to it"
+    assert "Fit 72: −10 Aarhus, 40 km</div>" in page
+    assert ('title="Ranked 62 in your list: fit 72, −10 Aarhus, 40 km">62</span><small>rank</small>' in page), \
+        "the ranked score, and the fit next to it"
     assert ">72</span><small>fit</small>" in page
     assert 'title="Ranked 66 in your list: fit 66, nothing taken off">66<' in page
     assert "rolling · apply soon" in page
     urgent = c.get("/jobs?sort=urgent").text
     assert urgent.index("Linux Operations Engineer") < urgent.index("IT-supporter")
     assert c.get("/jobs?sort=deadline").status_code == 200, "an old link to the deadline order still works"
-    r = c.post("/profile/about", data={"city": "Horsens", "max_km": "50", "preferred_km": "25", "big_employers": "loud"},
+    r = c.post("/profile/about", data={"city": "Horsens", "max_km": "50", "big_employers": "loud"},
                follow_redirects=False)
-    assert r.status_code == 303 and settings.get("profile")["big_employers"] == "moderate"
-    cid = db.q1("SELECT id FROM companies WHERE name = 'Netcompany'")["id"]
+    assert r.status_code == 303 and settings.get("profile")["big_employers"] == "off"
+    assert "preferred_km" not in c.get("/profile?tab=about").text, "distance counts from home: no free zone to set"
+    c.post("/profile/about", data={"city": "Horsens", "max_km": "50", "big_employers": "moderate"}, follow_redirects=False)
+    assert "Fit 72: −10 Aarhus, 40 km, −8 very large or very well-known employer" in c.get("/jobs").text
+    cid = db.q1("SELECT id FROM companies WHERE name = 'Brinkholm'")["id"]
     c.post(f"/companies/{cid}", data={"size": "medium"}, follow_redirects=False)
     assert db.q1("SELECT size, size_by FROM companies WHERE id = ?", (cid,)) == {"size": "medium", "size_by": "you"}
-    assert "Fit 72: −7 Aarhus, 40 km" in c.get("/jobs").text
+    assert "Fit 72: −10 Aarhus, 40 km</div>" in c.get("/jobs").text
     c.post(f"/companies/{cid}", data={"size": ""}, follow_redirects=False)
     assert db.q1("SELECT size FROM companies WHERE id = ?", (cid,))["size"] is None
     assert db.scalar("SELECT COUNT(*) FROM tasks WHERE kind = 'size_companies'") >= 1, "handed back to the model"
@@ -254,13 +309,13 @@ def test_the_pages_show_the_order_and_why(fake):
 def test_every_job_shows_its_ranked_score_and_its_fit_side_by_side(fake):
     _home()
     main = '{"main_location": "Aalborg"}'
-    sap = _job("Junior SAP/ABAP-udvikler", "KMD", "Aalborg, Aarhus, Ballerup", 78, work_mode="hybrid", size="very_large",
-               details=main, deadline=(date.today() + timedelta(days=3)).isoformat())
+    sap = _job("Junior SAP/ABAP-udvikler", "Nordvik", "Aalborg, Aarhus, Ballerup", 78, work_mode="hybrid",
+               size="very_large", details=main, deadline=(date.today() + timedelta(days=3)).isoformat())
     db.update("jobs", sap, {"fit": '{"score": 78, "verdict": "good", "summary": "A good fit."}'})
-    app_id = db.insert("applications", {"job_id": sap, "status": "draft", "letter": "Kære KMD", "created_at": db.now()})
-    badge = ('title="Ranked 46 in your list: fit 78, −24 Aalborg, 132 km (main workplace) (hybrid), −8 very large or '
-             'very well-known employer">46</span><small>rank</small></span><span class="sc"><span class="score '
-             'score-good" title="Fit 78: how well you match the job. Distance and employer size don\'t change it">78<')
+    app_id = db.insert("applications", {"job_id": sap, "status": "draft", "letter": "Kære Nordvik", "created_at": db.now()})
+    badge = ('title="Ranked 66 in your list: fit 78, −12 Aalborg, 132 km (main workplace) (hybrid)">66</span><small>'
+             'rank</small></span><span class="sc"><span class="score score-good" title="Fit 78: could you get it? How well '
+             'you match what the ad asks for. Where it is and whether you want it count in the rank">78<')
     c = TestClient(app)
     today = c.get("/").text
     assert today.count(badge) == 2, "waiting for review, and the deadlines"
@@ -268,7 +323,7 @@ def test_every_job_shows_its_ranked_score_and_its_fit_side_by_side(fake):
     assert badge in c.get(f"/companies/{cid}").text
     assert badge in c.get(f"/applications/{app_id}").text
     job = c.get(f"/jobs/{sap}").text
-    assert "Ranked 46 in your list: fit 78, −24 Aalborg, 132 km (main workplace) (hybrid), −8 very large" in job
+    assert "Ranked 66 in your list: fit 78, −12 Aalborg, 132 km (main workplace) (hybrid)." in job
     assert badge.replace('score-low"', 'score-low big"').replace('score-good"', 'score-good big"') in job, "fit card"
 
 

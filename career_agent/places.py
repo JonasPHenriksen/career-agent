@@ -162,7 +162,36 @@ _TOWNS: list[tuple[str, str, float, float, tuple[int, ...], tuple[str, ...]]] = 
     ("Kalundborg", "Z", 55.680, 11.089, (), ()),
     ("Vordingborg", "Z", 55.008, 11.911, (), ()),
     ("Nykøbing Falster", "Z", 54.769, 11.874, (), ()),
+    # Found in ads on 2026-11-28 that the list didn't know (jobs without a distance rank as if in Aarhus)
+    ("Hatting", "J", 55.833, 9.767, (), ()),
+    ("Låsby", "J", 56.153, 9.815, (), ()),
+    ("Bording", "J", 56.158, 9.243, (), ()),
+    ("Karup", "J", 56.307, 9.167, (7470,), ("karup j",)),
+    ("Aulum", "J", 56.265, 8.787, (), ()),
+    ("Videbæk", "J", 56.088, 8.630, (), ()),
+    ("Spjald", "J", 56.120, 8.500, (), ()),
+    ("Ølgod", "J", 55.807, 8.623, (), ()),
+    ("Tjæreborg", "J", 55.465, 8.578, (), ()),
+    ("Tinglev", "J", 54.937, 9.253, (), ()),
+    ("Gråsten", "J", 54.919, 9.595, (6300,), ()),
+    ("Glyngøre", "J", 56.762, 8.866, (), ()),
+    ("Svenstrup J", "J", 56.977, 9.857, (), ("svenstrup",)),
+    ("Vrå", "J", 57.354, 9.941, (), ()),
+    ("Værløse", "Z", 55.782, 12.370, (3500,), ()),
+    ("Frederikssund", "Z", 55.839, 12.069, (3600,), ()),
+    ("Rødovre", "Z", 55.681, 12.453, (2610,), ()),
+    ("Vallensbæk Strand", "Z", 55.618, 12.383, (2665,), ("vallensbæk",)),
+    ("Dragør", "Z", 55.593, 12.671, (2791,), ()),
+    ("Hedehusene", "Z", 55.650, 12.197, (2640,), ()),
+    ("Nørre Alslev", "Z", 54.893, 11.886, (), ("nr. alslev", "nr alslev")),
+    ("Rønne", "Z", 55.100, 14.706, (3700,), ()),
 ]
+
+# Areas an ad names instead of a town, measured to a town in the middle of them. Wider ones (Midtjylland,
+# Sønderjylland) are left unknown: the job could be anywhere in them.
+_AREAS = {"københavns omegn": "København", "storkøbenhavn": "København", "nordsjælland": "Hillerød",
+          "trekantsområdet": "Fredericia", "trekantområdet": "Fredericia", "bornholm": "Rønne",
+          "falster": "Nykøbing Falster"}
 
 # Postal codes not listed above: whole ranges that are far from each other but one area, good enough for "how far".
 _RANGES = [(1000, 2999, "København"), (3000, 3699, "Hillerød"), (4000, 4999, "Ringsted"), (5000, 5399, "Odense"),
@@ -181,9 +210,11 @@ _ABROAD = (
     "flensburg flensborg warsaw warszawa krakow kraków gdansk gdańsk wroclaw vilnius kaunas riga tallinn london "
     "leeds manchester edinburgh brussels bruxelles amsterdam rotterdam paris madrid barcelona lisbon lissabon "
     "athens patras bucharest sofia prague prag budapest vienna wien zurich zürich dublin hanoi bangalore "
-    "kuala manila").split() + ["united states", "ho chi minh", "new york"]
+    "kuala manila porto lissabon eindhoven wroclaw wrocław pecs pécs birmingham warrington cheshire derby southampton "
+    "meyrin nuuk thessaloniki belgrade beograd trondheim strasbourg szczecin isernhagen bern thun köln koeln cologne "
+    "malaga málaga udlandet").split() + ["united states", "ho chi minh", "new york", "the hague"]
 _NOT_A_PLACE = {"", "danmark", "denmark", "dk", "hybrid", "remote", "onsite", "on-site", "on site", "hovedkontor",
-                "hq", "headquarters", "kontor", "office"}
+                "hq", "headquarters", "kontor", "office", "mulighed for hjemmearbejde", "hybrid position", "øvrige"}
 _STREET = re.compile(r"\b\d{1,3}\s?[a-z]?\b")
 
 
@@ -197,8 +228,12 @@ _BY_CODE: dict[int, int] = {}
 for _i, (_name, _region, _lat, _lon, _codes, _other) in enumerate(_TOWNS):
     for _n in (_name, *_other):
         _BY_NAME.setdefault(_norm(_n), _i)
+        # written out the way some ads do: Soeborg, Glyngoere, Koebenhavn
+        _BY_NAME.setdefault(_norm(_n.lower().replace("æ", "ae").replace("ø", "oe")), _i)
     for _c in _codes:
         _BY_CODE[_c] = _i
+for _area, _town_name in _AREAS.items():
+    _BY_NAME.setdefault(_norm(_area), _BY_NAME[_norm(_town_name)])
 _NAME_RX = re.compile(r"(?<![\w])(" + "|".join(re.escape(n) for n in sorted(_BY_NAME, key=len, reverse=True))
                       + r")(?![\w])")
 _ABROAD_RX = re.compile(r"(?<![\w])(" + "|".join(re.escape(_norm(n)) for n in sorted(_ABROAD, key=len, reverse=True))
@@ -220,6 +255,7 @@ def _written_out(name: str) -> str:
 
 _FOLDED_RX = re.compile(r"(?<![\w])(" + "|".join(re.escape(n) for n in sorted(
     {_fold(v) for t in _TOWNS for n in (t[0], *t[5]) for v in (n, _written_out(n))}
+    | {_fold(v) for n in _AREAS for v in (n, _written_out(n))}
     | {_fold(v) for n in _ABROAD for v in (n, _written_out(n))}, key=len, reverse=True) if n)
     + r")(?![\w])")
 _PLACE_JOINERS = {"or", "eller", "and", "og", "also", "ogsa", "ogsaa", "near", "naer", "nær", "i", "in", "ved"}

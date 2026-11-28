@@ -706,17 +706,20 @@ def distance_limit() -> float | None:
     return km if km > 0 else None
 
 
-def candidate_block() -> str:
+def candidate_block(place: bool = True) -> str:
+    """The candidate for a prompt. place=False leaves out where they live and how far they'd go: the fit score
+    must not weigh that (rank.py does)."""
     p = settings.get("profile")
     rows = [
-        ("Name", p.get("name")), ("City", p.get("city")), ("Headline", p.get("headline")),
+        ("Name", p.get("name")), ("City", p.get("city") if place else None), ("Headline", p.get("headline")),
         ("Level", LEVEL_LABELS.get(p.get("level") or "")),
         ("Target roles", p.get("target_roles")), ("Target industries", p.get("target_industries")),
-        ("Preferred locations", p.get("locations")),
+        ("Preferred locations", p.get("locations") if place else None),
         ("Longest distance to on-site or hybrid work",
          f"{distance_limit():g} km from {p.get('city')} in a straight line (measured for each job, never estimate it)"
-         if distance_limit() and p.get("city") else None),
-        ("Work modes", ", ".join(p.get("work_modes") or [])), ("Salary expectation", p.get("min_salary")),
+         if place and distance_limit() and p.get("city") else None),
+        ("Work modes", ", ".join(p.get("work_modes") or []) if place else None),
+        ("Salary expectation", p.get("min_salary")),
         ("Availability / notice", p.get("availability")), ("Deal-breakers", p.get("deal_breakers")),
         ("Always mention when relevant", p.get("always_mention")), ("Never mention", p.get("never_mention")),
         ("In their own words", p.get("about")),

@@ -397,7 +397,12 @@ def test_distance_from_home_is_measured_not_guessed(fake):
     settings.update("profile", {"city": "Horsens", "max_km": "50"})
     try:
         assert "too far" in jobs.too_far("Roskilde", "onsite") and "199 km" in jobs.too_far("Roskilde", "hybrid")
-        assert jobs.too_far("Roskilde", "remote") is None and jobs.too_far("Roskilde", "unknown") is None
+        assert jobs.too_far("Roskilde", "remote") is None
+        assert "Probably on site (the ad doesn't say) in Roskilde" in jobs.too_far("Roskilde", "unknown"), \
+            "an ad that doesn't say how it's worked counts as on site"
+        assert "outside Denmark" in jobs.too_far("Warsaw, Poland", None)
+        assert "Aalborg, 132 km from Horsens, the ad's main workplace" in jobs.too_far("Aalborg, Aarhus", "hybrid", "Aalborg")
+        assert jobs.too_far("Aalborg, Aarhus", "hybrid") is None, "offices you choose between: the nearest counts"
         assert jobs.too_far("Aarhus", "onsite") is None and jobs.too_far("Et sted i Jylland", "onsite") is None
         assert "Longest distance to on-site or hybrid work: 50 km from Horsens" in profile.candidate_block()
 
