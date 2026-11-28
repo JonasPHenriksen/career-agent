@@ -46,6 +46,7 @@ TASK_LABELS = {
     "read_voice": "Reading the letter for your voice",
     "size_companies": "Judging how big new employers are",
     "check_ads": "Checking that job ads are still up",
+    "audit_jobs": "Checking how job ads were read (weekly)",
 }
 
 _wake = threading.Event()
@@ -71,7 +72,7 @@ def enqueue(kind: str, payload: dict | None = None, ref: str | None = None, dedu
 
 
 def _handlers() -> dict:
-    from . import adcheck, collect, companies, cvdata, jobs, profile, retrieval, review, sources, tracker, voice, watch, writer
+    from . import adcheck, collect, companies, cvdata, health, jobs, profile, retrieval, review, sources, tracker, voice, watch, writer
     from .llm import plan as llm_plan
 
     def wait_for_analyses() -> None:
@@ -134,6 +135,7 @@ def _handlers() -> dict:
         "check_claude_models": lambda p: llm_plan.check(),
         "size_companies": lambda p: companies.judge_sizes(),
         "check_ads": lambda p: adcheck.check_many(p.get("job_ids")),
+        "audit_jobs": lambda p: health.audit(),
     }
 
 
@@ -228,6 +230,7 @@ TASK_STEPS = {
     "build_cv_base": ("cv",), "check_cv_base": ("fact_check",), "rescreen_jobs": ("screen",), "parse_job": ("read_ad",), "score_job": ("score",), "poll_source": ("screen",), "collect_jobs": ("screen",),
     "analyze_document": ("read_document",), "consolidate_facts": ("read_document",), "classify_response": ("reply",),
     "place_answers": ("read_document",), "read_voice": ("voice",), "size_companies": ("screen",),
+    "audit_jobs": ("audit",),
 }
 FETCH_TASKS = {"poll_source", "parse_job", "collect_jobs", "check_ads"}
 NEED_LABELS = {"ollama": "Ollama (the local models)", "network": "an internet connection",
@@ -560,7 +563,7 @@ def _in_history(context: str, fn, *args):
 async def scheduler_loop(stop: asyncio.Event) -> None:
     """Checks sources when due, checks that the ads you care about are still up, marks ghosted applications, sends a
     morning digest, makes the weekly backup, and keeps the list of Claude models your plan offers up to date."""
-    from . import adcheck, tracker
+    from . import adcheck, health, tracker
     from .llm import plan as llm_plan
 
     while not stop.is_set():
@@ -576,6 +579,9 @@ async def scheduler_loop(stop: asyncio.Event) -> None:
             if not on_hold() and adcheck.due():  # on start, then every few hours; no model is used
                 settings.update("state", {"ads_checked_at": db.now()})
                 enqueue("check_ads", {}, ref="ads")
+            if not on_hold() and health.audit_due():  # a week since the last check of how ads were read
+                settings.update("state", {"audit_tried_at": db.now()})
+                enqueue("audit_jobs", {}, ref="audit")
             if not on_hold() and llm_plan.due():  # Claude Code updated, or a week since the plan's models were checked
                 enqueue("check_claude_models", {}, ref="claude-models")
             if not last_maint or (db.parse_ts(db.now()) - last_maint).total_seconds() > 6 * 3600:

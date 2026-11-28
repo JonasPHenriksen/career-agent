@@ -13,6 +13,13 @@
   </form>
 </header>
 
+{% if data_checks %}
+<section class="card" style="margin-bottom:1rem">
+  <div class="card-head"><h2>Holes in your job list</h2><a class="small" href="/checks">See them</a></div>
+  <p class="small" style="margin:0">{{ data_checks|join(' · ') }}</p>
+</section>
+{% endif %}
+
 <section class="card todo" id="todo" style="margin-bottom:1rem">
   <div class="card-head"><h2>{% if todo.now %}Do this first{% else %}Your to-do list{% endif %}</h2>
     <span class="muted small">{% if todo.now %}{{ todo.now|length }} for you to do{% else %}Nothing waiting on you{% endif %}</span></div>

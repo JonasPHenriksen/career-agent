@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Data checks{% endblock %}
+{% block content %}
+<div class="crumbs"><a href="/">Today</a> · data checks</div>
+<header class="page-head">
+  <div>
+    <h1>Data checks</h1>
+    <p class="sub">Holes in your job list: kinds of mistakes found before, counted every time you look, and a weekly check of a few ads by the model for kinds nobody has seen yet.</p>
+  </div>
+</header>
+
+<section class="card" style="margin-bottom:1rem">
+  <h2>Rule checks</h2>
+  <ul class="list">
+    {% for c in checks %}
+    <li style="display:block">
+      <div class="row" style="justify-content:space-between">
+        <span class="title">{{ c.label }}</span>
+        {% if c['items'] %}<span class="pill warn">{{ c['items']|length }}</span>{% else %}<span class="pill good">none</span>{% endif %}
+      </div>
+      {% if c['items'] %}
+      <div class="small muted" style="margin:.2rem 0 .3rem">{{ c.why }}</div>
+      <ul class="small" style="margin:0;padding-left:1.1rem">
+        {% for i in c['items'][:25] %}<li><a href="/jobs/{{ i.id }}">{{ i.title }}</a>{% if i.company %} · {{ i.company }}{% endif %}{% if i.detail %} <span class="muted">· {{ i.detail }}</span>{% endif %}</li>{% endfor %}
+        {% if c['items']|length > 25 %}<li class="muted">and {{ c['items']|length - 25 }} more</li>{% endif %}
+      </ul>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>Weekly check by the model</h2>
+    <form method="post" action="/checks/audit/switch" class="inline"><input type="hidden" name="on" value="{{ '0' if audit_on else '1' }}"><button class="btn small ghost">{{ 'Turn it off' if audit_on else 'Turn it on' }}</button></form>
+  </div>
+  <p class="small muted">Once a week while the app runs, {{ audit_jobs }} ads read lately are compared with what the app stored. It runs on your Analysis model (Settings → Models). Every new kind of mistake it finds should become a rule check above.{% if clean >= clean_weeks %} <strong>It has come back clean {{ clean }} weeks in a row: you can turn it off.</strong>{% endif %}</p>
+  {% if audit_busy %}<p><span class="pill accent">checking…</span></p>
+  {% else %}<form method="post" action="/checks/audit" class="inline"><button class="btn small" data-busy="Starting…">Check {{ audit_jobs }} ads now</button></form>{% endif %}
+  {% if audit %}
+  <p class="small" style="margin-top:.8rem">Last check {{ audit.at|ago }}: {{ audit.checked }} ads, {% if audit.findings %}{{ audit.findings|length }} with mistakes.{% else %}all read right.{% endif %}</p>
+  {% if audit.findings %}
+  <ul class="list">
+    {% for f in audit.findings %}
+    <li style="display:block">
+      <a class="title" href="/jobs/{{ f.job_id }}">{{ f.title }}</a>
+      {% if not f.full_ad %}<span class="pill bad">not a whole ad</span>{% endif %}
+      <ul class="small" style="margin:.2rem 0 0;padding-left:1.1rem">
+        {% for i in f.issues %}<li><span class="pill {{ 'bad' if i.severity == 'major' else '' }}">{{ i.field }}</span> stored “{{ i.stored or '(empty)' }}”, the ad says “{{ i.ad_says }}”</li>{% endfor %}
+      </ul>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% else %}<p class="small muted" style="margin-top:.8rem">Not run yet.</p>{% endif %}
+</section>
+{% endblock %}

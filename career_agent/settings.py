@@ -57,6 +57,7 @@ DEFAULTS: dict[str, Any] = {
         "ghost_days": 30,
         "notifications": True,
         "on_hold": False,  # True = nothing starts on its own (job sources, watched folders, unfinished work)
+        "weekly_audit": True,  # a model compares a few ads a week with what the app stored (health.py)
     },
     "writing": {
         "letter_words": 0,  # 0 = as long as your own past letters

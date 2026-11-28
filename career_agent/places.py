@@ -164,6 +164,7 @@ _TOWNS: list[tuple[str, str, float, float, tuple[int, ...], tuple[str, ...]]] = 
     ("Nykøbing Falster", "Z", 54.769, 11.874, (), ()),
     # Found in ads on 2026-11-28 that the list didn't know (jobs without a distance rank as if in Aarhus)
     ("Hatting", "J", 55.833, 9.767, (), ()),
+    ("Holme", "J", 56.113, 10.175, (), ()),  # in Aarhus, next to Højbjerg
     ("Låsby", "J", 56.153, 9.815, (), ()),
     ("Bording", "J", 56.158, 9.243, (), ()),
     ("Karup", "J", 56.307, 9.167, (7470,), ("karup j",)),

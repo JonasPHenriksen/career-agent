@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 from .. import (adcheck, backup, brand, collect, companies, compare, config, cvdata, cvrender, db, emails, exporter, history, ingest, insights, jobkinds, jobs, keychain, knowledge, llm, mailer,
                 profile, rank, redo, retrieval, review, settings, sources, tasks, todos, tracker, voice, watch, writer)
 from . import helpers
+from .. import health as data_health  # the app's own /health endpoint is named health
 from .. import suggestions
 
 HERE = Path(__file__).parent
@@ -240,6 +241,7 @@ def today(request: Request):
               for label, sts in tracker.BOARD}
     return render(request, "today.html", steps=steps, show_steps=not all(s["done"] for s in steps),
                   drafts=drafts, matches=matches, deadlines=rank.annotate(tracker.deadlines_soon(7)),
+                  data_checks=data_health.summary(),
                   followups=tracker.followups_due(), interviews=interviews, errors=errors, counts=counts,
                   name=p.get("name"), task_labels=tasks.TASK_LABELS,
                   followup_days=settings.get("automation").get("followup_days"), todo=todos.lists(),
@@ -258,6 +260,26 @@ async def todos_add(request: Request):
     except ValueError as e:
         return go("/#todo", err=str(e))
     return go("/#todo", msg="Added to your to-do list.")
+
+
+@app.get("/checks")
+def checks_page(request: Request):
+    return render(request, "checks.html", checks=data_health.checks(), audit=data_health.audit_result(),
+                  audit_on=settings.get("automation").get("weekly_audit", True), clean=data_health.clean_weeks(),
+                  clean_weeks=data_health.CLEAN_WEEKS, audit_busy=bool(tasks.active("audit")), audit_jobs=data_health.AUDIT_JOBS)
+
+
+@app.post("/checks/audit")
+def checks_audit_now(request: Request):
+    tasks.enqueue("audit_jobs", {}, ref="audit")
+    return go("/checks", msg=f"Checking {data_health.AUDIT_JOBS} ads now. The result shows here when it's done.")
+
+
+@app.post("/checks/audit/switch")
+async def checks_audit_switch(request: Request):
+    on = (await request.form()).get("on") == "1"
+    settings.update("automation", {"weekly_audit": on})
+    return go("/checks", msg="The weekly check is on." if on else "The weekly check is off. The rule checks still run.")
 
 
 @app.post("/todos/{todo_id}/done")
