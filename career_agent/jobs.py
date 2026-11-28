@@ -135,6 +135,15 @@ def how_far(job: dict) -> dict | None:
     return places.reach(job.get("location"), settings.get("profile").get("city"), profile.distance_limit())
 
 
+def usual_place(company_id: int | None, job_id: int | None = None) -> str | None:
+    """Where the employer's other ads say they work, for an ad that names no place anywhere: the most common one."""
+    if not company_id:
+        return None
+    r = db.q1("SELECT location, COUNT(*) n FROM jobs WHERE company_id = ? AND id != ? AND TRIM(COALESCE(location, '')) != '' "
+              "GROUP BY location ORDER BY n DESC, MAX(id) DESC LIMIT 1", (company_id, job_id or 0))
+    return r["location"] if r else None
+
+
 def main_location(job: dict) -> str:
     """The place the ad calls the main workplace when it names several, else ""."""
     return ((db.jload(job.get("details"), {}) or {}).get("main_location") or "").strip()
@@ -273,7 +282,7 @@ def parse(job_id: int, use_text: bool = False) -> dict:
             _filter_out(job_id, jobkinds.skip_note(skip[1]))
             return {"title": job["title"], "skipped": skip[1]}
     db.update("jobs", job_id, {"parse_status": "parsing", "parse_error": None})
-    page_title, text, jsonld = "", job.get("description") or "", None
+    page_title, text, jsonld, board = "", job.get("description") or "", None, ""
     final_url = job["url"]
     if job["url"] and not use_text:
         try:
@@ -282,6 +291,7 @@ def parse(job_id: int, use_text: bool = False) -> dict:
             html = resp.text
             jp = fetch.jobposting_jsonld(html)
             jsonld = fetch.compact_jobposting(jp) if jp else None
+            board = fetch.board_location(html)
             page_title, page_text = fetch.html_to_text(html)
             if len(page_text) > len(text) or not text:
                 text = page_text
@@ -293,11 +303,19 @@ def parse(job_id: int, use_text: bool = False) -> dict:
         msg = "No text found on the page (it may need JavaScript). Paste the ad text instead."
         db.update("jobs", job_id, {"parse_status": "error", "parse_error": msg})
         raise fetch.FetchError(msg)
+    ad_chars = max(len(text), len((jsonld or {}).get("description") or ""))
+    if not use_text and ad_chars < MIN_AD_CHARS:  # the page couldn't be read, and the feed only gave a teaser
+        msg = (f"Only a teaser of the ad could be read ({ad_chars} characters): too little to judge the job. "
+               "Paste the full ad text.")
+        db.update("jobs", job_id, {"parse_status": "error", "parse_error": msg})
+        raise fetch.FetchError(msg)
 
     lim = profile.limits()["job_chars"]
     parts = [f"URL: {final_url or '(pasted text)'}"]
     if page_title:
         parts.append(f"Page title: {page_title}")
+    if board:
+        parts.append(f"Where the job board lists the job (outside the ad text): {board}")
     if jsonld:
         parts.append("Structured data from the page (JSON-LD):\n" + json.dumps(
             {k: v for k, v in jsonld.items() if v}, ensure_ascii=False)[:lim // 2])
@@ -317,6 +335,9 @@ def parse(job_id: int, use_text: bool = False) -> dict:
 
     title = d["title"] or (jsonld or {}).get("title") or job["title"] or page_title
     company = d["company"] or (jsonld or {}).get("company") or job["company_name"]
+    # Every ad says where the job is, if not in its text then on the job board's page or the results page that
+    # found it (stored when it was found): a reading that names no place never wipes one out.
+    location = (d["location"] or (jsonld or {}).get("location") or board or job["location"] or "").strip() or None
     # An ad that states no dates keeps the ones its results page gave. The page's own "valid through" date is
     # when the job board takes the listing down, not a deadline; so is a date the ad never states when it says
     # "snarest" or "løbende" (see listing_date).
@@ -330,6 +351,7 @@ def parse(job_id: int, use_text: bool = False) -> dict:
                                   description=d["company_blurb"], location=d["location"])
     if company_id and companies.sizes_wanted() and not db.scalar("SELECT size FROM companies WHERE id = ?", (company_id,)):
         tasks.enqueue("size_companies", ref="companies", delay=SIZE_WAIT)  # new employers judged together
+    location = location or usual_place(company_id, job_id)
     fp = fingerprint(company, title)
     reposted = 0
     if company_id:
@@ -349,7 +371,7 @@ def parse(job_id: int, use_text: bool = False) -> dict:
         description = text
     db.update("jobs", job_id, {
         "title": title[:300] if title else None, "company_name": (company or "")[:200] or None,
-        "company_id": company_id, "location": d["location"] or (jsonld or {}).get("location") or None,
+        "company_id": company_id, "location": location,
         "work_mode": d["work_mode"], "employment_type": d["employment_type"] or None,
         "seniority": d["seniority"], "language": J.lang_code(d["language"]),
         "posted_at": posted, "deadline": deadline, "apply_url": d["apply_url"] or None,
@@ -364,7 +386,6 @@ def parse(job_id: int, use_text: bool = False) -> dict:
         if skip:
             _filter_out(job_id, jobkinds.skip_note(skip[1]))
             return {"title": title, "company": company, "skipped": skip[1]}
-        location = d["location"] or (jsonld or {}).get("location")
         far = too_far(location, d["work_mode"], d.get("main_location"))
         if far:
             _filter_out(job_id, far)
@@ -383,7 +404,7 @@ def parse(job_id: int, use_text: bool = False) -> dict:
             mark_repeat(job_id, judged[0], f"a model read both ads and judged them the same opening ({judged[1]})")
             return {"title": title, "company": company, "skipped": "duplicate"}
     if not job["link_locked"]:
-        retire_locked_copies(job_id, company, title, d["location"] or (jsonld or {}).get("location"))
+        retire_locked_copies(job_id, company, title, location)
     if settings.get("automation").get("auto_score", True):
         tasks.enqueue("score_job", {"job_id": job_id}, ref=f"job:{job_id}")
     return {"title": title, "company": company}
@@ -521,6 +542,7 @@ def _shingles(text: str | None, n: int = 3) -> set[str]:
 
 
 SHORT_AD_CHARS = 2500  # below this, an ad may be just a teaser or a company intro shared by different jobs
+MIN_AD_CHARS = 600  # below this it is a teaser from a results page (Jobnet's are 153): too little to read or score
 
 
 def same_ad_text(a: str | None, b: str | None) -> bool:

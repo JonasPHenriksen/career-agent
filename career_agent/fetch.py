@@ -197,6 +197,30 @@ _BOILERPLATE = ["script", "style", "noscript", "svg", "iframe", "nav", "footer",
                 "input", "select", "textarea"]
 
 
+_BOARD_AREA = [re.compile(r'jix_robotjob--area[^>]*>\s*([^<]{1,120}?)\s*<'),  # Jobindex: the line under the title
+               re.compile(r'<title>Lokation:</title>[\s\S]{0,300}?</svg>\s*([^<]{1,120}?)\s*<')]  # …or its "Lokation"
+_MAP_AREA = re.compile(r'"title":"((?:[^"\\]|\\.){1,120})","type":"(?:area|address)"')  # Jobindex's map of the job
+
+
+def board_location(html: str) -> str:
+    """Where the job board itself says the job is, when the page shows it outside the ad text (many ads only state
+    the place there): Jobindex's line under the title, or its map of the job's area. "" when the page has neither."""
+    found: list[str] = []
+    for rx in _BOARD_AREA:
+        m = rx.search(html)
+        if m:
+            found.append(BeautifulSoup(m.group(1), "html.parser").get_text().strip())
+            break
+    for m in _MAP_AREA.finditer(html):
+        try:
+            place = json.loads(f'"{m.group(1)}"').strip()
+        except ValueError:
+            continue
+        if place and place not in found:
+            found.append(place)
+    return ", ".join(p for p in found if p)[:200]
+
+
 def html_to_text(html: str) -> tuple[str, str]:
     """Return (page title, readable text)."""
     soup = BeautifulSoup(html, "html.parser")

@@ -175,6 +175,7 @@ def test_reading_an_ad_keeps_the_boards_valid_through_date_apart_from_the_deadli
     page = ('<html><head><script type="application/ld+json">{"@type": "JobPosting", "title": "Product Owner", '
             '"validThrough": "2030-12-16", "description": "Product Owner hos FinPay. Søg snarest."}</script></head>'
             '<body><h1>Product Owner</h1><p>Product Owner hos FinPay. Søg snarest, vi holder samtaler løbende.</p>'
+            '<p>' + 'Du får ansvaret for vores betalingsprodukter og arbejder tæt med udviklerne. ' * 10 + '</p>'
             '</body></html>')
 
     class Resp:
