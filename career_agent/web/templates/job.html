@@ -18,7 +18,6 @@
       <a class="btn primary" href="/applications/{{ app.id }}">Open application</a>
     {% elif job.parse_status == 'parsed' %}
       <form method="post" action="/jobs/{{ job.id }}/write" class="inline"><button class="btn primary" data-busy="Starting…">Write application</button></form>
-      <form method="post" action="/jobs/{{ job.id }}/write" class="inline"><input type="hidden" name="mode" value="claude"><button class="btn">Write with Claude.ai</button></form>
     {% endif %}
     {% if job.url %}<a class="btn" href="{{ job.url }}" target="_blank" rel="noopener noreferrer">Open ad ↗</a>{% endif %}
     {% if job.status != 'shortlisted' %}<form method="post" action="/jobs/{{ job.id }}/status" class="inline"><input type="hidden" name="status" value="shortlisted"><button class="btn">☆ Shortlist</button></form>{% endif %}

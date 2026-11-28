@@ -975,7 +975,7 @@ def draft_best() -> list[int]:
 
 
 def create_application(job_id: int, auto: bool = False, instructions: str | None = None, draft: bool = True) -> int:
-    """Create the application; with draft=False nobody writes it yet (e.g. you'll write it in Claude.ai)."""
+    """Create the application; with draft=False nobody writes it yet."""
     existing = db.q1("SELECT id FROM applications WHERE job_id = ?", (job_id,))
     if existing:
         return existing["id"]

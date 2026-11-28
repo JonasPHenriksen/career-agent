@@ -488,9 +488,6 @@ async def job_text(request: Request, job_id: int):
 async def job_write(request: Request, job_id: int):
     f = await form(request)
     need(jobs.get(job_id))
-    if f.get("mode") == "claude":  # you write it in Claude.ai: no model needed here
-        app_id = jobs.create_application(job_id, instructions=f.get("instructions") or None, draft=False)
-        return go(f"/applications/{app_id}?tab=claude")
     ok, why = llm_ready()
     if not ok:
         return go(f"/jobs/{job_id}", err=why)
@@ -517,7 +514,7 @@ def job_delete(request: Request, job_id: int):
 # Applications
 # ---------------------------------------------------------------------------------------
 
-APP_TABS = [("review", "Review"), ("letter", "Letter"), ("claude", "Claude.ai"), ("cv", "CV"), ("check", "Fact check"), ("voice", "Voice"),
+APP_TABS = [("review", "Review"), ("letter", "Letter"), ("cv", "CV"), ("check", "Fact check"), ("voice", "Voice"),
             ("send", "Send"), ("timeline", "Timeline"), ("interview", "Interview prep"), ("history", "Versions")]
 
 
@@ -548,7 +545,6 @@ def application(request: Request, app_id: int, tab: str = ""):
     ids = {i for c in claims.get("claims", []) for i in c.get("fact_ids", [])}
     facts = {f["id"]: f for f in db.q(f"SELECT id, title, organization, evidence FROM facts WHERE id IN ({','.join('?' * len(ids))})",
                                        list(ids))} if ids else {}
-    prompt = writer.manual_prompt(app_id) if tab == "claude" else ""
     ref = f"app:{app_id}"
     made = {"letter": llm.made_by(ref, ("write_letter", "revise_letter")), "cv": llm.made_by(ref, ("write_cv", "revise_cv")),
             "check": llm.made_by(ref, ("claim_check",)), "prep": llm.made_by(ref, ("interview_prep",)),
@@ -564,7 +560,6 @@ def application(request: Request, app_id: int, tab: str = ""):
                   rev=compare.revision(a),
                   cv_data=cv_data, cv_json=json.dumps(cv_data, ensure_ascii=False, indent=2) if cv_data else "",
                   cv_pages=cv_pages, cv_error=cv_error, cv_base=cvdata.base_for(a["language"]), look=look, design_primary=cvrender.design()["primary"],
-                  prompt=prompt, prompt_words=len(prompt.split()),
                   v=db.jload(a["voice"], {}) or {}, read=voice.read_notes(a), notes=db.jload(a["writer_notes"], []) or [],
                   busy=tasks.active(ref=f"app:{app_id}"), error=tasks.last_error(f"app:{app_id}"),
                   versions=db.q("SELECT * FROM app_versions WHERE application_id = ? ORDER BY id DESC", (app_id,)),
@@ -743,18 +738,6 @@ async def application_redraft(request: Request, app_id: int):
     what = {"letter": "a fresh letter", "cv": "a fresh CV"}.get(part, "a fresh draft")
     tab = "review" if f.get("from") == "review" else ("cv" if part == "cv" else "letter")
     return go(f"/applications/{app_id}?tab={tab}", msg=with_model_msg(f, f"Writing {what}") + ". The current one stays under Versions.")
-
-
-@app.post("/applications/{app_id}/manual-import")
-async def application_manual_import(request: Request, app_id: int):
-    f = await form(request)
-    need(db.q1("SELECT id FROM applications WHERE id = ?", (app_id,)))
-    try:
-        result = writer.import_manual(app_id, f.get("text", ""))
-    except ValueError as e:
-        return go(f"/applications/{app_id}?tab=claude", err=str(e))
-    msg = f"Claude's version is in ({result['letter_words']} words). The previous draft is under Versions. Fact-checking now…"
-    return go(f"/applications/{app_id}?tab=letter", msg=msg)
 
 
 @app.post("/applications/{app_id}/check")

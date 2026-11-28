@@ -5,7 +5,7 @@ import re
 from collections import Counter
 from datetime import date
 
-from . import adcheck, compare, cvdata, db, jobs, knowledge, llm, notify, privacy, profile, retrieval, settings, tracker, voice
+from . import adcheck, compare, cvdata, db, jobs, knowledge, llm, notify, profile, retrieval, settings, tracker, voice
 from .llm import jsonutil as J
 
 LANG_NAMES = {"da": "Danish", "en": "English", "sv": "Swedish", "no": "Norwegian", "nb": "Norwegian",
@@ -626,110 +626,6 @@ def tidy_lines(job: dict, language: str, system: str, data: dict, base: dict, ef
             notes.append("CV: still longer than its place: " + "; ".join(f"“{x['text'][:60]}…”" for x in still[:3])
                          + ". Shorten it under Edit the CV's data.")
     return notes
-
-
-# ---------------------------------------------------------------------------------------
-# Claude.ai by copy and paste: no API key, no per-call cost
-# ---------------------------------------------------------------------------------------
-
-MANUAL_FORMAT = """Answer with exactly these five sections, in this order, and nothing before or after them:
-
-===SUBJECT===
-(the subject line)
-===GAP===
-(the most important must-have or field from the ad that the career database does NOT back, in a few words, or: none)
-===LETTER===
-(the full cover letter, from greeting to sign-off)
-===CV===
-(the tailored CV in the Markdown structure above)
-===NOTES===
-(0-4 short notes to the candidate in English, one per line: choices you made, things to check)"""
-
-
-def manual_prompt(app_id: int) -> str:
-    """One self-contained message to paste into Claude.ai: the whole context, the task and the answer format."""
-    app = tracker.app_with_job(app_id)
-    job = jobs.get(app["job_id"])
-    language = app["language"] or choose_language(job)
-    query = retrieval.job_query(job)
-    context = WRITER_SYSTEM.format(  # Claude has room for the whole database
-        name=candidate_name(), candidate=profile.candidate_block(),
-        background=background_section(query, local=False), style=style_text(language),
-        examples=examples_block(language, query),
-        facts=profile.facts_digest(90_000, query=query))
-    lang = LANG_NAMES.get(language, language)
-    task = (f"TASK\nWrite two documents for the job below, both in {lang}.\n\n"
-            "1. A cover letter.\n" + LETTER_GUIDE.format(length=length_rule(language)) + "\n"
-            f"Gaps: {GAP_RULE}\n\n"
-            f"2. A tailored CV.\n{CV_RULES}\n"
-            f"Use exactly this Markdown structure, headings included in {lang}:\n{cv_format(language)}\n\n"
-            f"{DATE_RULE}\nBefore answering, check every sentence of both documents against the career database and "
-            "remove or fix anything it doesn't back. In the notes, list any interest or motivation in the letter that "
-            "you inferred rather than read in the candidate's own words.\n\n" + MANUAL_FORMAT + "\n\n" + _job_context(job, language, app["instructions"]))
-    prompt = context + "\n\n" + task
-    if settings.get("llm").get("redact_for_cloud", True):
-        prompt = privacy.redact(prompt)
-    return prompt
-
-
-_SECTION = re.compile(r"^[ \t>*_`#]*={2,}\s*(SUBJECT|GAP|LETTER|CV|NOTES)\s*={2,}[ \t*_`]*$", re.M | re.I)
-
-
-def _unfence(text: str) -> str:
-    text = re.sub(r"^\s*```[\w-]*\s*\n", "", text.strip())
-    return re.sub(r"\n\s*```\s*$", "", text).strip()
-
-
-def parse_manual_answer(text: str) -> dict:
-    """Split a pasted Claude.ai answer into its sections (or read it as JSON if that's what came back)."""
-    text = (text or "").replace("\r\n", "\n")
-    matches = list(_SECTION.finditer(text))
-    if not matches:
-        data = J.parse(text)
-        if isinstance(data, dict) and (data.get("letter") or data.get("cv_markdown") or data.get("cv")):
-            return {"subject": str(data.get("subject") or ""), "main_gap": str(data.get("main_gap") or ""),
-                    "letter": str(data.get("letter") or ""), "cv": str(data.get("cv_markdown") or data.get("cv") or ""),
-                    "notes": [str(n) for n in (data.get("notes") or [])]}
-        raise ValueError("Couldn't find Claude's ===LETTER=== and ===CV=== sections. Copy the whole answer "
-                         "(the copy button under the reply) and paste it again.")
-    sections = {}
-    for n, m in enumerate(matches):
-        end = matches[n + 1].start() if n + 1 < len(matches) else len(text)
-        sections[m.group(1).upper()] = _unfence(text[m.end():end])
-    gap = sections.get("GAP", "").strip().strip(".")
-    if gap.lower() in ("", "none", "ingen", "-", "n/a", "intet", "ingen."):
-        gap = ""
-    notes = [ln.strip(" -•*\t") for ln in sections.get("NOTES", "").splitlines() if ln.strip(" -•*\t")]
-    out = {"subject": sections.get("SUBJECT", "").splitlines()[0].strip() if sections.get("SUBJECT") else "",
-           "main_gap": gap, "letter": sections.get("LETTER", ""), "cv": sections.get("CV", ""), "notes": notes}
-    if not out["letter"] and not out["cv"]:
-        raise ValueError("The answer has no letter or CV in it. Paste Claude's whole answer.")
-    return out
-
-
-def import_manual(app_id: int, text: str) -> dict:
-    """Save a Claude.ai answer as the new draft (the previous one stays under Versions) and queue the checks."""
-    d = parse_manual_answer(text)
-    app = db.q1("SELECT * FROM applications WHERE id = ?", (app_id,))
-    _save_version(app_id, "Before the Claude.ai version")
-    patch: dict = {"updated_at": db.now(), "status": "draft" if app["status"] == "drafting" else app["status"]}
-    if d["letter"]:
-        patch["letter"] = strip_citations(d["letter"])
-    if d["subject"]:
-        patch["subject"] = d["subject"]
-    if d["cv"]:
-        patch["cv"] = strip_citations(d["cv"])
-        patch["cv_data"] = None  # pasted as text: shown and exported as text
-    if not app["language"]:
-        patch["language"] = choose_language(jobs.get(app["job_id"]))
-    patch["review"] = db.jdump(_review({"main_gap": d["main_gap"]}, d["letter"], app.get("review")))
-    notes = _gap_note({"main_gap": d["main_gap"], "gap_line": "", "letter": d["letter"]}) + d["notes"]
-    patch["writer_notes"] = db.jdump(notes + ["Written in Claude.ai and fact-checked here."])
-    db.update("applications", app_id, patch)
-    from . import tasks
-
-    tasks.enqueue("check_application", {"application_id": app_id}, ref=f"app:{app_id}")
-    return {"letter_words": len(d["letter"].split()), "cv": bool(d["cv"]), "gap": d["main_gap"]}
 
 
 def _gap_note(letter: dict) -> list[str]:
