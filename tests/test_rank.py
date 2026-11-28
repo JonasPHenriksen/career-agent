@@ -283,9 +283,8 @@ def test_the_pages_show_the_order_and_why(fake):
     page = c.get("/jobs").text
     assert page.index("IT-supporter") < page.index("Linux Operations Engineer")
     assert "Fit 72: −10 Aarhus, 40 km</div>" in page
-    assert ('title="Ranked 62 in your list: fit 72, −10 Aarhus, 40 km">62</span><small>rank</small>' in page), \
-        "the ranked score, and the fit next to it"
-    assert ">72</span><small>fit</small>" in page
+    assert 'title="Ranked 62 in your list: fit 72, −10 Aarhus, 40 km">62</span>' in page, "one number: the rank"
+    assert ">72</span>" not in page and "<small>fit</small>" not in page, "the fit shows on hover, not as a badge"
     assert 'title="Ranked 66 in your list: fit 66, nothing taken off">66<' in page
     assert "rolling · apply soon" in page
     urgent = c.get("/jobs?sort=urgent").text
@@ -307,16 +306,15 @@ def test_the_pages_show_the_order_and_why(fake):
     assert tasks.TASK_LABELS["size_companies"]
 
 
-def test_every_job_shows_its_ranked_score_and_its_fit_side_by_side(fake):
+def test_every_job_shows_one_number_its_rank_with_the_fit_on_hover(fake):
     _home()
     main = '{"main_location": "Aalborg"}'
     sap = _job("Junior SAP/ABAP-udvikler", "Nordvik", "Aalborg, Aarhus, Ballerup", 78, work_mode="hybrid",
                size="very_large", details=main, deadline=(date.today() + timedelta(days=3)).isoformat())
     db.update("jobs", sap, {"fit": '{"score": 78, "verdict": "good", "summary": "A good fit."}'})
     app_id = db.insert("applications", {"job_id": sap, "status": "draft", "letter": "Kære Nordvik", "created_at": db.now()})
-    badge = ('title="Ranked 66 in your list: fit 78, −12 Aalborg, 132 km (main workplace) (hybrid)">66</span><small>'
-             'rank</small></span><span class="sc"><span class="score score-good" title="Fit 78: could you get it? How well '
-             'you match what the ad asks for. Where it is and whether you want it count in the rank">78<')
+    badge = ('<span class="score score-good" title="Ranked 66 in your list: fit 78, −12 Aalborg, 132 km (main workplace) '
+             '(hybrid)">66</span>')
     c = TestClient(app)
     today = c.get("/").text
     assert today.count(badge) == 2, "waiting for review, and the deadlines"
@@ -325,7 +323,8 @@ def test_every_job_shows_its_ranked_score_and_its_fit_side_by_side(fake):
     assert badge in c.get(f"/applications/{app_id}").text
     job = c.get(f"/jobs/{sap}").text
     assert "Ranked 66 in your list: fit 78, −12 Aalborg, 132 km (main workplace) (hybrid)." in job
-    assert badge.replace('score-low"', 'score-low big"').replace('score-good"', 'score-good big"') in job, "fit card"
+    assert badge.replace('score-good"', 'score-good big"') in job, "the fit card shows the rank too"
+    assert ">78</span>" not in job, "no fit badge anywhere"
 
 
 def test_an_ad_up_for_months_without_a_deadline_says_to_ask_first(fake):

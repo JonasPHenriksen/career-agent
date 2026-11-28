@@ -2,11 +2,12 @@
 <span class="score {{ s|score_class }}{{ ' big' if big }}" title="Fit score (0-100)">{{ s if s is not none else '–' }}</span>
 {%- endmacro %}
 
-{# A job's scores side by side: ranked (fit less distance and employer size, rank.py) and fit, once the row has both. #}
+{# A job's one number everywhere: its rank (the fit less distance, kind of job and deal-breakers, rank.py). The
+   fit it starts from shows on hover. #}
 {% macro ranked(j, big=False) -%}
 {%- set r = j.rank or {} -%}
 {%- if r.get('score') is not none -%}
-<span class="scores"><span class="sc"><span class="score {{ r.score|score_class }}{{ ' big' if big }}" title="Ranked {{ r.score }} in your list: fit {{ j.fit_score }}{% for n, why in r.points %}, −{{ n }} {{ why }}{% else %}, nothing taken off{% endfor %}">{{ r.score }}</span><small>rank</small></span><span class="sc"><span class="score {{ j.fit_score|score_class }}{{ ' big' if big }}" title="Fit {{ j.fit_score }}: could you get it? How well you match what the ad asks for. Where it is and whether you want it count in the rank">{{ j.fit_score }}</span><small>fit</small></span></span>
+<span class="score {{ r.score|score_class }}{{ ' big' if big }}" title="Ranked {{ r.score }} in your list: fit {{ j.fit_score }}{% for n, why in r.points %}, −{{ n }} {{ why }}{% else %}, nothing taken off{% endfor %}">{{ r.score }}</span>
 {%- else -%}{{ score(j.fit_score, big) }}{%- endif -%}
 {%- endmacro %}
 
