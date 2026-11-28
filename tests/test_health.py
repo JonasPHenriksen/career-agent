@@ -25,7 +25,7 @@ def test_the_rule_checks_find_each_hole_found_before(fake):
     fine = _job("Fine", "Hedensted", 70)
     no_place = _job("No place", "", 70)
     _job("Remote", "", 70, work_mode="remote")
-    region = _job("Region", "Region Midtjylland", 70)
+    region = _job("Region", "Nowhereby", 70)
     teaser = _job("Teaser", "Horsens", 62, description="Krüger Search søger en IT-udvikler.")
     unread = _job("Unread", "Horsens", 40, parse_status="error", parse_error="This page doesn't look like a single job ad.")
     old_cap = _job("Old cap", "Skanderborg", 36, fit='{"dealbreakers": ["Skanderborg may be more than 50 km away"]}')
@@ -43,7 +43,7 @@ def test_the_rule_checks_find_each_hole_found_before(fake):
     c = TestClient(app)
     assert "Holes in your job list" in c.get("/").text and "1 × no place" in c.get("/").text
     page = c.get("/checks").text
-    assert f'href="/jobs/{no_place}"' in page and "Region Midtjylland" in page
+    assert f'href="/jobs/{no_place}"' in page and "Nowhereby" in page
 
     db.ex("DELETE FROM jobs WHERE id != ?", (fine,))
     assert health.summary() == [] and "Holes in your job list" not in c.get("/").text
@@ -144,3 +144,15 @@ def test_a_source_review_comes_back_every_four_weeks(fake):
     health.remind_review(date(2027, 1, 3))
     nxt = db.q1("SELECT * FROM todos WHERE check_kind = 'sources' AND done_at IS NULL")
     assert nxt["show_from"] == "2027-01-31", "four weeks after the last review"
+
+
+def test_a_whole_region_is_vague_not_a_town_missing_from_the_list(fake):
+    from career_agent import places
+
+    settings.update("profile", {"city": "Horsens", "max_km": "50"})
+    region = _job("Region", "Jylland, Fyn", 60)
+    _job("Country", "Danmark", 60)
+    town = _job("Town", "Nowhereby", 60)
+    assert places.only_wide("Midtjylland") and places.only_wide("Fyn, Sydjylland") and not places.only_wide("Vojens")
+    assert _found("unmeasured") == [town], "a whole region is the ad being vague; a town is the list missing it"
+    assert region

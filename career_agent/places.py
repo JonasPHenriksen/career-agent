@@ -186,7 +186,22 @@ _TOWNS: list[tuple[str, str, float, float, tuple[int, ...], tuple[str, ...]]] = 
     ("Hedehusene", "Z", 55.650, 12.197, (2640,), ()),
     ("Nørre Alslev", "Z", 54.893, 11.886, (), ("nr. alslev", "nr alslev")),
     ("Rønne", "Z", 55.100, 14.706, (3700,), ()),
+    ("Ryomgård", "J", 56.383, 10.497, (8550,), ()),
+    ("Randbøl", "J", 55.693, 9.271, (), ()),
+    ("Arden", "J", 56.769, 9.861, (9510,), ()),
+    ("Haverslev", "J", 56.842, 9.812, (), ()),  # in Himmerland
+    ("Vojens", "J", 55.247, 9.306, (6500,), ("høgelund",)),
+    ("Paarup", "F", 55.403, 10.330, (), ()),
+    ("Aarup", "F", 55.380, 9.989, (5560,), ()),
+    ("Faxe", "Z", 55.255, 12.119, (4640,), ()),
 ]
+
+# Whole regions an ad names instead of a place: the job could be anywhere in them, so they stay unmeasured on
+# purpose (rank.py counts them as unknown) and aren't a town missing from the list (health.py).
+WIDE_AREAS = {"danmark", "denmark", "jylland", "fyn", "sjaelland", "sjælland", "midtjylland", "sydjylland",
+              "nordjylland", "vestjylland", "østjylland", "oestjylland", "sydøstjylland", "sønderjylland",
+              "region midtjylland", "region syddanmark", "region nordjylland", "region sjælland", "region hovedstaden",
+              "region central jutland", "hele landet", "hovedstaden", "storkøbenhavn"}
 
 # Areas an ad names instead of a town, measured to a town in the middle of them. Wider ones (Midtjylland,
 # Sønderjylland) are left unknown: the job could be anywhere in them.
@@ -213,7 +228,8 @@ _ABROAD = (
     "athens patras bucharest sofia prague prag budapest vienna wien zurich zürich dublin hanoi bangalore "
     "kuala manila porto lissabon eindhoven wroclaw wrocław pecs pécs birmingham warrington cheshire derby southampton "
     "meyrin nuuk thessaloniki belgrade beograd trondheim strasbourg szczecin isernhagen bern thun köln koeln cologne "
-    "malaga málaga udlandet").split() + ["united states", "ho chi minh", "new york", "the hague"]
+    "malaga málaga udlandet issy-les-moulineaux").split() + ["united states", "ho chi minh", "new york", "the hague",
+                                                              "den haag"]
 _NOT_A_PLACE = {"", "danmark", "denmark", "dk", "hybrid", "remote", "onsite", "on-site", "on site", "hovedkontor",
                 "hq", "headquarters", "kontor", "office", "mulighed for hjemmearbejde", "hybrid position", "øvrige"}
 _STREET = re.compile(r"\b\d{1,3}\s?[a-z]?\b")
@@ -260,6 +276,14 @@ _FOLDED_RX = re.compile(r"(?<![\w])(" + "|".join(re.escape(n) for n in sorted(
     | {_fold(v) for n in _ABROAD for v in (n, _written_out(n))}, key=len, reverse=True) if n)
     + r")(?![\w])")
 _PLACE_JOINERS = {"or", "eller", "and", "og", "also", "ogsa", "ogsaa", "near", "naer", "nær", "i", "in", "ved"}
+
+
+def only_wide(location: str | None) -> bool:
+    """True when the location names only whole regions ("Jylland, Fyn", "Midtjylland"), no place to measure."""
+    if _norm(location) in ("danmark", "denmark", "hele landet"):
+        return True
+    parts = [_norm(p) for p in _SPLIT.split(location or "") if _norm(p) not in _NOT_A_PLACE]
+    return bool(parts) and all(p in {_norm(w) for w in WIDE_AREAS} for p in parts)
 
 
 def only_places(text: str | None) -> bool:

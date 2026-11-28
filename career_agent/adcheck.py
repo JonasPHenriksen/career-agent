@@ -11,6 +11,7 @@ which often stays up after the board's copy expires. A page that can't be read (
 browser) changes nothing; it's looked at again next time."""
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import date
@@ -48,6 +49,37 @@ GONE_WORDS = re.compile(
     r"|page not found|no longer (?:available|open|active)"
     r"|(?:job|position|posting|vacancy|role|requisition) (?:is |has )?(?:been )?(?:closed|filled|removed|expired)", re.I)
 _WORKDAY_JOB = re.compile(r"\.myworkdayjobs\.com$", re.I)
+# Pages built in the browser show next to nothing as text; what they carry instead (2026-11-28: 58 ads of 730 were
+# "couldn't tell", most of them on Jobnet and HR-Manager, whose job sat in the page data or its title)
+_NEXT_DATA = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
+_PAGE_TITLE = re.compile(r'<title[^>]*>([^<]{0,300})</title>|<meta property="og:title" content="([^"]{0,300})"', re.I)
+_ERROR_TITLE = re.compile(r"\b(?:fejl|error|404|not found|ikke fundet|siden findes ikke)\b", re.I)
+
+
+def _page_title(html: str) -> str:
+    return " ".join(a or b for a, b in _PAGE_TITLE.findall(html)).strip()
+
+
+def _next_data(html: str, title: str | None, host: str) -> tuple[str, str] | None:
+    """What a Next.js page (Jobnet) says in its page data: gone when the page is a 404 or the deadline has passed,
+    open when the job's title is there; None when the page has no such data or doesn't tell."""
+    m = _NEXT_DATA.search(html)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(1))
+    except ValueError:
+        return None
+    props = (data.get("props") or {}).get("pageProps") or {}
+    if props.get("statusCode") in (404, 410) or data.get("page") in ("/404", "/_error"):
+        return "gone", f"{host} says the page doesn't exist"
+    blob = json.dumps(props, ensure_ascii=False)
+    if not _title_on_page(title, blob):
+        return None
+    deadline = re.search(r'"deadlineDate":\s*"(\d{4}-\d{2}-\d{2})', blob)
+    if deadline and deadline.group(1) < date.today().isoformat():
+        return "gone", f"{host} says the deadline was {deadline.group(1)}"
+    return "open", f"up on {host}"
 
 
 def _host(url: str) -> str:
@@ -96,6 +128,13 @@ def page_state(url: str, title: str | None) -> tuple[str, str]:
         return "open", f"up on {_host(final)}"
     if _WORKDAY_JOB.search(_host(final)) and "/job/" in urlparse(final).path:
         return "gone", f"the ad is no longer on {_host(final)}"  # a Workday ad page always carries the ad as data
+    built = _next_data(html, title, _host(final)) if html else None
+    if built:
+        return built
+    page_title = _page_title(html) if html else ""
+    if _ERROR_TITLE.search(page_title) and not _title_on_page(title, page_title):
+        return "gone", f'{_host(final)} shows an error page ("{page_title[:60]}")'
+    text = f"{page_title}\n{text}"  # a page built in the browser often names the job only in its title
     if _moved_away(url, final):
         return "gone", f"the address now leads to {final[:120]}"
     on_page = _title_on_page(title, text)

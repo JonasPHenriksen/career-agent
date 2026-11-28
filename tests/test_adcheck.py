@@ -256,3 +256,18 @@ def test_auto_drafting_leaves_an_ad_up_for_months_for_you_to_ask_about_first(fak
     assert not db.q1("SELECT id FROM applications WHERE job_id = ?", (old,))
     app_id = jobs.create_application(old)  # pressing Write still drafts it
     assert db.q1("SELECT kind FROM tasks WHERE ref = ?", (f"app:{app_id}",))["kind"] == "draft_application"
+
+
+def test_pages_built_in_the_browser_tell_from_their_data_or_title(pages):
+    job = '{"props": {"pageProps": {"statusCode": 200, "job": {"title": "Senior Backend Engineer", "deadlineDate": "%s"}}}}'
+    pages["https://jobnet.example/a"] = ("https://jobnet.example/a", f'<script id="__NEXT_DATA__">{job % "2099-01-01T11:00:00Z"}</script>')
+    pages["https://jobnet.example/b"] = ("https://jobnet.example/b", f'<script id="__NEXT_DATA__">{job % "2020-01-01T11:00:00Z"}</script>')
+    pages["https://jobnet.example/c"] = ("https://jobnet.example/c", '<script id="__NEXT_DATA__">{"page": "/404", "props": {}}</script>')
+    pages["https://hr.example/d"] = ("https://hr.example/d", "<title>Talentech - Senior Backend Engineer</title><p>Din browser er forældet.</p>")
+    pages["https://jobs.example/e"] = ("https://jobs.example/home", "<title>Fejl - Havbro - Jobwebsted</title><p>Alle stillinger</p>")
+    state = lambda url: real_page_state(url, "Senior Backend Engineer")[0]
+    assert state("https://jobnet.example/a") == "open", "the job is in Jobnet's page data"
+    assert state("https://jobnet.example/b") == "gone", "its deadline has passed"
+    assert state("https://jobnet.example/c") == "gone"
+    assert state("https://hr.example/d") == "open", "the job is named in the page title"
+    assert state("https://jobs.example/e") == "gone", "an error page"

@@ -66,7 +66,7 @@ def checks() -> list[dict]:
         {"key": "unmeasured", "label": "A place the app can't measure", "why": "The town isn't in the app's list "
          "(places.py), so it ranks as if it were in Aarhus. Add it to the list.",
          "items": [_item(r, r["location"]) for r in onsite if (r["location"] or "").strip() and home
-                   and not _measured(r["location"], home, limit)]},
+                   and not _measured(r["location"], home, limit) and not places.only_wide(r["location"])]},
         {"key": "teaser", "label": "Scored from a teaser", "why": f"Fewer than {jobs.MIN_AD_CHARS} characters of "
          "ad text: too little to judge. Paste the ad text.",
          "items": [_item(r, f"{len(r['description'] or '')} characters") for r in rows
