@@ -81,7 +81,7 @@ def _wish_points(fit: dict) -> list[tuple[int, str]]:
 
 
 def annotate(rows: list[dict]) -> list[dict]:
-    """Give each job row (from the jobs table) r["rank"]: {"score": fit minus the points, "points": [(n, why)…],
+    """Give each job row (from the jobs table) r["rank"]: {"score": fit minus the points (never below 0), "points": [(n, why)…],
     "km", "size"}. The score is None for a job not scored yet."""
     p = settings.get("profile")
     home, limit, per_size = p.get("city"), profile.distance_limit(), SIZE_POINTS[size_nudge()]
@@ -100,7 +100,7 @@ def annotate(rows: list[dict]) -> list[dict]:
         fit_verdict = r.get("f") if isinstance(r.get("f"), dict) else db.jload(r.get("fit"), {}) or {}
         points += _wish_points(fit_verdict)
         fit = r.get("fit_score")
-        r["rank"] = {"score": None if fit is None else fit - sum(n for n, _ in points), "points": points,
+        r["rank"] = {"score": None if fit is None else max(0, fit - sum(n for n, _ in points)), "points": points,
                      "km": reach["km"] if reach else None, "size": size}
     return rows
 

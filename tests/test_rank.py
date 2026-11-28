@@ -110,6 +110,8 @@ def test_the_kind_of_job_and_deal_breakers_count_only_on_fit_verdicts_made_witho
     assert _points(outside) == [(30, "outside your target roles")]
     assert _points(breaker) == [(40, "deal-breaker: A temporary contract")]
     assert _points(old) == [], "an older verdict has these in its score already: nothing counts twice"
+    low = _job("F", "Havbro", "Aarhus", 8, fit=new.format("outside", "[]"))
+    assert rank.annotate([db.q1("SELECT * FROM jobs WHERE id = ?", (low,))])[0]["rank"]["score"] == 0, "never below 0"
 
 
 def test_the_fit_prompt_never_sees_where_the_job_or_you_are(fake):
